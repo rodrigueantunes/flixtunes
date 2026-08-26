@@ -15,7 +15,14 @@ public partial class PlayerWindow : Window
     public PlayerWindow(FlixTunesApi api, Profile profile, MediaItem item)
     {
         InitializeComponent(); this.api = api; this.profile = profile; this.item = item; TitleText.Text = item.DisplayTitle;
-        HdrToggle.IsChecked = Registry.CurrentUser.CreateSubKey("Software\\FlixTunes").GetValue("HdrPassthrough") as int? == 1;
+        var reglages = Registry.CurrentUser.CreateSubKey("Software\\FlixTunes");
+        HdrToggle.IsChecked = reglages.GetValue("HdrPassthrough") as int? == 1;
+        // La sortie audio est un réglage à part, et non une conséquence du HDR : un écran HDR branché
+        // sur les haut-parleurs d'un portable est un cas ordinaire, et l'inverse aussi.
+        AudioSortieBox.SelectedIndex = ClientCapabilities.SortieDepuis(reglages.GetValue("SortieAudio") as string) switch
+        {
+            SortieAudio.Surround51 => 1, SortieAudio.Surround71 => 2, SortieAudio.Amplificateur => 3, _ => 0,
+        };
         libVlc = new LibVLC("--network-caching=1800", "--avcodec-hw=any", "--audio-language=fr,fre,fra,en,eng", "--sub-language=fr,fre,fra,en,eng");
         player = new MediaPlayer(libVlc); Video.MediaPlayer = player;
         player.Playing += (_, _) => Dispatcher.Invoke(() => { LoadingPanel.Visibility = Visibility.Collapsed; if (resumeSeconds > 0 && player.Length > 0) { player.Time = Math.Min((long)(resumeSeconds * 1000), player.Length - 1000); resumeSeconds = 0; } else if (item.ProgressPercent is > 0 and < 90 && player.Length > 0) player.Time = player.Length * item.ProgressPercent / 100; });
@@ -36,19 +43,35 @@ public partial class PlayerWindow : Window
             var hdr = HdrToggle.IsChecked == true;
             var audioIndex = (AudioBox.SelectedItem as TrackChoice)?.Index;
             var subtitleIndex = (SubtitleBox.SelectedItem as TrackChoice)?.Index;
-            var capabilities = new {
-                containers = new[] { "mp4", "webm", "mpegts" }, videoCodecs = new[] { "h264", "hevc", "av1", "vp9", "vp8", "mpeg2video" },
-                audioCodecs = new[] { "aac", "opus", "mp3", "ac3", "eac3", "truehd", "dts", "flac" }, hls = true,
-                maxWidth = 7680, maxHeight = 4320, hdr, hdrFormats = hdr ? new[] { "hdr10", "hdr10plus", "hlg", "dolbyvision" } : Array.Empty<string>(),
-                dolbyAtmos = hdr, immersiveAudioFormats = hdr ? new[] { "dolby-atmos", "dts-x", "auro-3d" } : Array.Empty<string>(), maxAudioChannels = hdr ? 16 : 2,
-                losslessAudio = hdr, maxVideoBitrate = (int?)null, audioStreamIndex = audioIndex, subtitleStreamIndex = subtitleIndex is >= 0 ? subtitleIndex : null, burnSubtitles = false,
-            };
+            var (largeur, hauteur) = DefinitionDeLEcran();
+            var capabilities = ClientCapabilities.Pour(largeur, hauteur, hdr, SortieChoisie(), audioIndex, subtitleIndex);
             var session = await api.StartPlayback(item.Id, capabilities);
             if (session.Status == "failed" || session.Url == null) throw new InvalidOperationException(session.Error ?? "Lecture impossible");
             sessionId = session.Id; ModeText.Text = session.Mode == "direct" ? "DIRECT PLAY · VLC" : session.Mode == "remux" ? "REMUX HLS · VLC" : "TRANSCODAGE HLS · VLC";
             currentMedia = new Media(libVlc, api.Resolve(session.Url)); player.Media = currentMedia; player.Play();
         }
         catch (Exception error) { LoadingText.Text = error.Message; }
+    }
+
+    private SortieAudio SortieChoisie() => AudioSortieBox.SelectedIndex switch
+    {
+        1 => SortieAudio.Surround51, 2 => SortieAudio.Surround71, 3 => SortieAudio.Amplificateur, _ => SortieAudio.Stereo,
+    };
+
+    /// <summary>
+    /// La définition de l'écran, en pixels réels.
+    ///
+    /// `SystemParameters` rend des points d'affichage, pas des pixels : sur un écran à 150 %, un
+    /// 2560 × 1440 s'annoncerait 1707 × 960, et le serveur convertirait des vidéos que la machine
+    /// affiche parfaitement. La matrice de la cible d'affichage porte le facteur.
+    /// </summary>
+    private (int Largeur, int Hauteur) DefinitionDeLEcran()
+    {
+        var cible = PresentationSource.FromVisual(this)?.CompositionTarget;
+        var echelleX = cible?.TransformToDevice.M11 ?? 1.0;
+        var echelleY = cible?.TransformToDevice.M22 ?? 1.0;
+        return ((int)Math.Round(SystemParameters.PrimaryScreenWidth * echelleX),
+                (int)Math.Round(SystemParameters.PrimaryScreenHeight * echelleY));
     }
 
     private void PopulateTracks(PlaybackInfo playback)
@@ -61,7 +84,9 @@ public partial class PlayerWindow : Window
     private static string Technology(PlaybackStream stream) => stream.DolbyAtmos ? "Dolby Atmos" : stream.AudioTechnology switch { "dts-x" => "DTS:X", "auro-3d" => "Auro-3D", _ => stream.Codec.ToUpperInvariant() };
     private async void ApplyTracks_Click(object sender, RoutedEventArgs e)
     {
-        Registry.CurrentUser.CreateSubKey("Software\\FlixTunes").SetValue("HdrPassthrough", HdrToggle.IsChecked == true ? 1 : 0);
+        var cle = Registry.CurrentUser.CreateSubKey("Software\\FlixTunes");
+        cle.SetValue("HdrPassthrough", HdrToggle.IsChecked == true ? 1 : 0);
+        cle.SetValue("SortieAudio", ClientCapabilities.NomDe(SortieChoisie()));
         await SaveProgress(); await Start(true);
     }
     private async Task SaveProgress() { if (player.Length > 0) try { await api.SaveProgress(item.Id, profile.Id, player.Time / 1000.0, player.Length / 1000.0); } catch { } }

@@ -33,9 +33,12 @@ describe("cohérence des versions déclarées", () => {
     expect(lire("apps/windows/FlixTunes.Windows.csproj")).toContain(`<Version>${version}</Version>`);
   });
 
-  it("l'image Compose et le titre du README portent la version du produit", () => {
+  it("l'image Compose et les titres des README portent la version du produit", () => {
     expect(lire("compose.yaml")).toContain(`image: flixtunes:${version}`);
     expect(lire("README.md").split("\n")[0]).toBe(`# FlixTunes ${version}`);
+    // Le client Windows a son propre README, et son propre statut : la version, elle, reste commune.
+    expect(lire("apps/windows/README.md").split("\n")[0])
+      .toBe(`# Client Windows FlixTunes ${version} — **expérimental**`);
   });
 
   it("le pnpm installé par le Dockerfile est celui que le dépôt déclare", () => {

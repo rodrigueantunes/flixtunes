@@ -1,5 +1,14 @@
 # Journal des versions
 
+## 0.5.6.r79 — le client Windows cesse d'inventer ses capacités
+
+- **Il annonçait 7680 × 4320 quelle que soit la machine.** La négociation de lecture repose entièrement sur cette déclaration : un portable 1080p réclamait donc de la 8K en lecture directe, et le serveur le croyait. La définition vient désormais de l'écran, mise à l'échelle de Windows comprise — sans quoi un écran à 150 % s'annoncerait d'un tiers trop petit.
+- **Une seule case commandait le HDR *et* le Dolby Atmos, le DTS:X, l'Auro-3D, seize canaux et l'audio sans perte.** Or ces deux choses n'ont aucun rapport : un écran HDR branché sur les haut-parleurs d'un portable est un cas ordinaire. Un poste stéréo annonçait seize canaux immersifs, et le serveur renonçait au mixage dont ce poste avait précisément besoin.
+- **La sortie audio est maintenant un réglage à part** : stéréo par défaut, 5.1, 7.1 ou amplificateur. L'audio immersif et l'audio sans perte ne sont annoncés que dans le dernier cas, le seul où ils ont un sens. Les codecs, eux, restent ceux que VLC sait lire — le codec dit ce qu'on décode, `maxAudioChannels` dit ce qu'on restitue.
+- **Le client est déclaré expérimental**, et le statut se lit dans le titre de la fenêtre : accès distant non pris en charge — vérifié, il n'envoie ni jeton d'API ni compte de session —, pas d'écran d'administration, et une négociation éprouvée par ses tests mais pas sur un parc d'appareils.
+- **17 tests Windows au lieu de 8**, dont deux qui verrouillent le défaut : le HDR n'a aucun effet sur l'audio, et l'audio aucun sur le HDR.
+- 756 tests serveur, 174 tests Web, 17 tests Windows, tous verts.
+
 ## 0.5.6.r78 — la base sait où elle en est, et sait revenir en arrière
 
 - **Le schéma évoluait par détection de colonnes**, cent-huit instructions rejouées à chaque démarrage. Robuste tant qu'on n'ajoute que des colonnes ; impuissant dès qu'il faut déplacer des données ou reconstruire une table, et incapable de dire **où la base en est** — donc de reconnaître un schéma à demi migré, ou de savoir ce qu'une restauration a rendu.

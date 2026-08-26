@@ -29,6 +29,7 @@ $cibles = @(
   @{ Fichier = "apps/windows/FlixTunes.Windows.csproj"; Motif = '(<Version>)[^<]+(</Version>)'; Valeur = $version },
   @{ Fichier = "compose.yaml";                    Motif = '(image:\s*flixtunes:)[^\s]+()';  Valeur = $version },
   @{ Fichier = "README.md";                       Motif = '(^# FlixTunes )[0-9][^\s]*()';   Valeur = $version },
+  @{ Fichier = "apps/windows/README.md";          Motif = '(^# Client Windows FlixTunes )[0-9][^\s]*()'; Valeur = $version },
   @{ Fichier = "Dockerfile";                      Motif = '(--global pnpm@)[^\s]+()';       Valeur = $pnpm }
 )
 

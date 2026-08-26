@@ -1,4 +1,4 @@
-<Window x:Class="FlixTunes.Windows.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="FlixTunes" Width="1320" Height="820" MinWidth="900" MinHeight="600" WindowStartupLocation="CenterScreen">
+<Window x:Class="FlixTunes.Windows.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="FlixTunes — client expérimental" Width="1320" Height="820" MinWidth="900" MinHeight="600" WindowStartupLocation="CenterScreen">
   <Window.Resources>
     <BooleanToVisibilityConverter x:Key="BoolVisibility"/>
     <DataTemplate x:Key="MediaCard">

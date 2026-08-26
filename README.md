@@ -19,7 +19,7 @@ Le premier jalon fournit :
 - la recherche côté serveur et les fiches films/séries avec saisons et épisodes ;
 - une interface web responsive et installable (PWA), pensée télécommande et tactile.
 - une application Android mobile et Android TV adaptative, avec Media3, D-pad et découverte du serveur local.
-- une application Windows x64 autonome avec libVLC, détection mDNS, HDR/audio immersif et sélection des pistes ;
+- une application Windows x64 autonome avec libVLC, détection mDNS, HDR, sortie audio déclarée et sélection des pistes — **client expérimental**, réseau local seulement, voir [apps/windows/README.md](apps/windows/README.md) ;
 - un déploiement NAS Docker/Compose avec surveillance des dossiers, sauvegardes, restauration et diagnostic.
 
 ## Construire une livraison
