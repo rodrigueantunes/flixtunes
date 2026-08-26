@@ -35,3 +35,6 @@ artifacts/
 # Caches Python des utilitaires d empaquetage.
 __pycache__/
 *.pyc
+
+# Configuration locale de l outillage : votre choix, retiree du depot le 26 aout 2026.
+.claude/
