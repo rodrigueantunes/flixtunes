@@ -4,7 +4,11 @@ param(
   [string]$BuildRoot = $SourceRoot,
   [string]$OutputDirectory = (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) "artifacts"),
   [ValidateSet("x86-64", "arm64")]
-  [string[]]$Architectures = @("x86-64", "arm64"),
+  # x86-64 seul par defaut, et ce n'est pas une omission : l'etage VA-API embarque le pilote **iHD**,
+  # celui d'Intel, qui n'existe evidemment pas dans le paquet arm64 — « Pilote iHD absent du paquet
+  # Jellyfin ». Une construction arm64 s'arrete donc la, et n'a jamais ete qualifiee sur un appareil.
+  # Le NAS de reference est un Celeron. Demander arm64 reste possible, mais delibere.
+  [string[]]$Architectures = @("x86-64"),
   [string]$PackageRevision = "r1",
   [string]$NodeVersion = "24.15.0",
   [string]$CaddyVersion = "2.11.4",

@@ -33,6 +33,10 @@
 param(
   [string]$Artifacts = (Join-Path (Split-Path $PSScriptRoot -Parent) "artifacts"),
   [string]$Revision,
+  # Les architectures du paquet NAS. x86-64 seul par defaut : l'etage VA-API embarque le pilote iHD
+  # d'Intel, absent du paquet arm64, et aucun appareil ARM n'a jamais ete qualifie.
+  [ValidateSet("x86-64", "arm64")]
+  [string[]]$Architectures = @("x86-64"),
   [switch]$AutoriserPartageReseau
 )
 
@@ -117,7 +121,7 @@ try {
   Copy-Item $apk.FullName (Join-Path $Artifacts $apk.Name) -Force
 
   # --- 7. Le paquet ASUSTOR, a la meme estampille ----------------------------------------------
-  & (Join-Path $root "packaging/asustor/Build-AsustorApkg.ps1") -SourceRoot $root -BuildRoot $root -OutputDirectory $Artifacts -PackageRevision $Revision
+  & (Join-Path $root "packaging/asustor/Build-AsustorApkg.ps1") -SourceRoot $root -BuildRoot $root -OutputDirectory $Artifacts -PackageRevision $Revision -Architectures $Architectures
   if ($LASTEXITCODE -ne 0) { throw "La construction du paquet ASUSTOR a echoue." }
 
   # --- 8. Archives de sources ------------------------------------------------------------------
