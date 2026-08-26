@@ -1,3 +1,30 @@
+# Les fins de ligne sont normalisées à LF dans le dépôt **et à l'extraction**.
+#
+# Sans cette règle, Git sur Windows extrait selon `core.autocrlf`, réglage propre à chaque poste. Deux
+# suites de tests le prenaient de plein fouet sur un clone neuf : l'une découpe `playback.ts` sur une
+# accolade fermante précédée d'un saut de ligne pour borner un corps de fonction, l'autre compare la
+# première ligne d'un README découpée sur un saut de ligne — qui garde alors un retour chariot final.
+# Les mêmes tests passaient sur le poste où le dépôt avait été créé, parce que sa copie de travail
+# était en LF. C'est exactement le défaut qu'un clone neuf est censé révéler.
+* text=auto eol=lf
+
+# Ces deux-là font exception, pour de vraies raisons : Windows PowerShell et l'interpréteur de
+# commandes attendent des fins de ligne Windows.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+
 *.sh text eol=lf
 *.cjs text eol=lf
-*.ps1 text eol=crlf
+
+# Binaires : aucune conversion, sous aucun prétexte.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.mp3 binary
+*.mp4 binary
+*.wav binary
+*.apk binary
+*.jar binary
+*.keystore binary
+*.pyc binary

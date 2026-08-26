@@ -15,7 +15,9 @@ import { describe, expect, it } from "vitest";
  * qu'elle l'a bien été : la cohérence ne dépend donc pas de la mémoire de celui qui livre.
  */
 const racine = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-const lire = (relatif: string) => readFileSync(path.join(racine, relatif), "utf8");
+// Même précaution : la première ligne d'un fichier extrait en CRLF garderait son retour chariot, et
+// la comparaison échouerait sur un caractère invisible.
+const lire = (relatif: string) => readFileSync(path.join(racine, relatif), "utf8").replaceAll("\r\n", "\n");
 const manifeste = (relatif: string) => JSON.parse(lire(relatif)) as { version: string; packageManager?: string };
 
 const version = manifeste("package.json").version;

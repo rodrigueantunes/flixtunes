@@ -3,7 +3,11 @@ node_modules/
 dist/
 .vite/
 coverage/
-data/
+# Le repertoire de donnees du service, **a la racine seulement**. Sans la barre oblique initiale, ce
+# motif s'applique a n'importe quelle profondeur : il avait silencieusement exclu du depot les treize
+# fichiers Kotlin de `apps/android/.../app/data` — client d'API, entrepot, modeles, decouverte de
+# serveur, adresses, session. Le depot publie ne pouvait pas construire l'application Android.
+/data/
 *.db
 *.db-shm
 *.db-wal

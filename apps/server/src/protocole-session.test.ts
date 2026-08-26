@@ -16,7 +16,11 @@ import { readFileSync } from "node:fs";
  * Ces cas lisent la source plutôt que d'exécuter FFmpeg : le défaut tenait à deux lignes distantes
  * l'une de l'autre, et c'est leur cohérence qu'il faut retenir, pas un comportement d'exécution.
  */
-const source = readFileSync(new URL("./playback.ts", import.meta.url), "utf8");
+// Les retours chariot sont retirés à la lecture : ce cas borne un corps de fonction sur une accolade
+// précédée d'un saut de ligne, et un clone extrait en CRLF ne trouvait plus la borne. La règle du
+// dépôt normalise désormais à LF, mais un test qui dépend du réglage local de qui le lance est un
+// test qu'on ne peut pas croire.
+const source = readFileSync(new URL("./playback.ts", import.meta.url), "utf8").replaceAll("\r\n", "\n");
 
 /**
  * Le corps d'une fonction, borné par son accolade fermante de premier niveau.
