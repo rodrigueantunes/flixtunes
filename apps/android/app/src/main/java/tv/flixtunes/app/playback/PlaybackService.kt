@@ -42,7 +42,34 @@ class PlaybackService : MediaSessionService() {
                 imagesPerdues += count
             }
         })
-        session = MediaSession.Builder(this, player).build()
+        session = MediaSession.Builder(this, player)
+            .setCallback(object : MediaSession.Callback {
+                /*
+                 * Un service de session doit être exporté — c'est ainsi que le système le découvre
+                 * pour la notification de lecture, les touches d'un casque, Android Auto. Exporté
+                 * sans garde, il est aussi joignable par n'importe quelle application installée, qui
+                 * peut alors lire, mettre en pause, parcourir la file et voir ce qu'on regarde.
+                 *
+                 * Une permission dans le manifeste fermerait la porte aux composants système qui
+                 * doivent entrer. Le tri se fait donc ici, où Media3 le prévoit.
+                 */
+                override fun onConnect(
+                    session: MediaSession,
+                    controller: MediaSession.ControllerInfo,
+                ): MediaSession.ConnectionResult {
+                    val connu = ControleursAutorises.autorise(
+                        controller.packageName,
+                        packageName,
+                        controller.uid == android.os.Process.myUid(),
+                        session.isMediaNotificationController(controller)
+                            || session.isAutoCompanionController(controller)
+                            || session.isAutomotiveController(controller),
+                    )
+                    return if (connu) super.onConnect(session, controller)
+                    else MediaSession.ConnectionResult.reject()
+                }
+            })
+            .build()
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
@@ -78,9 +105,23 @@ class PlaybackService : MediaSessionService() {
          * chemin le plus court — et le seul qui n'oblige pas à recréer la session pour changer un
          * réglage au moment précis où la lecture vient d'échouer.
          */
+        /*
+         * Référence **faible**, et non forte.
+         *
+         * Un `DefaultTrackSelector` porte un `Context` : le garder dans un champ statique fort
+         * retenait le service entier tant que rien ne remettait le champ à zéro. `onDestroy` le
+         * faisait, mais `onDestroy` n'est pas garanti. Le lecteur, lui, tient le sélecteur tant qu'il
+         * existe : la référence faible vit donc exactement le temps qu'il faut, et pas une seconde de
+         * plus.
+         */
         @Volatile
-        var trackSelector: DefaultTrackSelector? = null
-            private set
+        private var selecteurFaible: java.lang.ref.WeakReference<DefaultTrackSelector>? = null
+
+        var trackSelector: DefaultTrackSelector?
+            get() = selecteurFaible?.get()
+            private set(valeur) {
+                selecteurFaible = if (valeur == null) null else java.lang.ref.WeakReference(valeur)
+            }
 
         /** Images que le decodeur n'a pas pu afficher a temps depuis le debut de la lecture. */
         @Volatile

@@ -1,5 +1,13 @@
 # Journal des versions
 
+## 0.5.6.r80 — les trois avertissements de sécurité Android
+
+- **Le service de lecture était joignable par n'importe quelle application installée**, qui pouvait lire, mettre en pause, parcourir la file et voir ce qui est regardé. Un `MediaSessionService` doit être exporté — c'est ainsi que le système le découvre pour la notification de lecture, les touches d'un casque, Android Auto —, mais une permission dans le manifeste fermerait la porte à ces composants-là. Le tri se fait donc à la connexion : notre application, notre processus, et les composants que la session reconnaît. Le reste est refusé.
+- **Le sélecteur de pistes retenait le service entier** : un champ statique fort sur un objet qui porte un `Context`, remis à zéro par `onDestroy` — qui n'est pas garanti. La référence est désormais faible, et vit exactement le temps du lecteur qui s'en sert. La cause disparaît, l'avertissement avec.
+- **Le trafic en clair reste permis, délibérément.** Le serveur est joint par l'adresse IP d'un NAS, et Android ne sait exprimer une exception que par nom d'hôte : ni plage d'adresses, ni « tout ce qui est privé ». Ce qui compte est protégé ailleurs — `ServerUrl` impose `https://` dès que l'adresse n'est pas locale, donc l'accès depuis Internet ne peut pas retomber en clair. L'avertissement est éteint avec sa raison écrite dans le fichier : un avertissement qu'on ne peut pas lever et qu'on laisse crier devient du bruit.
+- **50 avertissements lint ramenés à 47**, les trois de sécurité levés. Les restants sont des API dépréciées et des pluriels de traduction.
+- 208 tests Android, 756 tests serveur, 174 tests Web, 17 tests Windows, tous verts.
+
 ## 0.5.6.r79 — le client Windows cesse d'inventer ses capacités
 
 - **Il annonçait 7680 × 4320 quelle que soit la machine.** La négociation de lecture repose entièrement sur cette déclaration : un portable 1080p réclamait donc de la 8K en lecture directe, et le serveur le croyait. La définition vient désormais de l'écran, mise à l'échelle de Windows comprise — sans quoi un écran à 150 % s'annoncerait d'un tiers trop petit.

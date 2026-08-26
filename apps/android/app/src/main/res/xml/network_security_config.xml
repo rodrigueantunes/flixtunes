@@ -1,5 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
-<network-security-config>
-    <!-- Le serveur est local au LAN. Les domaines publics restent soumis à TLS. -->
-    <base-config cleartextTrafficPermitted="true" />
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+    <!--
+        Le trafic en clair reste permis, et ce n'est pas un oubli.
+
+        Le serveur vit sur le réseau local, joint par son adresse IP — celle du NAS de chacun. Android
+        ne sait exprimer une exception que par nom d'hôte : ni plage d'adresses, ni « tout ce qui est
+        privé ». Refuser le clair fermerait donc l'usage principal du produit, et il n'existe aucune
+        formulation intermédiaire.
+
+        Ce qui est réellement protégé l'est ailleurs, dans le code : `ServerUrl` impose `https://` dès
+        que l'adresse n'est pas locale, si bien que l'accès depuis Internet ne peut pas retomber en
+        clair, quelle que soit cette configuration.
+
+        Le jour où Android permettra de viser les plages privées, cette exception se réduira d'autant.
+    -->
+    <base-config cleartextTrafficPermitted="true" tools:ignore="InsecureBaseConfiguration">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
 </network-security-config>

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
@@ -29,7 +30,12 @@
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
-        <service android:name=".playback.PlaybackService" android:exported="true" android:foregroundServiceType="mediaPlayback">
+        <!-- Exporté par nécessité : c'est ainsi que le système découvre la session pour la notification
+             de lecture, les touches d'un casque et Android Auto. Une permission fermerait la porte à
+             ces composants-là. Le tri se fait à la connexion, dans `PlaybackService.onConnect` : notre
+             application, notre processus, et les composants que la session reconnaît — le reste est
+             refusé. Voir `ControleursAutorises` et ses cas de test. -->
+        <service android:name=".playback.PlaybackService" android:exported="true" android:foregroundServiceType="mediaPlayback" tools:ignore="ExportedService">
             <intent-filter>
                 <action android:name="androidx.media3.session.MediaSessionService" />
                 <action android:name="android.media.browse.MediaBrowserService" />
