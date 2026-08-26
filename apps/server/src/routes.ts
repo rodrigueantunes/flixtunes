@@ -68,6 +68,7 @@ import { reparerCapacites } from "./capacites-client.js";
 import { definirParametresWan, parametresWan } from "./wan-parametres.js";
 import { diagnostiquerWan } from "./wan-diagnostic.js";
 import { activerLesGeneriques, arreterLaPasse, etatDesGeneriques } from "./marqueurs-passe.js";
+import { etatDuSchema } from "./migrations.js";
 import {
   compteDuJeton,
   creerCompteDistant,
@@ -233,6 +234,9 @@ export async function registerRoutes(app: FastifyInstance) {
     // différents annoncent le même « 0.5.6 », et aucun diagnostic à distance n'est possible.
     status: "ok", version: config.version, packageRevision: config.packageRevision,
     step: config.step, phase: config.phase, uptimeSeconds: Math.round(process.uptime()),
+    // La version du schéma dit ce que la base a réellement traversé — une restauration peut la
+    // ramener en arrière sans que la version du paquet, elle, ne bouge.
+    schema: etatDuSchema(db),
     memory: process.memoryUsage(), database: databaseHealth(), playback: await getPlaybackSystemInfo(),
     scans: scanCoordinator.stats(), telemetry: telemetrySnapshot(),
     security: { tokenRequiredForWrites: Boolean(config.apiToken), trustedLanCors: true },

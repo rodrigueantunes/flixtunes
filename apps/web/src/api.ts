@@ -308,6 +308,7 @@ export const api = {
   recommendationFeedback: (catalogId: string, profileId: string, value: "like" | "dislike" | "dismissed") => request<void>(
     `/recommendations/feedback?profileId=${encodeURIComponent(profileId)}`, { method: "PUT", body: JSON.stringify({ catalogId, value }) }),
   systemStatus: () => request<{ version: string; packageRevision?: string | null; step?: number; phase?: number; uptimeSeconds: number; memory: { rss: number };
+    schema?: { version: number; enAttente: number[] };
     database: { integrity: string }; playback: { ffmpegAvailable: boolean; encoders?: string[]; decoders?: string[]; hardwareAccelerators?: string[]; compatibility?: PlaybackCompatibilityMatrix; selectedVideoEncoder: string | null; activeTranscodes: number; maximumTranscodes: number; recentFailures: Array<{ at: string; message: string }> };
     scans: { active: number; queued: number; concurrency: number; effective?: number; pausedByPlayback?: boolean } }>("/system/status"),
   systemCapacity: () => request<ServerCapacityReport>("/system/capacity"),

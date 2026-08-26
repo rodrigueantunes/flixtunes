@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import type { LibraryFolder, MediaItem, Profile, ProfileGroup, ScanStatus } from "@flixtunes/contracts";
 import { config } from "./config.js";
 import { normaliseForSearch } from "./search-normalise.js";
+import { appliquerLesMigrations } from "./migrations.js";
 
 mkdirSync(config.dataDir, { recursive: true });
 
@@ -593,6 +594,34 @@ db.exec(`CREATE TABLE IF NOT EXISTS profile_unlock_failures (
   essais INTEGER NOT NULL DEFAULT 0,
   dernier_essai TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );`);
+
+/*
+ * Le schéma est construit ; on le consigne.
+ *
+ * Tout ce qui précède est idempotent — tables créées si absentes, colonnes ajoutées si manquantes —
+ * et constitue le **socle**, la version 1. Une base existante l'adopte sans qu'on réexécute quoi que
+ * ce soit ; une base neuve l'obtient en étant créée. Les évolutions suivantes, elles, portent un
+ * numéro et s'appliquent dans une transaction.
+ *
+ * La sauvegarde préalable est prise ici même, en trois lignes, plutôt qu'en appelant `maintenance` —
+ * qui a besoin de `db` et créerait un cycle d'importation. Elle porte **le nom des sauvegardes
+ * ordinaires**, ce qui n'est pas un détail : c'est ce qui la rend restaurable par le mécanisme
+ * existant, depuis l'écran d'administration, sans intervention particulière.
+ */
+function sauvegarderAvantMigration(): void {
+  const dossier = path.join(config.dataDir, "backups");
+  mkdirSync(dossier, { recursive: true });
+  const compact = new Date().toISOString().replace(/\D/g, "").slice(0, 17);
+  const cible = path.join(dossier, `flixtunes-${compact.slice(0, 8)}-${compact.slice(8)}.db`);
+  db.exec("PRAGMA wal_checkpoint(FULL)");
+  db.exec(`VACUUM INTO '${cible.replaceAll("'", "''")}'`);
+  console.info(`[FlixTunes] Sauvegarde avant migration : ${path.basename(cible)}`);
+}
+
+appliquerLesMigrations(db, {
+  avantModification: sauvegarderAvantMigration,
+  journaliser: (message) => console.info(`[FlixTunes] ${message}`),
+});
 
 const profileCount = db.prepare("SELECT COUNT(*) AS count FROM profiles").get() as { count: number };
 if (profileCount.count === 0) {

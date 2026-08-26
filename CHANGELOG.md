@@ -1,5 +1,15 @@
 # Journal des versions
 
+## 0.5.6.r78 — la base sait où elle en est, et sait revenir en arrière
+
+- **Le schéma évoluait par détection de colonnes**, cent-huit instructions rejouées à chaque démarrage. Robuste tant qu'on n'ajoute que des colonnes ; impuissant dès qu'il faut déplacer des données ou reconstruire une table, et incapable de dire **où la base en est** — donc de reconnaître un schéma à demi migré, ou de savoir ce qu'une restauration a rendu.
+- **Un registre numéroté consigne désormais ce qui a été appliqué.** La version 1 est le socle : tout ce que `database.ts` construit déjà, adopté sans rien réexécuter, puisque ce code est idempotent par nature. Les évolutions suivantes portent un numéro, s'appliquent **dans une transaction**, et ne sont consignées que si elles ont réussi entièrement — SQLite exécutant le DDL de façon transactionnelle, une migration interrompue ne laisse pas un schéma bâtard.
+- **Une sauvegarde est prise juste avant la première migration réelle**, jamais pour la simple adoption du socle. Elle porte le nom des sauvegardes ordinaires, donc elle se restaure depuis l'écran d'administration sans manipulation particulière.
+- **Il n'y a pas de migration inverse, et c'est délibéré** : défaire une colonne en SQLite impose de reconstruire la table entière, ce qui est plus dangereux que ce que cela répare — et s'exécuterait après une mise à jour qui vient d'échouer. Le chemin de retour est la sauvegarde, qui elle est éprouvée.
+- **La restauration a enfin des tests**, quatre, sur de vraies bases : contenu rendu et `PRAGMA integrity_check` passé, journal WAL de l'ancienne base écarté, état d'avant conservé horodaté, reprise après interruption exactement une fois, et refus d'un marqueur qui désignerait un fichier quelconque.
+- **La version du schéma s'affiche** dans la tuile « Base de données » : une restauration peut faire reculer le schéma sans que la version du paquet ne bouge.
+- 756 tests serveur et 174 tests Web, tous verts.
+
 ## 0.5.6.r77 — l'adresse du NAS de développement quitte le produit
 
 - **Le client Windows proposait l'adresse du NAS de développement comme serveur par défaut, et Android l'affichait en exemple.** N'importe qui installant FlixTunes voyait l'adresse d'un NAS qui n'est pas le sien. Windows n'invente plus aucune adresse — le champ reste vide, la découverte Zeroconf remplit la liste, la saisie manuelle est toujours là — et Android montre une adresse de réseau domestique quelconque.

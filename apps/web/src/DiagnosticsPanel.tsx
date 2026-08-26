@@ -277,7 +277,9 @@ export function DiagnosticsPanel() {
       {!status ? <p>Chargement du diagnostic…</p> : <>
         <div className="diagnostic-grid">
           <article><b>FlixTunes</b><span>v{status.version}{status.packageRevision ? ` ${status.packageRevision}` : ""} · étape {status.step ?? status.phase}</span><small>{Math.round(status.uptimeSeconds / 60)} min</small></article>
-          <article><b>Base de données</b><span>{status.database.integrity === "ok" ? "Intègre" : status.database.integrity}</span><small>{Math.round(status.memory.rss / 1024 / 1024)} Mo</small></article>
+          {/* La version du schéma vit à côté de l'intégrité : ce sont deux façons de dire l'état de
+              la base, et une restauration peut faire reculer la première sans toucher à la seconde. */}
+          <article><b>Base de données</b><span>{status.database.integrity === "ok" ? "Intègre" : status.database.integrity}</span><small>{Math.round(status.memory.rss / 1024 / 1024)} Mo{status.schema ? ` · schéma v${status.schema.version}${status.schema.enAttente.length ? ` (${status.schema.enAttente.length} en attente)` : ""}` : ""}</small></article>
           <article><b>Lecture</b><span>{status.playback.ffmpegAvailable ? status.playback.selectedVideoEncoder ?? "FFmpeg" : "FFmpeg absent"}</span><small>{status.playback.activeTranscodes}/{status.playback.maximumTranscodes} transcodages</small></article>
           <article><b>Analyses</b><span>{status.scans.active} active · {status.scans.queued} attente</span><small>{status.scans.concurrency} simultanées</small></article>
         </div>
