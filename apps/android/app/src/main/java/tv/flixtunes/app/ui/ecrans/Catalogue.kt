@@ -91,6 +91,7 @@ import tv.flixtunes.app.ui.RayonCommande
 import tv.flixtunes.app.ui.SectionRepliable
 import tv.flixtunes.app.ui.TexteDoux
 import tv.flixtunes.app.ui.cliquableAuFocus
+import tv.flixtunes.app.ui.LocalMemoireTv
 import tv.flixtunes.app.ui.tailleTextureJaquetteTv
 
 /**
@@ -127,7 +128,7 @@ import tv.flixtunes.app.ui.tailleTextureJaquetteTv
     if (gabarit.televiseur) {
         val contexte = LocalContext.current
         val chargeurImages = remember(contexte) { SingletonImageLoader.get(contexte) }
-        val largeurJaquettePx = remember(contexte) { tailleTextureJaquetteTv(contexte) }
+        val largeurJaquettePx = tailleTextureJaquetteTv(LocalMemoireTv.current)
         // Un seul bitmap se prépare à la fois. Entre deux images, `tryReceive` prend immédiatement la
         // position de focus la plus récente : aucune file périmée ne subsiste après un maintien D-pad,
         // mais le décodage déjà presque fini n'est pas annulé puis recommencé en boucle.

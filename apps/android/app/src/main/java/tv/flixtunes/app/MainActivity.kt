@@ -13,18 +13,19 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import tv.flixtunes.app.data.DecouverteServeurs
 import tv.flixtunes.app.data.DiscoveredServer
 import tv.flixtunes.app.data.Media
 import tv.flixtunes.app.data.ServerDiscovery
 import tv.flixtunes.app.ui.LocalGabarit
+import tv.flixtunes.app.ui.LocalMemoireTv
 import tv.flixtunes.app.ui.ThemeFlixTunes
 import tv.flixtunes.app.ui.ecrans.FlixTunesApp
-import tv.flixtunes.app.ui.estAppareilTv
 import tv.flixtunes.app.ui.gabaritPour
 
 class MainActivity : ComponentActivity() {
     private val model by viewModels<MainViewModel>()
-    private lateinit var discovery: ServerDiscovery
+    private lateinit var discovery: DecouverteServeurs
     private var discovered by mutableStateOf<List<DiscoveredServer>>(emptyList())
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -40,11 +41,15 @@ class MainActivity : ComponentActivity() {
         // Une seule décision, prise ici et fournie en ambiance : les écrans ne transportent plus le
         // drapeau de bout en bout, et la surface se lit d'un seul tenant dans `Gabarit`.
         val televiseur = estAppareilTv(this)
+        // Le budget graphique se mesure une fois, ici : c'est la plateforme qui le connaît, et
+        // l'interface se contente de le lire. Elle n'a ainsi plus besoin d'un `Context` pour choisir
+        // une taille de texture.
+        val memoire = memoireTv(this)
         setContent {
             // La largeur est relue par Compose : rotation et dépliage changent de gabarit sans
             // recréer artificiellement l'activité. Le mode TV reste décidé par le système.
             val gabarit = gabaritPour(televiseur, LocalConfiguration.current.screenWidthDp)
-            CompositionLocalProvider(LocalGabarit provides gabarit) {
+            CompositionLocalProvider(LocalGabarit provides gabarit, LocalMemoireTv provides memoire) {
                 ThemeFlixTunes { FlixTunesApp(model, discovered, ::play) }
             }
         }

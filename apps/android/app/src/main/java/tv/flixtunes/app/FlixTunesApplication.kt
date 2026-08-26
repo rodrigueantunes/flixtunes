@@ -13,7 +13,6 @@ import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import okhttp3.OkHttpClient
 import tv.flixtunes.app.playback.JetonSession
 import tv.flixtunes.app.ui.tailleCacheImages
-import tv.flixtunes.app.ui.estAppareilTv
 
 /**
  * Fournit le chargeur d'images de l'application, avec son cache sur disque.

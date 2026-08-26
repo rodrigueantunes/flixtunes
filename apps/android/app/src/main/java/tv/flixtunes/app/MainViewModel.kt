@@ -31,8 +31,8 @@ import tv.flixtunes.app.data.PersonDetails
 import tv.flixtunes.app.data.Profile
 import tv.flixtunes.app.data.ProfileGroup
 import tv.flixtunes.app.data.Season
+import tv.flixtunes.app.data.Reglages
 import tv.flixtunes.app.data.SessionStore
-import tv.flixtunes.app.ui.estAppareilTv
 import tv.flixtunes.app.ui.nombreAffichesInitialesTv
 import tv.flixtunes.app.ui.tailleTextureJaquetteTv
 
@@ -108,7 +108,9 @@ data class MainState(
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
-    private val store = SessionStore(application)
+    // Le type déclaré est le contrat, pas la mise en œuvre : c'est ce qui permettra de fournir un
+    // autre stockage sans toucher à cette classe.
+    private val store: Reglages = SessionStore(application)
 
     /** Les textes affiches viennent des ressources, jamais du code : ils doivent pouvoir se traduire. */
     private fun texte(id: Int): String = getApplication<Application>().getString(id)
@@ -117,6 +119,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // défilement TV. La grille reste paresseuse : recevoir 120 fiches ne les compose pas toutes.
     // Mobile et tablette conservent la page légère de 60 éléments.
     private val estTelevision = estAppareilTv(application)
+    // Mesuré une fois : la classe de mémoire ne change pas pendant la vie du processus, et les
+    // fonctions de taille ne prennent plus qu'elle — plus de `Context` pour choisir un nombre.
+    private val memoire = memoireTv(application)
     private val taillePageCatalogue = if (estTelevision) CATALOG_PAGE_SIZE_TV else CATALOG_PAGE_SIZE
     private var searchJob: Job? = null
     private var criteresJob: Job? = null
@@ -353,7 +358,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             state = state.copy(movies = films, shows = series, startup = StartupStep.AFFICHES)
 
             val urls = urlsAffiches(currentApi, films.items, series.items)
-            prechargerAffichesTv(urls.take(nombreAffichesInitialesTv(getApplication())))
+            prechargerAffichesTv(urls.take(nombreAffichesInitialesTv(memoire)))
             state = state.copy(loading = false, startup = null)
         } catch (failure: Throwable) {
             if (profile.protected) {
@@ -399,7 +404,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (urls.isEmpty()) return
         val application = getApplication<Application>()
         val chargeur = SingletonImageLoader.get(application)
-        val largeurTexture = tailleTextureJaquetteTv(application)
+        val largeurTexture = tailleTextureJaquetteTv(memoire)
         suspend fun charger(url: String) {
             runCatching {
                 chargeur.execute(ImageRequest.Builder(application).data(url)

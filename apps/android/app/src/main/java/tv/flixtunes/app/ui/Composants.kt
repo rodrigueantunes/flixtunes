@@ -309,15 +309,16 @@ fun ImageOptimiseeTv(
 ) {
     val gabarit = LocalGabarit.current
     val contexte = LocalContext.current
-    val modele = remember(url, format, gabarit.televiseur, contexte) {
+    val memoire = LocalMemoireTv.current
+    val modele = remember(url, format, gabarit.televiseur, contexte, memoire) {
         if (!gabarit.televiseur) url
         else {
             val largeur = when (format) {
-                FormatImageTv.JAQUETTE -> tailleTextureJaquetteTv(contexte)
+                FormatImageTv.JAQUETTE -> tailleTextureJaquetteTv(memoire)
                 // La carte de saison est volontairement plus large que celle du catalogue : une
                 // petite marge supplémentaire conserve ses détails sans revenir au décodage libre.
-                FormatImageTv.SAISON -> tailleTextureJaquetteTv(contexte) + 64
-                FormatImageTv.BANDEAU -> tailleTextureBandeauTv(contexte)
+                FormatImageTv.SAISON -> tailleTextureJaquetteTv(memoire) + 64
+                FormatImageTv.BANDEAU -> tailleTextureBandeauTv(memoire)
             }
             val hauteur = when (format) {
                 FormatImageTv.JAQUETTE, FormatImageTv.SAISON -> largeur * 3 / 2

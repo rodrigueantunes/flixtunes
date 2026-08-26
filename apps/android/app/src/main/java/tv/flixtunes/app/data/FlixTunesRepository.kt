@@ -1,6 +1,8 @@
 package tv.flixtunes.app.data
 
-class FlixTunesRepository(private val store: SessionStore) {
+// L'entrepôt dépend du contrat, pas du stockage Android : c'est ce qui le rend portable tel quel, et
+// vérifiable sans plateforme grâce à `ReglagesEnMemoire`.
+class FlixTunesRepository(private val store: Reglages) {
     var api: FlixTunesApi? = null
         private set
 

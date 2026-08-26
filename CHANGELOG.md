@@ -1,5 +1,12 @@
 # Journal des versions
 
+## 0.5.6.r82 — l'interface ne connaît plus Android
+
+- **Deux fichiers empêchaient tout le dossier `ui/` de bouger.** `Gabarit.kt` apportait cinq imports Android pour deux fonctions qui interrogent l'appareil ; `PleinEcran.kt` en apportait trois pour une extension d'`Activity` qui n'a jamais été appelée par un composable. Les premières sont parties dans `AppareilAndroid.kt`, le second a quitté `ui/`. **Il ne reste plus un seul `import android.` dans l'interface.**
+- **La frontière tient en une phrase** : `Gabarit.kt` dit ce qu'on fait d'une classe de mémoire, `AppareilAndroid.kt` dit comment on la découvre. L'activité la mesure une fois et la fournit en ambiance — `LocalMemoireTv`, à côté du `LocalGabarit` qui existait déjà pour la même raison. Un écran ne demande plus à Android quelle taille de texture décoder : il lit une valeur qu'on lui a donnée.
+- **Deux contrats pour la couche données** : `Reglages` — trois valeurs, ni fichier ni format — et `DecouverteServeurs` — commencer, arrêter. Le stockage en préférences partagées et la découverte NSD les mettent en œuvre côté Android ; `ReglagesEnMemoire` et `AucuneDecouverte` les mettent en œuvre sans plateforme. L'entrepôt et le ViewModel déclarent le contrat.
+- **211 tests Android, 0 échec.** Les trois nouveaux ne vérifient pas un comportement mais une propriété de construction : l'entrepôt se monte sans `Context`. C'est ce qu'un module partagé devra faire, et ce qui échouera si quelqu'un remet un type concret dans une signature.
+
 ## 0.5.6.r81 — les écrans quittent l'activité
 
 - **`MainActivity` portait vingt-six composables** en plus de la classe d'activité : 2 253 lignes où cohabitaient le cycle de vie Android et tous les écrans. Les écrans vivent désormais dans `ui/ecrans/`, répartis par sujet — accueil, catalogue, profils, fiche, recherche, historique, personnes. L'activité fait **64 lignes**.

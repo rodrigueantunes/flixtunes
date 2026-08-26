@@ -4,9 +4,13 @@ import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 
-data class DiscoveredServer(val name: String, val url: String)
-
-class ServerDiscovery(context: Context, private val onServer: (DiscoveredServer) -> Unit) {
+/**
+ * La découverte Android, par le service NSD du système.
+ *
+ * Elle met en œuvre [DecouverteServeurs] : le reste de l'application ne connaît que « commencer » et
+ * « arrêter », et ignore jusqu'au nom du protocole.
+ */
+class ServerDiscovery(context: Context, private val onServer: (DiscoveredServer) -> Unit) : DecouverteServeurs {
     private val manager = context.getSystemService(Context.NSD_SERVICE) as NsdManager
     private var active = false
     private val listener = object : NsdManager.DiscoveryListener {
@@ -27,7 +31,7 @@ class ServerDiscovery(context: Context, private val onServer: (DiscoveredServer)
         }
     }
 
-    fun start() { if (!active) manager.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener) }
-    fun stop() { if (active) runCatching { manager.stopServiceDiscovery(listener) }; active = false }
+    override fun start() { if (!active) manager.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener) }
+    override fun stop() { if (active) runCatching { manager.stopServiceDiscovery(listener) }; active = false }
     companion object { const val SERVICE_TYPE = "_flixtunes._tcp." }
 }

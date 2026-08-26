@@ -1,4 +1,4 @@
-package tv.flixtunes.app.ui
+package tv.flixtunes.app
 
 import android.app.Activity
 import android.os.Build
@@ -17,6 +17,10 @@ import androidx.core.view.WindowInsetsControllerCompat
  *
  * Le réglage est le même partout, et il vit ici plutôt que recopié dans chaque activité : c'est
  * exactement le genre de règle qui se met à diverger dès qu'elle existe en deux exemplaires.
+ *
+ * Il a quitté le dossier `ui/` : c'est une extension d'`Activity`, appelée par les activités et
+ * jamais par un composable. Elle n'avait rien à faire dans du code destiné à devenir partagé, où elle
+ * apportait à elle seule les trois derniers imports Android.
  *
  * `SHOW_TRANSIENT_BARS_BY_SWIPE` plutôt qu'un masquage définitif : un balayage depuis le bord les
  * ramène le temps qu'il faut, puis elles repartent. Les cacher sans recours enfermerait la personne

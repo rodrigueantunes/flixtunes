@@ -52,7 +52,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.ComposeView
 import tv.flixtunes.app.ui.LocalGabarit
 import tv.flixtunes.app.ui.gabaritPour
-import tv.flixtunes.app.ui.masquerBarresSysteme
 import tv.flixtunes.app.ui.lecteur.ActionsLecteur
 import tv.flixtunes.app.ui.lecteur.CommandesLecteur
 import tv.flixtunes.app.ui.lecteur.DELAI_AUTOPLAY_SECONDES

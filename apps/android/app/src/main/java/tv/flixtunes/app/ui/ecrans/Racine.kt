@@ -29,17 +29,17 @@ import tv.flixtunes.app.data.Media
 import tv.flixtunes.app.ui.*
 import tv.flixtunes.app.ui.Encre
 import tv.flixtunes.app.ui.LocalGabarit
+import tv.flixtunes.app.ui.LocalMemoireTv
 import tv.flixtunes.app.ui.MemoireTv
-import tv.flixtunes.app.ui.memoireTv
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable internal fun FlixTunesApp(model: MainViewModel, discovered: List<DiscoveredServer>, play: (Media) -> Unit) {
     val state = model.state
     val gabarit = LocalGabarit.current
     val contexte = LocalContext.current
-    val budgetTv = remember(gabarit.televiseur) {
-        if (gabarit.televiseur) memoireTv(contexte) else MemoireTv.STANDARD
-    }
+    // Le budget vient de la plateforme, fourni au démarrage : cet écran n'a plus à le calculer, donc
+    // plus à connaître Android pour le faire.
+    val budgetTv = if (gabarit.televiseur) LocalMemoireTv.current else MemoireTv.STANDARD
     var reglagesOuverts by rememberSaveable { mutableStateOf(false) }
     var menuMedia by remember { mutableStateOf<Media?>(null) }
     var focusARestaurer by rememberSaveable { mutableStateOf<String?>(null) }

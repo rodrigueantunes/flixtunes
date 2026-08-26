@@ -13,3 +13,12 @@ import androidx.compose.runtime.staticCompositionLocalOf
  * un téléviseur en cours de route. Compose peut alors s'épargner le suivi des lectures.
  */
 val LocalGabarit = staticCompositionLocalOf { GABARIT_TACTILE }
+
+/**
+ * Le budget graphique de l'appareil, fourni par la plateforme au démarrage.
+ *
+ * Il était calculé sur place par les composables, à partir d'un `Context` — ce qui obligeait chaque
+ * fichier d'interface à connaître Android pour choisir une taille de texture. La valeur ne change
+ * jamais pendant la vie de l'écran : une ambiance statique la porte, comme pour le gabarit.
+ */
+val LocalMemoireTv = staticCompositionLocalOf { MemoireTv.STANDARD }

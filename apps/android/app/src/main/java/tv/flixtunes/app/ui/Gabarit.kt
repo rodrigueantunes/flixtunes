@@ -1,10 +1,5 @@
 package tv.flixtunes.app.ui
 
-import android.app.UiModeManager
-import android.app.ActivityManager
-import android.content.Context
-import android.content.pm.PackageManager
-import android.content.res.Configuration
 
 /**
  * Ce qui distingue la surface télévision de la surface tactile.
@@ -130,29 +125,17 @@ val GABARIT_TACTILE = Gabarit(
     focusEchelle = 1f, focusBordure = 0, naviguerAuFocus = false, commandesEmpilees = true, cibleTactile = 48, epaisseurBarre = 6, hauteurZoneBarre = 56, tailleCurseur = 20, tapeDoubleNavigation = true,
 )
 
-/** Une seule détection TV pour l'interface, le ViewModel et le cache d'images. */
-fun estAppareilTv(context: Context): Boolean {
-    // Certains firmwares exposent Leanback sans recopier correctement le type TV dans la
-    // Configuration. R54 pouvait alors afficher l'interface TV avec les réglages de cache mobile.
-    val mode = context.getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager
-    return mode?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION ||
-        context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
-}
-
-/** Budget graphique approché par la classe de tas publiée par le boîtier. */
+/**
+ * Budget graphique de l'appareil, approché par la mémoire qu'il accorde.
+ *
+ * L'énumération vit ici, avec les tailles qu'elle commande ; **la façon de la déterminer vit côté
+ * plateforme** — voir `AppareilAndroid`. C'est la frontière : ce fichier dit ce qu'on fait d'une
+ * classe de mémoire, pas comment on la découvre.
+ */
 enum class MemoireTv { CONTRAINTE, STANDARD, LARGE }
 
-fun memoireTv(context: Context): MemoireTv {
-    val classeMo = (context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager)?.memoryClass ?: 192
-    return when {
-        classeMo <= 128 -> MemoireTv.CONTRAINTE
-        classeMo <= 256 -> MemoireTv.STANDARD
-        else -> MemoireTv.LARGE
-    }
-}
-
 /** Une taille d'écran décodée, puis davantage uniquement si la mémoire le permet. */
-fun nombreAffichesInitialesTv(context: Context): Int = when (memoireTv(context)) {
+fun nombreAffichesInitialesTv(memoire: MemoireTv): Int = when (memoire) {
     MemoireTv.CONTRAINTE -> 24
     MemoireTv.STANDARD -> 48
     MemoireTv.LARGE -> 64
@@ -167,7 +150,7 @@ fun nombreAffichesInitialesTv(context: Context): Int = when (memoireTv(context))
  * focus de 6 %, tout en réduisant de 19 à 51 % le nombre de pixels selon la classe mémoire. À trois
  * mètres, la différence est sous la taille d'un pixel logique de la carte.
  */
-fun tailleTextureJaquetteTv(context: Context): Int = when (memoireTv(context)) {
+fun tailleTextureJaquetteTv(memoire: MemoireTv): Int = when (memoire) {
     // R58 retire environ 12 % sur chaque axe par rapport à R57. À la taille réelle d'une carte
     // (132–148 dp), ces valeurs couvrent encore les pixels utiles, y compris le relief de focus,
     // mais chaque rangée demande près d'un quart de pixels en moins à décoder et transférer au GPU.
@@ -177,7 +160,7 @@ fun tailleTextureJaquetteTv(context: Context): Int = when (memoireTv(context)) {
 }
 
 /** Largeur d'un bandeau TV : assez fine pour rester nette sous ses voiles, sans évincer les affiches. */
-fun tailleTextureBandeauTv(context: Context): Int = when (memoireTv(context)) {
+fun tailleTextureBandeauTv(memoire: MemoireTv): Int = when (memoire) {
     MemoireTv.CONTRAINTE -> 1024
     MemoireTv.STANDARD -> 1280
     MemoireTv.LARGE -> 1440
