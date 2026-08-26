@@ -61,7 +61,7 @@ finie. C'est ce qui permet d'arrêter le chantier n'importe où sans rien perdre
 | N° | Contenu | Preuve de fin |
 | --- | --- | --- |
 | ~~**1**~~ | ~~Sortir les 26 composables de `MainActivity` vers `ui/ecrans/`.~~ **Fait le 27 août 2026** — voir `VALIDATION_0.5.6_R81.md`. | **208 tests verts, 47 avertissements inchangés, APK construit, et les 8 562 mots déplacés vérifiés identiques** |
-| **2** | Isoler les frontières plateforme derrière des interfaces : gabarit, plein écran, stockage de session, découverte mDNS, sons. Toujours Android seul. | 208 tests verts, aucune frontière restante hors des interfaces |
+| ~~**2**~~ | ~~Isoler les frontières plateforme derrière des interfaces.~~ **Fait le 27 août 2026** — voir `VALIDATION_0.5.6_R82.md`. | **211 tests verts, plus un seul `import android.` dans `ui/`, contrats `Reglages` et `DecouverteServeurs` en place** |
 | **3** | Restructurer Gradle : `shared` (UI + données), `androidApp`, `desktopApp`. Compose Multiplatform entre ici. | l'APK se construit depuis `androidApp`, et une fenêtre desktop vide s'ouvre |
 | **4** | Ressources : 266 lignes de chaînes, polices, images, sons — **215 appels à `stringResource`** à reporter. | l'application Android affiche exactement les mêmes textes |
 | **5** | Le lecteur desktop : VLCJ derrière le contrat commun, capacités déclarées depuis `ClientCapabilities`. | une lecture directe et une lecture convertie, sur Windows |
@@ -80,8 +80,10 @@ Trois risques, par ordre de gravité :
 1. **Le lecteur VLCJ ne rendra pas ce que Media3 rend.** Sous-titres incrustés, HDR transmis tel quel,
    mode tunnel : il faudra constater, pas espérer. C'est l'étape à faire *tôt* si l'on veut savoir, et
    je propose de la sonder dès l'étape 3 par un essai jetable avant de s'engager sur la suite.
-2. **Compose Multiplatform impose ses versions.** Le compilateur Compose, `lifecycle` et `material3`
-   devront s'aligner sur ce que JetBrains publie. Une incompatibilité se paie en attente, pas en code.
+2. ~~**Compose Multiplatform impose ses versions.**~~ **Levé le 27 août 2026.** Compose Multiplatform
+   1.9.3 compile **et s'exécute** avec Kotlin 2.3.21 — la version exacte de l'application Android.
+   Vérifié en rejouant la sonde sur cette combinaison : 23,98 i/s en régime, 5,0 ms par image, chiffres
+   identiques à ceux obtenus avec Kotlin 2.2.20. Aucun alignement à attendre, aucune rétrogradation.
 3. **Les 215 reports de ressources** sont mécaniques mais nombreux : c'est là qu'un texte se perd sans
    qu'aucun test ne le voie. Un cas qui compare les clés déclarées et les clés utilisées éviterait ça.
 
@@ -154,9 +156,10 @@ travaux, non des paris : le HDR transmis tel quel, les sous-titres, le déplacem
 changement de piste audio, et la lecture du flux HLS du serveur — ce dernier point étant déjà établi
 par le client WPF actuel, qui emploie le même moteur.
 
-Une contrainte de version, confirmée : Compose Multiplatform 1.9.3 s'aligne sur **Kotlin 2.2**, quand
-l'application Android est en **2.3.21**. L'alignement se fera, mais il se paiera en attente d'une
-publication, pas en code.
+Une contrainte de version que je croyais confirmée **ne l'est pas** : la sonde a d'abord été écrite en
+Kotlin 2.2.20, et j'en avais conclu que Compose Multiplatform imposerait cette version à un projet qui
+est en 2.3.21. Rejouée telle quelle en **2.3.21**, elle compile et rend exactement les mêmes chiffres.
+La supposition venait de moi, pas de l'outil.
 
 ## 7 bis. Deux directives reçues en cours de route
 
