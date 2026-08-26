@@ -31,3 +31,7 @@ TestResults/
 artifacts/
 *.apk
 *.apkg
+
+# Caches Python des utilitaires d empaquetage.
+__pycache__/
+*.pyc
