@@ -1,0 +1,20 @@
+<resources>
+    <!--
+        L'encre de la marque, la même que `#080b12` du client Web. Elle sert de fond aux écrans, à
+        l'icône adaptative et à l'écran de démarrage : partout où l'on regarde l'application.
+    -->
+    <color name="encre">#080B12</color>
+
+    <!--
+        Le noir du lecteur, et il est vraiment noir.
+
+        L'encre porte une pointe de bleu — c'est ce qui donne son caractère à l'interface, et c'est
+        exactement ce qu'il ne faut pas derrière une image. Un film qui n'occupe pas tout l'écran
+        laisse voir le fond de la fenêtre de part et d'autre : avec l'encre, ces bandes se détachaient
+        en gris bleuté sur un téléviseur, et les noirs du film paraissaient plus sombres que le cadre
+        censé disparaître. Le cadre d'une image doit être invisible, donc noir.
+
+        Ce nom remplace un `black` qui valait `#080B12`, c'est-à-dire tout sauf du noir.
+    -->
+    <color name="noir_lecteur">#FF000000</color>
+</resources>

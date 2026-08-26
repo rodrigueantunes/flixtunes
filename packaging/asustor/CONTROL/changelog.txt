@@ -1,0 +1,389 @@
+0.5.6.r54
+- Retire completement le message SEI HDR10+ concurrent au lieu de modifier seulement son identifiant.
+- Conserve le Direct Play, chaque RPU Dolby Vision, les autres SEI, la video, l'audio et les horodatages.
+- Ajoute un journal temporaire borne du codec Android TV, consultable sur le NAS apres un essai.
+- Charge les catalogues Films et Series au choix du profil TV et prepare les premieres affiches avant le menu.
+- Chauffe progressivement le cache disque et rend les sauts A-Z locaux sans diminuer la definition.
+- Ne change pas le demarrage, la pagination ou le cache des telephones et tablettes.
+
+0.5.6.r53
+- Corrige le decalage de la VF Web en conservant la video sans perte et en stabilisant seulement l'audio secondaire en AAC.
+- Maintient Lucky en Direct Play et neutralise HDR10+ meme si une ancienne analyse ne listait pas le format compagnon.
+- Couvre les codecs exposes comme Dolby Vision ou HEVC et controle aussi leur initialisation.
+- Affiche le nombre de signaux HDR10+ reellement neutralises dans Infos lecture.
+- Precharge les prochaines rangees TV, espace les raccords de pages et retire un collecteur de focus par jaquette.
+- Ne change ni les donnees, ni les clients tactiles, ni les artefacts anterieurs.
+
+0.5.6.r52
+- Garantit la piste francaise Web par remux sans perte lorsque Chrome/Edge joueraient la premiere piste du MKV.
+- Conserve le Direct Play Web quand la piste souhaitee est la premiere et le Direct Play multipiste sur Android.
+- Distingue Lucky, hybride Dolby Vision 8.1 plus HDR10+, d'Asterix Dolby Vision sans metadata HDR10+.
+- Maintient le Direct Play Android et neutralise seulement les SEI HDR10+ concurrents quand Dolby Vision est prioritaire.
+- Ne modifie ni les NAL RPU Dolby Vision, ni l'image HEVC, ni l'audio et ne reencode rien.
+- Conserve le changement HDR a la volee et tous les artefacts r51.
+
+0.5.6.r51
+- Isole le choix de piste audio Web par media afin qu'un index d'un autre film ne remplace plus la VF.
+- Conserve la selection audio Android validee, avec equivalences fr/fra/fre et exclusion de l'audiodescription.
+- Ecrit reellement la boite Dolby Vision dvcC/dvvC pendant le remux dvh1.
+- Detecte les flux hybrides Dolby Vision profil 8.1, HDR10 et HDR10+.
+- Bascule Dolby Vision/HDR10+ a la volee par remux sans reencoder l'image ni perdre la position.
+- Retire le maintien Bas alphabetique et conserve l'index lateral A-Z.
+- Reserve Gauche/Droite au transport lorsque la timeline TV a le focus, sinon garde la navigation des commandes.
+- Reduit encore le travail hors ecran uniquement sur Android TV sans diminuer la qualite des affiches.
+- Ne modifie aucune donnee et conserve tous les artefacts r50.
+
+0.5.6.r50
+- Fait suivre les jaquettes pendant la descente A-Z sans transformer la lettre en filtre.
+- Rend le focus a la jaquette ouverte au retour et neutralise temporairement la poignee alphabetique.
+- Place le focus visuel sur la barre du lecteur TV pendant les sauts gauche/droite.
+- Ajoute taille, fond transparent ou sombre et quatre couleurs de sous-titres sur Android et Web.
+- Reduit encore la precomposition hors ecran Android TV sans diminuer la qualite des affiches.
+- Conserve la chaine Dolby Vision validee et affiche le signal reellement reconnu par Media3.
+- Ajoute seulement une colonne de couleur de sous-titre et conserve toutes les donnees r49.
+
+0.5.6.r49
+- Affiche les groupes a l'ouverture, puis uniquement les profils du groupe choisi.
+- Ajoute, renomme et supprime les groupes sans autoriser la suppression d'un groupe occupe.
+- Ajoute la case compte enfant et un age obligatoire de 0 a 17 ans.
+- Filtre cote serveur films, series, recherches, recommandations, genres, listes, personnes, fiches et lecture directe.
+- Recupere les classifications film et TV et conserve visibles les contenus reellement non classes.
+- Rattrape une seule fois la classification des bibliotheques existantes sans reecrire titres, affiches ou corrections.
+- Migre tous les anciens profils dans le groupe Famille sans supprimer aucune donnee.
+- Conserve sans modification le lecteur, Dolby Vision, HDR, Atmos, reprise, seeks et optimisations r48.
+
+0.5.6.r48
+- Positionne A-Z sur la premiere jaquette demandee tout en gardant les titres avant et apres.
+- Restaure la jaquette Android exacte apres fermeture d'une fiche.
+- Affiche la lettre parcourue pendant le maintien Bas et ne saute qu'au relachement.
+- Reduit fortement la precomposition hors ecran des grilles et des huit rails Android TV.
+- Conserve le meme relief de focus sans animateurs ni onde tactile inutiles sur TV.
+- Evite les allocations repetees des libelles et initiales de jaquette.
+- Conserve la definition, le cache et le decodage des affiches ainsi que toute la lecture r46/r47.
+- Ne modifie ni schema ni donnees et conserve tous les artefacts anterieurs.
+
+0.5.6.r47
+- Transforme A-Z en saut vers la premiere jaquette de la lettre sans filtrer le catalogue.
+- Ajoute le meme index lateral droit, cliquable a la souris, aux catalogues Web.
+- Pagine depuis le rang absolu atteint et calcule correctement les titres restants.
+- Precompose et precharge les prochaines rangees et rails Android TV sans reduire les affiches.
+- Livre un APK release optimise signe en plus des variantes de diagnostic.
+- Ne modifie pas la lecture Dolby Vision, HDR, Atmos, reprise ou seek validee en r46.
+- Ne modifie ni schema ni donnees et conserve toutes les fonctions r46.
+
+0.5.6.r46
+- Affiche acteurs, realisateurs et equipe, puis ouvre leur filmographie locale.
+- Recherche aussi par personne, genre et collection sans ralentir les grilles ordinaires.
+- Ajoute clic droit Web et appui long Android/TV pour Lecture, Infos, Vu et Ma liste.
+- Restaure la position et le focus exacts, puis focalise Lecture a l'ouverture d'une fiche TV.
+- Ajoute l'index A-Z lateral TV avec saut serveur direct par lettre.
+- Force la reconnaissance Dolby Vision par profil source et balise dvh1 lors du remux sans reencodage.
+- Reduit le travail de composition et anticipe les pages Android TV sans baisser la qualite des affiches.
+- Ajoute seulement les tables de personnes et credits ; les donnees r45 sont conservees.
+
+0.5.6.r45
+- Ajoute au profil la priorite Dolby Vision, HDR10+, HDR10, HLG ou SDR, avec repli automatique.
+- Propose dans le lecteur uniquement les sorties HDR reellement disponibles pour le fichier et l'appareil.
+- Verifie le profil Dolby Vision exact quand le pilote Android n'annonce aucun niveau.
+- Marque films, episodes, saisons et series vus, sur Android comme sur le Web.
+- Affiche la coche Vu en bas a droite des jaquettes de films et series termines.
+- Fluidifie les affiches Android TV sans reduire leur qualite et conserve le transport telecommande r44.
+- Ajoute seulement une preference de profil compatible ; toutes les donnees r44 sont conservees.
+
+0.5.6.r44
+- Pilote directement le film avec gauche/droite et OK sur telecommande.
+- Conserve toutes les options TV via haut/bas et le parcours au focus.
+- Ferme panneau, commandes puis lecteur sur trois retours distincts.
+- Ajoute tape simple, double tape cumule et confirmation du saut au tactile.
+- Place lecture/pause au centre sur telephone et tablette.
+- Replie la recherche locale Films/Series sans toucher a la recherche globale.
+- Ne modifie ni les donnees, ni le serveur, ni la qualite HDR/Dolby Vision/Atmos de r43.
+
+0.5.6.r43
+- Reprend films et episodes a la seconde exacte au lieu d'un pourcentage arrondi.
+- Conserve la position absolue apres reprise, remux, transcodage et navigation.
+- Rearme le renderer video HDR apres un seek direct sans modifier le passthrough Atmos.
+- Detecte Dolby Vision par l'ecran, le decodeur et ses profils reels 4 a 10.
+- Garde HDR10, HDR10+ et HLG pendant un repli compatible lorsque la chaine sait les preserver.
+- Ajoute uniquement des champs API compatibles ; aucune migration de schema ou de donnees.
+
+0.5.6.r42
+- Aligne le paquet ASUSTOR sur la revision Android et Android TV r42.
+- Rend la grille Android TV plus dense tout en conservant les textes et le focus de telecommande.
+- Ne change ni le schema, ni les donnees, ni le comportement serveur de r41.
+
+0.5.6.r40
+- Utilise TVmaze comme preuve d'annee mais charge la fiche finale et les traductions depuis TMDB.
+- Lit explicitement les traductions francaises des episodes TMDB sans requete supplementaire.
+- Ne fige plus a 100 % un repli TVmaze ou Wikidata lorsque TMDB est momentanement indisponible.
+- Reevalue les fiches existantes avec la generation de metadonnees 12.
+
+0.5.6.r32
+- Reunit une meme oeuvre traduite differemment par TMDB, TVDB et Wikidata.
+- Refuse les miniatures video presque entierement noires.
+- Journalise decision, fournisseur, confiance et resultat d'illustration sans jeton.
+- Corrige la revision serveur illisible dans le diagnostic.
+- Reevalue les fiches r31 avec la generation de metadonnees 6.
+
+0.5.6.r31
+- Conserve les titres alternatifs TMDB qui ont permis de retrouver une oeuvre.
+- Reconnait II a XX comme rangs de suite et les franchises placees apres un sous-titre.
+- Lit une annee entre parentheses ou crochets dans le titre integre du conteneur.
+- Conserve un titre integre plus complet comme alias au lieu de creer un faux conflit.
+- Reevalue les affiches noires existantes avec la generation de metadonnees 5.
+
+0.5.6.r30
+- Retrouve les fichiers opaques grace aux titres, annees et identifiants integres.
+- Reutilise les dossiers de films et les fichiers .plexmatch comme preuves explicites.
+- Fusionne tvshow.nfo, season.nfo et le NFO propre a l'episode selon leur portee.
+- Reconnait une meme oeuvre datee a un an d'ecart selon les fournisseurs, dont BAC Nord.
+- Affiche le fichier original d'un film ou le dossier racine original d'une serie.
+- Reevalue les anciennes fiches pauvres avec la generation de metadonnees 4.
+
+0.5.6.r29
+- Une proposition en revue ne modifie plus titre, annee, identifiant ni regroupement.
+- Refuse l'automatisme quand l'annee est eloignee ou deux oeuvres sont au coude a coude.
+- Continue l'elargissement de recherche jusqu'a une correspondance reellement sure.
+- Reconnait tmdbid, imdbid, tvdbid et les NFO movie, tvshow et season.
+- Compare les titres Unicode sans effacer les alphabets non latins.
+- Valide puis journalise chaque correction manuelle avant de l'appliquer.
+
+0.5.5.r3
+- Lecteur : supprime la barre de commandes en double et son temps transcode.
+- Plein ecran sur le lecteur FlixTunes, avec la duree reelle du media.
+- Ordre des episodes : une numerotation manquante ne passe plus en premier.
+- Reconnait un fichier nomme S02E03 en tete, pris jusqu'ici pour un film.
+- Resume d'episode : plus d'emprunt au synopsis de la serie quand il manque.
+- TVmaze fournit desormais titres et resumes d'episodes, en un appel par serie.
+- Correspondance manuelle : accepte TVmaze et Wikidata, refuses jusqu'ici.
+- Recherche manuelle : annee minimale saisissable au lieu d'un filtre exact impose.
+- Corrige la correspondance depuis la fiche, ouverte sur le bon titre.
+- Depart automatique par le nombre de saisons presentes sur le disque.
+- Ecran noir remplace par un message lisible en cas d'erreur d'affichage.
+- Affichage : titres sur deux lignes, grille adaptee au 4K, cibles tactiles conformes.
+- Session de profil expiree : redemande le code au lieu d'ouvrir une page vide.
+
+0.5.5.r2
+- Corrige un defaut majeur : les pages Films et Series restaient entierement noires.
+- Deux methodes d'API homonymes se masquaient, envoyant le catalogue vers la mauvaise route.
+- Ajoute une barriere d'erreur : un ecran noir muet devient un message lisible et actionnable.
+
+0.5.5.r1
+- Corrige les jaquettes deformees et superposees du rail de selection.
+- Corrige une negociation qui refusait a tort MKV, HEVC et les sources 4K lisibles.
+- Ne deduit plus la definition maximale de la taille de l'ecran mais du decodage reel.
+- Supprime un plafond de qualite qui bridait a 720p dans une fenetre non maximisee.
+- Ajoute le choix manuel HDR conserve / converti en SDR pendant la lecture.
+- Rend les fenetres utilisables au clavier : focus place, enferme, puis rendu.
+
+0.5.4.r2
+- Une analyse ne vide plus la mediatheque quand le dossier est demonte ou illisible.
+- Refuse une disparition massive de fichiers en une seule analyse, sauf confirmation.
+- N'importe plus un fichier encore en cours de copie, qui produisait une fiche tronquee.
+- Journalise les fichiers restes a la porte avec leur motif et leur nombre de tentatives.
+- Supprime une extraction d'image relancee a chaque analyse sur les fiches sans affiche.
+
+0.5.4.r1
+- Accueil 75 fois plus rapide sur une grande mediatheque : 2696 ms mesures, 36 ms apres correction.
+- Supprime 400 requetes par affichage de l'accueil et une recherche qui reconstruisait tout le catalogue.
+- Divise par treize les donnees transmises a l'ouverture grace a un catalogue pagine.
+- Trie et filtre desormais sur la totalite des fiches et non sur la seule page affichee.
+- Web et Android chargent la suite du catalogue au defilement.
+
+0.5.3.r1
+- Corrige un defaut majeur : une correspondance corrigee a la main etait effacee au scan suivant.
+- Ajoute des corrections transactionnelles annulables avec journal d'audit filtrable.
+- Regroupe les doublons sans supprimer la moindre fiche ni le moindre fichier.
+- Previsualise une correction de masse en excluant les fiches deja corrigees a la main.
+
+0.5.2.r2
+- Corrige la duree affichee en lecture : le temps reel remplace celui du flux transcode.
+- Repare les progressions enregistrees a tort comme terminees et retablit la reprise.
+- Ajoute une barre de progression distinguant portion encodee, portion chargee et position lue.
+- Android : lecteur en plein ecran, ecran de demarrage avec progression, creation de profils.
+- Web : renommage, couleur, langue et code PIN modifiables sur un profil existant.
+
+0.5.2.r1
+- Une correction manuelle ou un NFO local n'est plus jamais ecrase par un fournisseur distant.
+- Choisit titres et affiches dans la langue de la bibliotheque, avec repli anglais puis image extraite.
+- Refuse les images invalides : mauvais type, vignette minuscule ou proportions incorrectes.
+- Economise le quota des fournisseurs par un cache conditionnel et continue de servir hors ligne.
+
+0.5.1.r1
+- Remplace l'analyse des noms de fichiers par un moteur à candidats explicable.
+- Ajoute trois seuils : application seule, revue humaine, refus, avec les indices de chaque décision.
+- Ne prend plus un nombre du titre pour une année de sortie et gère les préfixes d'équipe.
+- Mesuré sur 10 000 noms synthétiques et sur cinq déformations de noms courantes.
+
+0.5.0.r1
+- Ajoute un corpus de qualification de la lecture, entièrement synthétique et reproductible.
+- Rejoue la négociation sur cinq profils clients de référence et vérifie chaque décision attendue.
+- Mesure la synchronisation audio/vidéo et en fait un critère à 40 ms près.
+- Publie un rapport de qualification lisible par machine et par humain.
+
+0.4.9.r1
+- Essaie réellement chaque accélérateur au démarrage au lieu de se fier à sa seule présence.
+- Écarte un pilote plus lent que le processeur, cas fréquent sur Quick Sync mal servi par son pilote.
+- Réduit la définition avant de refuser une lecture et n'interrompt jamais une lecture directe.
+- Fait céder les analyses de bibliothèque aux lectures en cours, avec reprise automatique.
+- Ajoute le tableau « capacité de mon serveur » avec débits mesurés et alertes actionnables.
+
+0.4.8.r1
+- Relève tout le modèle colorimétrique, mastering display et MaxCLL/MaxFALL des sources HDR.
+- Lit un Dolby Vision 8.1 en HDR10 sur un téléviseur HDR10 au lieu de le transcoder.
+- Corrige le tone mapping HDR vers SDR : image trois fois trop sombre en 0.4.7.
+- Conserve HDR10 lors d'un réencodage quand un encodeur HEVC 10 bits est disponible.
+- Annonce toute perte de format avant la lecture et détaille la chaîne colorimétrique.
+
+0.4.7.r1
+- Ajoute HLS adaptatif multi-qualité et DASH Android.
+- Partage les transcodages entre clients et borne le cache par durée et espace disque.
+- Ajoute qualité Auto/manuelle, mesure réseau et récupération après coupure.
+
+0.4.6.r1
+- Ajoute reprise avec retour de contexte, chapitres, vignettes, PiP, minuteur et lecture suivante.
+- Ajoute les informations techniques de lecture et les préférences de continuité par profil.
+
+0.4.5.r1
+- Ajoute la sélection linguistique déterministe et les rôles audio.
+- Négocie le passthrough home cinéma depuis la sortie Android TV réelle.
+- Ajoute AAC, AC-3 et Opus configurables, normalisation EBU R128, mode nuit et anti-écrêtage.
+
+0.4.4.r1
+- Ajoute le moteur universel de sous-titres : formats texte et image, langues, forcés et SME.
+- Convertit vers WebVTT sans corrompre les accents et incruste VobSub/PGS lorsque nécessaire.
+- Persiste sélection, synchronisation, style et encodage par profil et média.
+- Expose les pistes convertibles au lecteur Android Media3.
+
+0.4.3.r1
+- Ajoute une matrice de compatibilité FFmpeg vérifiée dans l'administration.
+- Expose les décodeurs, encodeurs, conteneurs, filtres, accélérateurs et composants critiques manquants.
+- Ajoute les modes Auto, Direct forcé, Remux sans perte et Compatible au lecteur Web.
+- Rend le choix Auto/Compatible explicite dans le client Android.
+
+0.4.2.r1
+- Embarque FFmpeg 8.1 complet : E-AC-3, AC-3, DTS, TrueHD et les principaux formats ne dépendent plus du paquet FFmpeg ADM.
+- Ajoute TVmaze et Wikidata/Wikipedia comme agents de métadonnées et d'affiches sans clé API.
+- Localise aussi en français les résumés de séries et de saisons lorsque TVmaze ne les traduit pas.
+- Enrichit automatiquement les bibliothèques existantes après mise à jour, sans perdre les données.
+- Normalise les dossiers de séries suffixés par une année et fiabilise la relance de lecture compatible.
+
+0.4.1.r1
+- Génère localement les affiches et fonds manquants depuis les vidéos, avec cache persistant.
+- Fiabilise la lecture Android mobile par Direct Play MP4 ou repli HLS MPEG-TS H.264/AAC.
+- Conserve l'accès au profil protégé et la reprise dans le lecteur Media3.
+
+0.4.0.r1
+- Protège réellement les profils PIN par jeton de session vérifié sur les routes personnelles.
+- Rend les annonces mDNS uniques par serveur et finalise la qualification Web, Android et ASUSTOR.
+- Corrige les actions Web sans corps, synchronise l'état vu et remplace la saisie PIN native par un dialogue intégré.
+- Détecte une session de profil périmée après redémarrage et redemande proprement le PIN sur Web et Android.
+
+0.3.9.r1
+- Annonce MKV, MOV, AVI, HDR et profils Dolby Vision réels à la négociation serveur.
+- Ajoute le repli Android automatique Direct Play vers transcodage compatible.
+
+0.3.8.r1
+- Ajoute navigation Android TV Accueil/Films/Séries/Recherche à la télécommande.
+- Consolide focus, agrandissement, bannière Leanback et détails TV.
+
+0.3.7.r1
+- Ajoute la navigation mobile Accueil/Films/Séries/Recherche.
+- Optimise les rails tactiles, fiches, reprise et lecteur plein écran.
+
+0.3.6.r1
+- Sépare dépôt Android, API, session, découverte et état de présentation.
+- Valide les fondations mobile/TV par tests JVM et APK debug.
+
+0.3.5.r1
+- Ajoute le tableau de diagnostic serveur et les incidents de transcodage.
+- Permet une sauvegarde immédiate depuis l'administration Web.
+
+0.3.4.r1
+- Ajoute les profils protégés par PIN haché avec vérification serveur.
+- Consolide reprise, historique, terminé, Ma liste et préférences par profil.
+
+0.3.3.r1
+- Ajoute recherche et filtres d'état aux catalogues Films et Séries.
+- Consolide fiches séries, saisons, épisodes, progression et affiches de repli.
+
+0.3.2.r1
+- Renforce la navigation Accueil/Films/Séries/Historique et ses états dédiés.
+- Ajoute les raccourcis clavier /, Alt+H, Alt+M et Alt+S.
+
+0.3.1.r1
+- Ajoute récupération réseau/décodeur HLS, relance compatible et raisons de décision.
+- Mémorise la piste audio et fiabilise la reprise de lecture Web.
+
+0.3.0.r1
+- Conserve jusqu'à 5.1 canaux lors d'une conversion audio et détecte Atmos/DTS:X plus largement.
+- Fiabilise l'incrustation PGS/VobSub avec redimensionnement et repli logiciel.
+
+0.2.9.r1
+- Détecte les profondeurs 10/12 bits et valide les profils Dolby Vision du client.
+- Ajoute un tone mapping SDR BT.709 testé avec FFmpeg réel.
+
+0.2.8.r1
+- Limite les transcodages simultanés et nettoie les sessions anciennes.
+- Ajoute repli matériel/logiciel, diagnostics bornés et tests FFmpeg/codecs réels.
+
+0.2.7.r1
+- Formalise Direct Play, Direct Stream et transcodage avec raisons détaillées.
+- Prend en compte débit réseau, résolution, HDR, audio et pistes sélectionnées.
+
+0.2.6.r1
+- Étend le centre de correspondances avec corrections manuelles verrouillées.
+- Protège titre, année et résumé corrigés contre les rescans automatiques.
+
+0.2.5.r1
+- Interroge les fournisseurs en parallèle et isole chaque panne distante.
+- Ajoute le suivi de santé, latence et dernière erreur par fournisseur.
+
+0.2.4.r1
+- Étend la détection aux conventions Anime, multi-épisodes, dates, éditions et types documentaires/concerts.
+- Ajoute un score de confiance et des avertissements explicables à l'analyse des noms.
+
+0.2.3.r1
+- Ajoute la provenance, la langue, la confiance et le verrouillage pour chaque champ de métadonnées.
+- Expose l'audit de provenance par élément de catalogue.
+
+0.2.2.r1
+- Garantit la priorité aux titres, résumés et affiches dans la langue de la bibliothèque, avec repli anglais.
+- Ajoute le changement de langue par bibliothèque et sa réindexation automatique.
+
+0.2.1.r1
+- Corrige les transcodages H.264 aux dimensions impaires et active VAAPI en mode automatique.
+- Ajoute la configuration Web sécurisée de TMDB et l'actualisation automatique des métadonnées.
+- Remplace les journaux FFmpeg bruts par des diagnostics compréhensibles.
+
+0.2.0.r3
+- Corrige la page blanche lors de l'ajout d'une bibliothèque depuis une adresse HTTP locale.
+
+0.2.0.r2
+- Paquet précompilé : installation rapide sans compilation sur le NAS.
+
+0.2.0
+- Première structure APKG FlixTunes pour ADM.
+- Installation native Node.js 24 et gestion persistante des données.
+- Démarrage, arrêt, sauvegarde avant mise à jour et retour arrière.
+0.5.6.r33
+- Priorité TMDB déterministe à score égal, sans court-circuit Wikidata.
+- Rechargement de la fiche TMDB par identifiant pour récupérer les vraies illustrations.
+- Les captures vidéo ne servent plus de jaquettes et les anciennes sont retirées.
+- SpiderMan/Spider-Man n'est plus considéré comme un conflit de titre intégré.
+0.5.6.r34
+- Un titre et une année exacts battent les bonus homonymes, même à score numérique égal.
+- La preuve « suite reconnue » n'est plus confondue avec un titre littéralement exact.
+- TMDB peut départager une hésitation locale et la recherche retire aussi l'article initial.
+- La génération de métadonnées 8 reprend automatiquement les fiches r33.
+0.5.6.r35
+- Un titre exact confirmé par deux fournisseurs peut réparer un rejet du parseur local.
+- Les tags MKV finissant par une année et FRENCH sont nettoyés avant la recherche.
+- Le rang TMDB départage Superman 2025 uniquement entre deux fiches strictement exactes.
+- La génération de métadonnées 9 reprend automatiquement les fiches r34.
+0.5.6.r36
+- Répare le troisième OSS 117 depuis les anciens tags MKV mis en cache.
+- Retient la fiche TMDB illustrée de BAC Nord face à l'année de festival Wikidata.
+- Regroupe les fichiers d'un même film sous une seule fiche sans toucher aux originaux.
+- Affiche résolution, HDR et codec dans les fiches films et séries, avec choix de version.
+- La génération de métadonnées 10 reprend automatiquement les fiches r35.

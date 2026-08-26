@@ -1,0 +1,32 @@
+services:
+  flixtunes:
+    build: .
+    image: flixtunes:0.5.6
+    container_name: flixtunes
+    restart: unless-stopped
+    network_mode: host
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      PORT: "${PORT:-4000}"
+      TMDB_ACCESS_TOKEN: "${TMDB_ACCESS_TOKEN:-}"
+      FLIXTUNES_HW_ACCEL: "${FLIXTUNES_HW_ACCEL:-auto}"
+      FLIXTUNES_WATCH_POLLING: "${FLIXTUNES_WATCH_POLLING:-0}"
+      FLIXTUNES_SCAN_INTERVAL_HOURS: "${FLIXTUNES_SCAN_INTERVAL_HOURS:-6}"
+      FLIXTUNES_BACKUP_INTERVAL_HOURS: "${FLIXTUNES_BACKUP_INTERVAL_HOURS:-24}"
+      FLIXTUNES_BACKUP_RETENTION: "${FLIXTUNES_BACKUP_RETENTION:-7}"
+      FLIXTUNES_API_TOKEN: "${FLIXTUNES_API_TOKEN:-}"
+    volumes:
+      - "${FLIXTUNES_DATA_ROOT:-./data}:/app/data"
+      - "${FLIXTUNES_MEDIA_ROOT:-./media}:/media:ro"
+    tmpfs:
+      - /tmp:size=1G
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||4000)+'/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 25s

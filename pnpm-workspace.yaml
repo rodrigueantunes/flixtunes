@@ -1,0 +1,29 @@
+packages:
+  - apps/*
+  - packages/*
+
+enableGlobalVirtualStore: false
+nodeLinker: hoisted
+storeDir: .pnpm-store
+
+# Depuis pnpm 10, chaque « pnpm run » vérifie l'état des dépendances et lance au besoin une
+# installation complète. Le dépôt vivant sur un partage réseau, cette installation implicite échoue
+# régulièrement en ERR_PNPM_ENOTEMPTY : pnpm copie un paquet vers « <nom>_tmp_<pid>_<n> » puis ne
+# parvient pas à remplacer le répertoire d'origine, laissant une arborescence à demi écrite. Elle a
+# interrompu deux fois la construction du paquet ASUSTOR et détruit le manifeste de
+# @rollup/rollup-win32-x64-msvc, ce qui a rendu toute la suite de tests inexécutable.
+#
+# Les installations volontaires restent inchangées : « pnpm install » fonctionne normalement.
+# Ce réglage se déclare ici et non dans .npmrc — pnpm 10 a déplacé ses options vers ce fichier.
+verifyDepsBeforeRun: false
+
+allowBuilds:
+  esbuild: true
+
+# Sous Windows, pnpm exécute les scripts de paquet via CMD.EXE — qui refuse un répertoire courant en
+# chemin UNC : il retombe sur le répertoire Windows, et tout chemin relatif d'un script (« tsc -p
+# tsconfig.json ») devient introuvable. Le dépôt vivant sur un partage réseau, c'est le cas normal ici.
+#
+# Bash accepte ce répertoire, et comprend le « && » qu'emploient plusieurs scripts — ce que Windows
+# PowerShell 5.1, autre candidat, ne sait pas faire.
+scriptShell: C:/Program Files/Git/bin/bash.exe

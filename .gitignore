@@ -1,0 +1,33 @@
+node_modules/
+.pnpm-store/
+dist/
+.vite/
+coverage/
+data/
+*.db
+*.db-shm
+*.db-wal
+.env
+.DS_Store
+Thumbs.db
+local.properties
+.gradle/
+**/build/
+
+# Sorties de compilation .NET. Sans elles, le premier index emportait dix copies de
+# `libavcodec_plugin.dll` — dix-sept mégaoctets pièce — pour quatre cibles et deux configurations.
+apps/windows/**/bin/
+apps/windows/**/obj/
+publish/
+
+# Base de données et clés propres aux suites de tests. Elles contiennent une clé de chiffrement de
+# fournisseurs — de test, mais une clé quand même — et plus de cent mégaoctets de données générées.
+.vitest-data/
+apps/server/.vitest-data/
+TestResults/
+
+# Artefacts de livraison : deux cents mégaoctets par paquet, reconstructibles à l'identique depuis
+# les sources. Ils se publient, ils ne se versionnent pas.
+artifacts/
+*.apk
+*.apkg

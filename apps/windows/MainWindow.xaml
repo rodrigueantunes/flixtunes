@@ -1,0 +1,39 @@
+<Window x:Class="FlixTunes.Windows.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="FlixTunes" Width="1320" Height="820" MinWidth="900" MinHeight="600" WindowStartupLocation="CenterScreen">
+  <Window.Resources>
+    <BooleanToVisibilityConverter x:Key="BoolVisibility"/>
+    <DataTemplate x:Key="MediaCard">
+      <Button Tag="{Binding}" Click="Media_Click" Padding="0" Margin="0,0,14,8" Background="Transparent" Width="165">
+        <StackPanel HorizontalAlignment="Left">
+          <Border Width="165" Height="245" CornerRadius="12" Background="#17294C" ClipToBounds="True">
+            <Grid><Image Source="{Binding AbsolutePoster}" Stretch="UniformToFill"/><TextBlock Text="{Binding Title[0]}" FontSize="54" Foreground="#51627E" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              <Border Background="#D9080B12" CornerRadius="7" Padding="6,3" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8" Visibility="{Binding Completed, Converter={StaticResource BoolVisibility}}"><TextBlock Text="✓ Vu" FontSize="11"/></Border>
+              <ProgressBar Value="{Binding ProgressPercent}" Maximum="100" Height="4" VerticalAlignment="Bottom" Foreground="{StaticResource Blue}" Background="#33FFFFFF"/>
+            </Grid>
+          </Border><TextBlock Text="{Binding Title}" FontWeight="SemiBold" Margin="2,8,2,0" TextTrimming="CharacterEllipsis"/><TextBlock Text="{Binding Meta}" Foreground="{StaticResource Muted}" FontSize="12" Margin="2,3"/>
+        </StackPanel>
+      </Button>
+    </DataTemplate>
+  </Window.Resources>
+  <Grid>
+    <Grid.RowDefinitions><RowDefinition Height="70"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <Border Grid.Row="0" Background="#F2070A10" Padding="30,0"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="260"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <StackPanel Orientation="Horizontal" VerticalAlignment="Center"><Image Source="Assets/flixtunes-mark.png" Width="48" Height="48"/><TextBlock Text="FlixTunes" FontSize="23" FontWeight="Bold" VerticalAlignment="Center"/></StackPanel>
+      <TextBox x:Name="SearchBox" Grid.Column="2" VerticalAlignment="Center" TextChanged="Search_Changed" ToolTip="Films, séries, épisodes"/>
+      <ComboBox x:Name="ProfileBox" Grid.Column="3" Width="150" Margin="10,0" VerticalAlignment="Center" SelectionChanged="Profile_Changed"/>
+      <Button Grid.Column="4" Content="Serveur" Click="Server_Click" Background="#243148" VerticalAlignment="Center"/>
+    </Grid></Border>
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"><StackPanel>
+      <Grid x:Name="Hero" Height="390"><Grid.Background><LinearGradientBrush StartPoint="0,0" EndPoint="1,0"><GradientStop Color="#173D7E"/><GradientStop Color="#080B12" Offset="1"/></LinearGradientBrush></Grid.Background>
+        <Image x:Name="HeroImage" Stretch="UniformToFill" Opacity=".46"/><Rectangle><Rectangle.Fill><LinearGradientBrush StartPoint="0,0" EndPoint="1,0"><GradientStop Color="#F0080B12"/><GradientStop Color="#40080B12" Offset=".65"/><GradientStop Color="#00080B12" Offset="1"/></LinearGradientBrush></Rectangle.Fill></Rectangle>
+        <StackPanel Width="600" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="55,40"><TextBlock x:Name="HeroEyebrow" Text="À DÉCOUVRIR" Foreground="#8EB3FF" FontWeight="Bold"/><TextBlock x:Name="HeroTitle" Text="Votre cinéma local" FontSize="55" FontWeight="Black" TextWrapping="Wrap" LineHeight="55" Margin="0,8"/><TextBlock x:Name="HeroMeta" Foreground="#D7DEEB" FontWeight="SemiBold"/><TextBlock x:Name="HeroOverview" TextWrapping="Wrap" Foreground="#C1C9D9" MaxHeight="72" Margin="0,10"/><StackPanel Orientation="Horizontal"><Button Content="▶  Lecture" Click="HeroPlay_Click"/><Button Content="Plus d’infos" Background="#334158" Click="HeroInfo_Click"/></StackPanel></StackPanel>
+      </Grid>
+      <StackPanel x:Name="SearchSection" Visibility="Collapsed"><TextBlock Text="Résultats" Style="{StaticResource SectionTitle}"/><ItemsControl x:Name="SearchItems" ItemTemplate="{StaticResource MediaCard}"><ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel Margin="34,0"/></ItemsPanelTemplate></ItemsControl.ItemsPanel></ItemsControl></StackPanel>
+      <StackPanel x:Name="ContinueSection"><TextBlock Text="Continuer à regarder" Style="{StaticResource SectionTitle}"/><ItemsControl x:Name="ContinueItems" ItemTemplate="{StaticResource MediaCard}"><ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel Margin="34,0"/></ItemsPanelTemplate></ItemsControl.ItemsPanel></ItemsControl></StackPanel>
+      <StackPanel><TextBlock Text="Ajouts récents" Style="{StaticResource SectionTitle}"/><ItemsControl x:Name="RecentItems" ItemTemplate="{StaticResource MediaCard}"><ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel Margin="34,0"/></ItemsPanelTemplate></ItemsControl.ItemsPanel></ItemsControl></StackPanel>
+      <StackPanel><TextBlock Text="Films" Style="{StaticResource SectionTitle}"/><ItemsControl x:Name="MovieItems" ItemTemplate="{StaticResource MediaCard}"><ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel Margin="34,0"/></ItemsPanelTemplate></ItemsControl.ItemsPanel></ItemsControl></StackPanel>
+      <StackPanel><TextBlock Text="Séries" Style="{StaticResource SectionTitle}"/><ItemsControl x:Name="ShowItems" ItemTemplate="{StaticResource MediaCard}"><ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel Margin="34,0"/></ItemsPanelTemplate></ItemsControl.ItemsPanel></ItemsControl></StackPanel>
+      <StackPanel><TextBlock Text="Déjà vus" Style="{StaticResource SectionTitle}"/><ItemsControl x:Name="CompletedItems" ItemTemplate="{StaticResource MediaCard}"><ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel Margin="34,0"/></ItemsPanelTemplate></ItemsControl.ItemsPanel></ItemsControl></StackPanel>
+    </StackPanel></ScrollViewer>
+    <Border Grid.Row="2" x:Name="StatusBar" Background="#E81A2434" Padding="18,10" Visibility="Collapsed"><TextBlock x:Name="StatusText"/></Border>
+  </Grid>
+</Window>

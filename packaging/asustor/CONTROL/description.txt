@@ -1,0 +1,1 @@
+FlixTunes transforme votre ASUSTOR en serveur multimédia local pour le Web, Windows, Android TV et Android mobile. Les médias ne sont ni déplacés ni renommés. Les comptes, progressions, bibliothèques et sauvegardes restent dans le partage FlixTunes pendant les mises à jour.

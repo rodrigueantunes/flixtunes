@@ -1,0 +1,78 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Mesure de débordement</title>
+<!--
+  Page d'instrumentation temporaire.
+
+  jsdom n'a pas de moteur de mise en page : aucun test unitaire ne peut dire qu'une page déborde à
+  320 px. Cette page charge l'application dans un cadre à la largeur voulue, puis relève les éléments
+  dont la boîte dépasse la largeur du cadre. Le résultat est écrit dans le document, ce qui permet de
+  le récupérer par `--dump-dom` sans avoir besoin d'un pilote de navigateur.
+
+  Elle vit dans `public/` le temps de la mesure et n'a pas vocation à être livrée.
+-->
+<body style="margin:0;background:#fff;color:#000;font:13px monospace">
+<div id="resultat">mesure en cours…</div>
+<script>
+const parametres = new URLSearchParams(location.search);
+const largeur = Number(parametres.get("w") || 320);
+const hauteur = Number(parametres.get("h") || 900);
+const route = parametres.get("route") || "";
+
+const cadre = document.createElement("iframe");
+cadre.style.cssText = `width:${largeur}px;height:${hauteur}px;border:0;position:absolute;left:-10000px`;
+cadre.src = `/${route}`;
+document.body.appendChild(cadre);
+
+/** Un chemin lisible jusqu'à l'élément, pour savoir quoi corriger. */
+function chemin(element) {
+  const morceaux = [];
+  for (let noeud = element; noeud && noeud.tagName && morceaux.length < 4; noeud = noeud.parentElement) {
+    const classes = (noeud.className || "").toString().trim().split(/\s+/).filter(Boolean).slice(0, 2);
+    morceaux.unshift(noeud.tagName.toLowerCase() + (classes.length ? "." + classes.join(".") : ""));
+  }
+  return morceaux.join(" > ");
+}
+
+setTimeout(() => {
+  const doc = cadre.contentDocument;
+  const lignes = [];
+  if (!doc) { document.getElementById("resultat").textContent = "CADRE INACCESSIBLE"; return; }
+
+  const largeurDocument = doc.documentElement.scrollWidth;
+  lignes.push(`VIEWPORT=${largeur} SCROLLWIDTH=${largeurDocument} DEBORDE=${largeurDocument > largeur ? "OUI" : "non"}`);
+  lignes.push(`FENETRE_REELLE=${window.innerWidth}`);
+
+  // Les éléments dont le bord droit dépasse la largeur du cadre, ou dont la largeur seule la dépasse.
+  /** Vrai si un ancêtre gère lui-même son débordement horizontal : un rail, par exemple. */
+  function dansUnConteneurDefilant(element) {
+    for (let noeud = element.parentElement; noeud && noeud !== doc.body; noeud = noeud.parentElement) {
+      const overflow = cadre.contentWindow.getComputedStyle(noeud).overflowX;
+      if (overflow === "auto" || overflow === "scroll" || overflow === "hidden") return true;
+    }
+    return false;
+  }
+
+  const fautifs = [];
+  for (const element of doc.querySelectorAll("body *")) {
+    const boite = element.getBoundingClientRect();
+    if (boite.width === 0 && boite.height === 0) continue;
+    // Un carrousel dépasse par construction : c'est ce qu'on lui demande. Seul un dépassement que
+    // personne ne rattrape est un défaut.
+    if (dansUnConteneurDefilant(element)) continue;
+    const depassement = Math.round(boite.right - largeur);
+    if (depassement > 1 || Math.round(boite.width) > largeur + 1) {
+      fautifs.push({ chemin: chemin(element), largeur: Math.round(boite.width), depassement });
+    }
+  }
+  // Les plus profonds d'abord seraient bruyants : on garde les plus larges, qui sont la cause.
+  fautifs.sort((a, b) => b.largeur - a.largeur);
+  for (const fautif of fautifs.slice(0, 12)) {
+    lignes.push(`  ${fautif.largeur}px (+${fautif.depassement}) ${fautif.chemin}`);
+  }
+  if (!fautifs.length) lignes.push("  aucun élément ne dépasse");
+
+  document.getElementById("resultat").textContent = lignes.join("\n");
+}, 6000);
+</script>
+</body>

@@ -1,0 +1,22 @@
+<resources>
+    <style name="Theme.FlixTunes" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item><item name="android:colorAccent">#2484FF</item><item name="android:navigationBarColor">#080B12</item><item name="android:windowLightStatusBar">false</item><item name="android:statusBarColor">#080B12</item>
+    </style>
+    <!--
+        Thème du lecteur : sans barre de titre et sur fond noir.
+        Sans thème explicite, l'activité hérite du thème de démarrage, qui n'est remplacé que par
+        `installSplashScreen()` — appelé uniquement par l'écran d'accueil. Le lecteur affichait donc
+        une barre d'action portant le nom de l'application.
+    -->
+    <style name="Theme.FlixTunes.Player" parent="Theme.FlixTunes">
+        <item name="android:windowBackground">@color/noir_lecteur</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+    <style name="Theme.FlixTunes.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/encre</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/flixtunes_mark</item>
+        <item name="windowSplashScreenAnimationDuration">650</item>
+        <item name="postSplashScreenTheme">@style/Theme.FlixTunes</item>
+    </style>
+</resources>

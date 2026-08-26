@@ -1,0 +1,266 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Textes de l'application.
+
+  Ils étaient écrits en dur dans le code : aucune traduction n'était possible, aucune relecture
+  d'ensemble non plus, et les formulations divergeaient d'un écran à l'autre sans qu'on puisse le
+  constater. Les rassembler ici les rend comparables — c'est en les mettant côte à côte qu'on voit
+  qu'un même geste s'appelait « Supprimer » ici et « Retirer » là.
+
+  Les valeurs qui ne s'affichent pas — clés de section, modes de lecture, codes de langue — restent
+  dans le code : ce sont des données, pas des textes, et les traduire casserait l'application.
+-->
+<resources>
+  <string name="app_name">FlixTunes</string>
+
+  <!-- Connexion au serveur -->
+  <string name="connexion_titre">Connecter votre serveur</string>
+  <string name="connexion_aide">Saisissez l’adresse locale du NAS ou choisissez un serveur détecté.</string>
+  <string name="connexion_exemple">Ex. 192.168.1.50:4000</string>
+  <string name="connexion_valider">Se connecter</string>
+  <string name="connexion_compte_distant_aide">Compte distant (uniquement à la première connexion depuis Internet)</string>
+  <string name="connexion_identifiant">Identifiant du compte</string>
+  <string name="connexion_mot_de_passe">Mot de passe</string>
+  <string name="connexion_detectes">Détectés sur le réseau</string>
+  <string name="connexion_changer">Changer de serveur</string>
+
+  <!-- Profils -->
+  <string name="groupes_titre">Choisissez votre groupe</string>
+  <string name="groupes_sous_titre">Vos groupes</string>
+  <string name="groupe_ajouter">Ajouter un groupe</string>
+  <string name="groupe_nouveau">Nouveau groupe</string>
+  <string name="groupe_modifier">Modifier le groupe</string>
+  <string name="groupe_nom">Nom du groupe</string>
+  <string name="groupe_supprimer_titre">Supprimer %1$s ?</string>
+  <string name="groupe_supprimer_aide">Un groupe doit être vide avant de pouvoir être supprimé.</string>
+  <string name="groupes_changer">← Changer de groupe</string>
+  <string name="profils_titre">Qui regarde ?</string>
+  <string name="profil_ajouter">Ajouter un profil</string>
+  <string name="profil_nouveau">Nouveau profil</string>
+  <string name="profil_nom">Prénom ou pseudo</string>
+  <string name="profil_couleur">Couleur</string>
+  <string name="profil_couleur_numero">Choisir la couleur %1$d</string>
+  <string name="profil_langue">Langue</string>
+  <string name="profil_pin_facultatif">Code PIN facultatif (4 à 8 chiffres)</string>
+  <string name="profil_pin_de">Code PIN de %1$s</string>
+  <string name="profil_deverrouiller">Déverrouiller</string>
+  <string name="profil_supprimer_titre">Supprimer %1$s ?</string>
+  <string name="profil_supprimer_avertissement">L\'historique et la progression de ce profil seront perdus. Les fichiers ne sont pas touchés.</string>
+  <string name="profil">Profil</string>
+  <string name="profil_espaces">Vos espaces</string>
+  <string name="profil_enfant">Compte enfant</string>
+  <string name="profil_age">Âge de l’enfant</string>
+  <string name="profil_age_aide">Seuls les contenus classifiés pour cet âge ou moins seront visibles.</string>
+  <string name="profil_enfant_age">Enfant · %1$d ans</string>
+  <string name="profil_modifier">Modifier</string>
+  <string name="profil_changer">Changer de profil</string>
+  <string name="profil_enregistrer">Enregistrer</string>
+  <string name="reglages">Réglages</string>
+  <string name="reglages_lecture_pour">Lecture pour %1$s</string>
+  <string name="reglages_audio_langues">Ordre des langues audio</string>
+  <string name="reglages_audio_fr">Français → anglais → originale</string>
+  <string name="reglages_audio_original">Originale → français → anglais</string>
+  <string name="reglages_audio_en">Anglais → originale → français</string>
+  <string name="reglages_sortie_audio">Sortie audio</string>
+  <string name="reglages_sortie_auto">Automatique / passthrough</string>
+  <string name="reglages_sortie_copy">Conserver si compatible</string>
+  <string name="reglages_sous_titres_auto">Sous-titres automatiques</string>
+  <string name="reglages_plage_dynamique">Priorité de qualité HDR</string>
+  <string name="reglages_plage_auto">Automatique · DV → HDR10+ → HDR10 → HLG → SDR</string>
+  <string name="reglages_sous_titres_forces">Forcés uniquement</string>
+  <string name="reglages_sous_titres_toujours">Toujours</string>
+  <string name="reglages_sous_titres_off">Désactivés</string>
+  <string name="reglages_normalisation">Normalisation EBU R128</string>
+  <string name="reglages_mode_nuit">Mode nuit</string>
+  <string name="reglages_reprise">Reprise</string>
+  <string name="reglages_reprise_auto">Reprendre automatiquement</string>
+  <string name="reglages_reprise_demander">Demander</string>
+  <string name="reglages_reprise_debut">Toujours recommencer</string>
+  <string name="reglages_retour_reprise">Retour avant reprise</string>
+  <string name="reglages_aucun">Aucun</string>
+  <plurals name="reglages_secondes">
+    <item quantity="one">%1$d seconde</item>
+    <item quantity="other">%1$d secondes</item>
+  </plurals>
+  <string name="reglages_vitesse">Vitesse par défaut</string>
+  <string name="reglages_episode_suivant">Épisode suivant automatique</string>
+  <string name="reglages_limite">Limite sans interaction</string>
+  <plurals name="reglages_episodes">
+    <item quantity="one">%1$d épisode</item>
+    <item quantity="other">%1$d épisodes</item>
+  </plurals>
+  <string name="profil_pin_retirer">Retirer le code PIN</string>
+  <string name="profil_pin_actuel">Code PIN actuel</string>
+  <string name="profil_pin_retrait_confirmer">Le PIN sera retiré à l’enregistrement.</string>
+  <string name="profil_pin_inchange">Laisser vide pour ne rien changer</string>
+  <string name="intro_accroche">Votre cinéma prend vie</string>
+
+  <!-- Accueil et catalogue -->
+  <string name="accueil_a_reprendre">À REPRENDRE</string>
+  <string name="accueil_a_decouvrir">À DÉCOUVRIR</string>
+  <string name="rail_continuer">Continuer à regarder</string>
+  <string name="rail_recents">Ajouts récents</string>
+  <string name="rail_films">Films</string>
+  <string name="rail_series">Séries</string>
+  <string name="rail_deja_vus">Déjà vus</string>
+  <string name="catalogue_titre">titre</string>
+  <string name="catalogue_titres">titres</string>
+  <string name="catalogue_mediatheque">Dans votre médiathèque</string>
+  <string name="catalogue_vide">Aucun contenu dans cette section pour le moment.</string>
+  <string name="recherche_vide">Saisissez un titre pour lancer la recherche.</string>
+  <string name="recherche_aucun_resultat">Aucun résultat pour cette recherche.</string>
+  <string name="recherche_champ">Titres, acteurs, réalisateurs, genres</string>
+  <string name="recherche">Rechercher</string>
+  <string name="catalogue_suite">Afficher la suite (%1$d restants)</string>
+
+  <!-- Accueil : les rails que le client Web affiche, et qu'Android ignorait -->
+  <string name="rail_selection_pour">Sélection pour %1$s</string>
+  <string name="rail_selection_origine">100 % local</string>
+  <string name="rail_ma_liste">Ma liste</string>
+  <string name="rail_historique_recent">Historique récent</string>
+
+  <!-- Historique -->
+  <string name="historique_accroche">Votre activité</string>
+  <string name="historique_titre">Historique</string>
+
+  <!-- Catalogue : en-tête et commandes, reprises du client Web -->
+  <string name="catalogue_accroche">Bibliothèque</string>
+  <string name="catalogue_affiches">%1$d affichés</string>
+  <string name="catalogue_rechercher_dans">Rechercher dans les %1$s</string>
+  <string name="catalogue_recherche">Recherche dans cette section</string>
+  <string name="catalogue_recherche_aucune">Aucune</string>
+  <string name="catalogue_recherche_effacer">Effacer la recherche</string>
+  <string name="catalogue_etat">État</string>
+  <string name="catalogue_etat_tous">Tous</string>
+  <string name="catalogue_etat_en_cours">En cours</string>
+  <string name="catalogue_etat_vus">Vus</string>
+  <string name="catalogue_etat_non_vus">Non vus</string>
+  <string name="catalogue_trier">Trier par</string>
+  <string name="catalogue_tri_titre">Titre</string>
+  <string name="catalogue_tri_sortie">Sortie</string>
+  <string name="catalogue_tri_ajout">Ajout</string>
+  <string name="catalogue_genres">Genres</string>
+  <string name="catalogue_genres_effacer">Tout effacer</string>
+  <string name="catalogue_genres_tous">Tous</string>
+  <string name="catalogue_aucun_resultat">Aucun résultat</string>
+  <string name="catalogue_aucun_resultat_filtre">Modifiez la recherche ou le filtre.</string>
+  <string name="catalogue_aucun_resultat_analyse">Les contenus apparaîtront ici après l’analyse de la bibliothèque correspondante.</string>
+
+  <!-- Fiche détaillée -->
+  <string name="fiche_saison">Saison %1$d</string>
+  <string name="fiche_episodes">Épisodes</string>
+  <string name="fiche_sans_resume">Aucun résumé disponible</string>
+  <string name="fiche_plus_infos">Plus d’infos</string>
+  <string name="fiche_lecture">Lecture</string>
+  <string name="fiche_reprendre">Reprendre</string>
+  <string name="fiche_ma_liste_ajouter">+ Ma liste</string>
+  <string name="fiche_ma_liste_presente">✓ Ma liste</string>
+  <string name="fiche_marquer_vu">✓ Marquer vu</string>
+  <string name="fiche_marquer_non_vu">Marquer non vu</string>
+  <string name="fiche_marquer_saison_vue">✓ Marquer la saison vue</string>
+  <string name="fiche_marquer_saison_non_vue">Marquer la saison non vue</string>
+  <string name="fiche_details_fichier">Détails du fichier</string>
+  <string name="fiche_details_dossier">Détails du dossier</string>
+  <string name="fiche_fichier_origine">Fichier d’origine</string>
+  <string name="fiche_dossier_origine">Dossier racine d’origine</string>
+  <string name="fiche_toutes_saisons">Toutes les saisons</string>
+  <string name="fiche_saisons">Saisons</string>
+  <string name="fiche_retour">← Retour</string>
+  <string name="fiche_type_film">Film</string>
+  <string name="fiche_type_serie">Série</string>
+  <string name="fiche_type_episode">Épisode</string>
+  <string name="fiche_distribution_equipe">Distribution et équipe</string>
+  <string name="fiche_talents">Talents</string>
+  <string name="fiche_aimer_aussi">Vous aimerez peut-être</string>
+  <string name="personne_interprete">Interprète</string>
+  <string name="personne_realisation">Réalisation</string>
+  <string name="personne_creation">Création</string>
+  <string name="personne_scenario">Scénario</string>
+  <string name="personne_musique">Musique</string>
+  <string name="personne_dans_bibliotheque">Dans votre bibliothèque</string>
+  <plurals name="personne_titres">
+    <item quantity="one">%1$d titre</item>
+    <item quantity="other">%1$d titres</item>
+  </plurals>
+  <string name="menu_ajouter_liste">+ Ajouter à Ma liste</string>
+  <string name="menu_retirer_liste">− Retirer de Ma liste</string>
+
+  <!-- Actions communes -->
+  <string name="action_annuler">Annuler</string>
+  <string name="action_supprimer">Supprimer</string>
+  <string name="action_actualiser">Actualiser</string>
+  <string name="action_reessayer">Réessayer</string>
+
+  <!-- Messages d'etat et d'erreur -->
+  <string name="etat_connexion">Connexion au serveur</string>
+  <string name="etat_profils">Lecture des profils</string>
+  <string name="etat_mediatheque">Chargement de la médiathèque</string>
+  <string name="etat_affiches_tv">Préparation des affiches TV</string>
+  <string name="erreur_serveur_introuvable">Serveur FlixTunes introuvable</string>
+  <string name="erreur_pin">Code PIN incorrect</string>
+  <string name="erreur_session_expiree">Session du profil expirée, saisissez de nouveau le PIN</string>
+  <string name="erreur_creation_profil">Création du profil impossible</string>
+  <string name="erreur_suppression">Suppression impossible</string>
+  <string name="erreur_profil_modification">Modification du profil impossible</string>
+  <string name="erreur_groupes">Gestion des groupes impossible</string>
+  <string name="erreur_hors_ligne_aide">Les contenus déjà chargés restent disponibles.</string>
+
+  <!-- Lecteur -->
+  <string name="lecteur_qualite">Qualité</string>
+  <string name="lecteur_infos">Infos</string>
+  <string name="lecteur_image">Image</string>
+  <string name="lecteur_vitesse">Vitesse</string>
+  <string name="lecteur_minuteur">Minuteur</string>
+  <string name="lecteur_minuteur_aucun">Désactivé</string>
+  <string name="lecteur_minuteur_ecoule">Minuteur terminé : lecture mise en pause.</string>
+  <string name="lecteur_pistes">Pistes</string>
+  <string name="lecteur_pistes_audio">Audio</string>
+  <string name="lecteur_sous_titres_desactives">Désactivés</string>
+  <string name="lecteur_pistes_indisponibles">Les pistes ne sont pas encore connues.</string>
+  <string name="lecteur_sous_titre_forcee"> (forcés)</string>
+  <string name="lecteur_langue_inconnue">langue inconnue</string>
+  <string name="lecteur_pas_d_episode">Aucun épisode de ce côté.</string>
+  <string name="lecteur_image_sdr">Ce fichier est en SDR : il n\'y a pas de plage dynamique à choisir.</string>
+  <string name="lecteur_qualite_unique">Ce flux ne propose qu\'une seule qualité.</string>
+  <string name="lecteur_reprendre_titre">Reprendre la lecture ?</string>
+  <string name="lecteur_reprendre_message">Vous étiez à %1$d %%.</string>
+  <string name="lecteur_reprendre">Reprendre</string>
+  <string name="lecteur_depuis_debut">Depuis le début</string>
+  <string name="lecteur_retour">Fermer le lecteur</string>
+  <string name="lecteur_episode_precedent">Épisode précédent</string>
+  <string name="lecteur_episode_suivant">Épisode suivant</string>
+  <string name="lecteur_lire">Lire</string>
+  <string name="lecteur_pause">Mettre en pause</string>
+  <string name="lecteur_reculer_10">Reculer de 10 secondes</string>
+  <string name="lecteur_avancer_10">Avancer de 10 secondes</string>
+  <string name="lecteur_position">Position de lecture</string>
+  <string name="lecteur_fermer_panneau">Fermer le panneau</string>
+  <string name="lecteur_aide_tv">←/→ −10/+10 s · OK lecture/pause · ↑/↓ options · Retour masquer</string>
+  <string name="lecteur_preparation">Préparation de la lecture…</string>
+  <string name="lecteur_reessayer">Réessayer</string>
+  <string name="lecteur_mode_compatible">Mode compatible</string>
+  <string name="lecteur_sous_titres">Sous-titres</string>
+  <string name="lecteur_sous_titres_externes">Sous-titres externes</string>
+  <string name="lecteur_sous_titres_apparence">Apparence des sous-titres</string>
+  <string name="lecteur_sous_titres_taille">Taille du texte</string>
+  <string name="lecteur_sous_titres_petit">Petite</string>
+  <string name="lecteur_sous_titres_normal">Normale</string>
+  <string name="lecteur_sous_titres_grand">Grande</string>
+  <string name="lecteur_sous_titres_fond">Fond du texte</string>
+  <string name="lecteur_sous_titres_transparent">Transparent (par défaut)</string>
+  <string name="lecteur_sous_titres_sombre">Sombre contrasté</string>
+  <string name="lecteur_sous_titres_couleur">Couleur du texte</string>
+  <string name="lecteur_couleur_blanche">Blanc</string>
+  <string name="lecteur_couleur_jaune">Jaune</string>
+  <string name="lecteur_couleur_cyan">Cyan</string>
+  <string name="lecteur_couleur_verte">Vert</string>
+  <string name="lecteur_erreur_decodage">Ce flux ne peut pas être décodé sur cet appareil.</string>
+  <string name="lecteur_erreur_reseau">Connexion au serveur perdue. Vérifiez le réseau, puis relancez la lecture.</string>
+  <string name="lecteur_erreur_impossible">Lecture impossible</string>
+  <string name="lecteur_autoplay_suspendu">Lecture automatique suspendue. Appuyez sur lecture pour continuer.</string>
+  <string name="lecteur_autoplay_compte">Épisode suivant dans %1$d s</string>
+  <!-- Surtitre de la carte d'enchaînement ; le temps restant est porté par la jauge. -->
+  <string name="lecteur_autoplay_titre">Épisode suivant</string>
+  <string name="lecteur_passer_generique">Passer le générique</string>
+  <string name="lecteur_autoplay_maintenant">Lire maintenant</string>
+</resources>

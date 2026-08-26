@@ -1,0 +1,3 @@
+# Parcours critique FlixTunes : démarrage, catalogues Compose, focus D-pad et chargement d'images.
+# Les profils fournis par Compose couvrent la bibliothèque mais pas le code propre à l'application.
+HSPLtv/flixtunes/app/**->**(**)**

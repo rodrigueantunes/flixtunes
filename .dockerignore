@@ -1,0 +1,35 @@
+# Ce qui n'a rien à faire dans le contexte de construction.
+#
+# Le contexte est envoyé au démon **en entier** avant que la moindre instruction ne s'exécute : ce qui
+# est écarté ici n'est ni transféré, ni copié dans une couche, ni récupérable dans l'image publiée.
+**/node_modules
+**/dist
+**/build
+**/bin
+**/obj
+.git
+*.log
+
+# Données et secrets. `apps/server/.vitest-data` pesait à lui seul 125 Mo — bases SQLite, affiches
+# téléchargées, journaux — et contenait `provider-secrets.key`, la clé qui déchiffre les jetons des
+# fournisseurs. Le Dockerfile copiant `apps/server` en entier, tout cela partait dans l'image.
+data
+**/.vitest-data
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/*.key
+.env
+TestResults
+
+# Caches et artefacts : lourds, inutiles à la construction, reconstructibles.
+.pnpm-store
+artifacts
+**/.gradle
+**/*.apk
+**/*.apkg
+
+# Clients qui ne servent pas cette image : elle ne porte que le serveur et le client Web.
+apps/android
+apps/windows
+packaging
