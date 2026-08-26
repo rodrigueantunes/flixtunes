@@ -1,5 +1,12 @@
 # Journal des versions
 
+## 0.5.6.r81 — les écrans quittent l'activité
+
+- **`MainActivity` portait vingt-six composables** en plus de la classe d'activité : 2 253 lignes où cohabitaient le cycle de vie Android et tous les écrans. Les écrans vivent désormais dans `ui/ecrans/`, répartis par sujet — accueil, catalogue, profils, fiche, recherche, historique, personnes. L'activité fait **64 lignes**.
+- **Ce n'est pas un rangement de principe** : ces composables n'importent rien d'Android, ils sont portables tels quels, mais ils étaient enfermés dans une classe qui, elle, ne l'est pas. C'est la première étape du chantier « client de bureau identique à Android ».
+- **Rien n'a changé**, et c'est vérifié autrement qu'à l'œil : les blocs déplacés ont été comparés au texte d'origine après normalisation — **8 562 mots, identiques**, aux deux seuls changements de visibilité près. 208 tests Android verts, 47 avertissements lint inchangés, APK construit.
+- Deux pièges rencontrés, tous deux consignés : le fichier mêlait **989 fins de ligne CRLF et 1 264 LF** — trace du défaut corrigé en r77 —, et le report automatique des imports écartait `getValue`/`setValue`, jamais écrits dans le code alors que ce sont eux qui rendent possible le `by remember`.
+
 ## 0.5.6.r80 — les trois avertissements de sécurité Android
 
 - **Le service de lecture était joignable par n'importe quelle application installée**, qui pouvait lire, mettre en pause, parcourir la file et voir ce qui est regardé. Un `MediaSessionService` doit être exporté — c'est ainsi que le système le découvre pour la notification de lecture, les touches d'un casque, Android Auto —, mais une permission dans le manifeste fermerait la porte à ces composants-là. Le tri se fait donc à la connexion : notre application, notre processus, et les composants que la session reconnaît. Le reste est refusé.
