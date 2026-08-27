@@ -1,4 +1,18 @@
-# Audit — un client de bureau identique à Android, par Compose Multiplatform
+# Audit — un client de bureau par Compose Multiplatform (**voie non retenue**)
+
+> **Cette voie a été écartée le 27 août 2026 ; ce document est conservé pour ce qu'elle a établi.**
+>
+> Elle proposait de partager le code d'interface entre Android et le bureau, ce qui imposait de sortir
+> ce code de l'application Android. La voie retenue ne touche pas à Android du tout — voir
+> `AUDIT_CLIENT_BUREAU.md`.
+>
+> Deux étapes avaient été menées avant l'arbitrage, et elles sont **gardées** : elles ont fait passer
+> `MainActivity` de 2 253 à 64 lignes et détaché l'interface de la plateforme. Ce découpage vaut par
+> lui-même, indépendamment de la voie.
+>
+> Restent vraies et utiles, si la question d'un partage de code se repose : les mesures du §7 — 4,9 ms
+> par image en 1080p, 18,2 ms en 4K, aucune image perdue — et le fait que Compose Multiplatform 1.9.3
+> fonctionne avec Kotlin 2.3.21.
 
 *26 août 2026. Audit demandé après le constat que le client Windows actuel est un prototype. Aucun
 code n'a été écrit pour ce document ; il mesure, découpe et chiffre. La mise en œuvre attend un accord
