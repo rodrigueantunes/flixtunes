@@ -16,7 +16,19 @@
   body { display: grid; place-items: center; background: var(--encre); color: var(--texte);
     font-family: "Segoe UI", system-ui, sans-serif; -webkit-app-region: drag; }
   main { width: min(460px, 82vw); -webkit-app-region: no-drag; }
-  h1 { margin: 0 0 .35rem; font-size: 1.8rem; letter-spacing: -.02em; }
+  /*
+    L'enseigne, reprise du client Web : le logo, « Flix » en blanc, « Tunes » en bleu. La coupure du
+    nom en deux couleurs est ce qui identifie l'application d'un coup d'œil, et cet écran est le seul
+    que la coque dessine — il n'a aucune raison d'y renoncer.
+
+    Les valeurs viennent de `.brand` dans `styles.css` : logo de 41 px, police Manrope à 800, approche
+    resserrée, et le bleu #79a8ff. Ici l'enseigne est agrandie, puisqu'elle est seule sur l'écran.
+  */
+  .enseigne { display: flex; align-items: center; margin-bottom: .55rem;
+    font: 800 2.3rem "Manrope", "Segoe UI", system-ui, sans-serif; letter-spacing: -.06em; color: #fff; }
+  .enseigne img { width: 62px; height: 62px; object-fit: contain; margin-right: .5rem;
+    filter: drop-shadow(0 10px 26px #1689ff55); }
+  .enseigne span span { color: #79a8ff; }
   p { margin: 0 0 1.6rem; color: var(--muet); line-height: 1.55; }
   label { display: block; margin-bottom: .4rem; color: var(--muet); font-size: .8rem; font-weight: 600; }
   input { width: 100%; box-sizing: border-box; min-height: 46px; padding: .7rem .8rem;
@@ -31,7 +43,10 @@
 </head>
 <body>
 <main>
-  <h1>FlixTunes</h1>
+  <div class="enseigne">
+    <img src="marque/flixtunes-logo.png" alt="">
+    <span>Flix<span>Tunes</span></span>
+  </div>
   <p>Indiquez l'adresse de votre serveur sur le réseau local — son adresse IP, ou son nom.
      Le port 4000 est ajouté si vous ne le précisez pas.</p>
   <label for="adresse">Adresse du serveur</label>

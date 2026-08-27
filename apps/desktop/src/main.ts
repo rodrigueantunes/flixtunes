@@ -94,6 +94,15 @@ function afficher(): void {
   suivre();
 }
 
+/*
+ * Le nom de l'application, et non celui du paquet.
+ *
+ * Sans lui, Electron range les réglages sous le nom du manifeste — `@flixtunes/desktop`, portée
+ * comprise — dans un dossier que personne ne devine. C'est aussi ce nom qui s'affiche dans la barre
+ * des tâches et dans les fenêtres du système.
+ */
+app.setName("FlixTunes");
+
 app.whenReady().then(() => {
   // Aucun menu : le client Web porte sa propre navigation, et un menu « Fichier / Édition » n'aurait
   // aucun sens devant une médiathèque.

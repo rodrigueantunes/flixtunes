@@ -1,5 +1,13 @@
 # Journal des versions
 
+## 0.5.6.r85 — la coque du client de bureau tourne, avec le client Web dedans
+
+- **Le client Windows et Linux commence à exister.** La coque ne dessine qu'un seul écran — celui qui demande l'adresse du serveur — et tout le reste vient du client Web servi par le NAS. Constaté à l'écran : adresse saisie au clavier, validée, et « Choisissez votre groupe » s'affiche avec les trois familles réelles.
+- **Le chemin a été éprouvé comme une personne l'aurait fait** : un clic dans le champ, une saisie au clavier, la touche Entrée. Écrire directement le fichier de réglages aurait vérifié bien moins de choses, à commencer par le pont entre la page et la coque.
+- **Le pont est minuscule et le restera** : trois fonctions autour de l'adresse du serveur. C'est aussi par sa présence que le client Web saura qu'il tourne dans la coque et pourra confier la lecture à VLC — la capacité s'annonce, elle ne se devine pas par agent utilisateur.
+- **L'écran de connexion porte l'enseigne** : le logo, « Flix » en blanc, « Tunes » en bleu, aux valeurs exactes du client Web. Le logo est embarqué dans la coque — à cet instant, aucun serveur n'est encore connu.
+- **La normalisation d'adresse porte la règle qui compte** : sans schéma, une adresse locale passe en `http` avec le port 4000, une adresse publique en `https`. Un accès depuis Internet ne peut pas retomber en clair parce qu'on a tapé un nom sans préfixe. Sept cas la vérifient.
+
 ## 0.5.6.r84 — les sous-titres d'une lecture reprise s'affichent enfin, sur le Web
 
 - **Toute lecture reprise en cours de route perdait ses sous-titres**, sur le Web, dès qu'elle passait par un flux HLS. Le serveur ouvre alors une session qui **commence au point de reprise** et compte à partir de zéro ; les sous-titres, eux, portent les temps du film. Une reprise à huit minutes faisait donc chercher au navigateur un sous-titre pour la huitième **seconde**. Mesuré dans le lecteur en service : 107 sous-titres chargés, piste sélectionnée, mode « showing » — et **aucun actif**.
