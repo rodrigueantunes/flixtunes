@@ -125,6 +125,15 @@ try {
   if ($LASTEXITCODE -ne 0) { throw "La construction du paquet ASUSTOR a echoue." }
 
   # --- 8. Archives de sources ------------------------------------------------------------------
+  #
+  # Le tar de Windows, nomme par son chemin complet et non par « tar.exe ».
+  #
+  # Lance depuis un terminal ou Git est dans le chemin, « tar.exe » designe celui de Git, un portage
+  # d'outil Unix qui lit « N:\... » comme une machine distante nommee N — d'ou l'echec « Cannot
+  # connect to N: resolve failed », a la toute derniere etape d'une livraison de dix minutes. Celui
+  # de Windows, lui, comprend les lecteurs reseau.
+  $tar = Join-Path $env:SystemRoot "System32" | Join-Path -ChildPath "tar.exe"
+  if (-not (Test-Path $tar)) { throw "tar.exe de Windows introuvable : $tar" }
   $exclus = @(
     "--exclude=apps/server/node_modules", "--exclude=apps/web/node_modules",
     "--exclude=packages/contracts/node_modules", "--exclude=apps/server/dist",
@@ -144,15 +153,15 @@ try {
     "docs/SERVER_INSTALLATION.md", "docs/NAS_DEPLOYMENT.md", "compose.yaml", "Dockerfile",
     ".dockerignore", ".env.example", ".gitattributes", "package.json", "pnpm-lock.yaml",
     "pnpm-workspace.yaml", "README.md", "tsconfig.base.json")
-  tar.exe @exclus -a -cf (Join-Path $Artifacts "FlixTunes-NAS-Source-$estampille.zip") @sourcesNas
+  & $tar @exclus -a -cf (Join-Path $Artifacts "FlixTunes-NAS-Source-$estampille.zip") @sourcesNas
   if ($LASTEXITCODE -ne 0) { throw "L'archive des sources a echoue." }
-  tar.exe @exclus -a -cf (Join-Path $Artifacts "FlixTunes-Server-Installers-$estampille.zip") @sourcesServeur
+  & $tar @exclus -a -cf (Join-Path $Artifacts "FlixTunes-Server-Installers-$estampille.zip") @sourcesServeur
   if ($LASTEXITCODE -ne 0) { throw "L'archive des installateurs a echoue." }
 
   # --- 9. Empreintes ---------------------------------------------------------------------------
   Push-Location $Artifacts
   try {
-    tar.exe -a -cf "FlixTunes-Windows-x64-$estampille.zip" "windows-x64"
+    & $tar -a -cf "FlixTunes-Windows-x64-$estampille.zip" "windows-x64"
     Get-ChildItem -File | Where-Object { $_.Name -like "*$estampille*" -and $_.Extension -in @(".zip", ".apk", ".apkg") } |
       Get-FileHash -Algorithm SHA256 |
       ForEach-Object { "$($_.Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($_.Path))" } |
