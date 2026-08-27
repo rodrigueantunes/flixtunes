@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>FlixTunes — connexion au serveur</title>
+<!--
+  Le seul écran que la coque dessine elle-même, et il n'existe que parce qu'il faut bien une adresse
+  avant de pouvoir charger le client Web. Tout le reste vient du serveur.
+
+  Les jetons de style sont ceux du Web, recopiés à la main pour ces quelques éléments : on ne peut
+  pas charger la feuille de style d'un serveur qu'on ne connaît pas encore.
+-->
+<style>
+  :root { --encre: #080b12; --texte: #f7f9ff; --muet: #9ba5b9; --bleu: #2e6bff; --ligne: rgba(255,255,255,.1); }
+  html, body { margin: 0; height: 100%; }
+  body { display: grid; place-items: center; background: var(--encre); color: var(--texte);
+    font-family: "Segoe UI", system-ui, sans-serif; -webkit-app-region: drag; }
+  main { width: min(460px, 82vw); -webkit-app-region: no-drag; }
+  h1 { margin: 0 0 .35rem; font-size: 1.8rem; letter-spacing: -.02em; }
+  p { margin: 0 0 1.6rem; color: var(--muet); line-height: 1.55; }
+  label { display: block; margin-bottom: .4rem; color: var(--muet); font-size: .8rem; font-weight: 600; }
+  input { width: 100%; box-sizing: border-box; min-height: 46px; padding: .7rem .8rem;
+    border: 1px solid var(--ligne); border-radius: 10px; background: #090d15; color: var(--texte); font: inherit; }
+  input:focus-visible { outline: 3px solid #78a5ff; outline-offset: 2px; }
+  .commandes { display: flex; gap: .6rem; margin-top: 1.1rem; }
+  button { min-height: 46px; padding: 0 1.3rem; border: 0; border-radius: 12px; background: var(--bleu);
+    color: var(--texte); font: inherit; font-weight: 700; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  .erreur { margin-top: .9rem; color: #ff9ba8; font-size: .88rem; min-height: 1.2em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>FlixTunes</h1>
+  <p>Indiquez l'adresse de votre serveur sur le réseau local — son adresse IP, ou son nom.
+     Le port 4000 est ajouté si vous ne le précisez pas.</p>
+  <label for="adresse">Adresse du serveur</label>
+  <input id="adresse" type="text" inputmode="url" autocomplete="off" spellcheck="false"
+         placeholder="192.168.1.50" autofocus>
+  <div class="commandes"><button id="connecter">Se connecter</button></div>
+  <div class="erreur" id="erreur" role="alert"></div>
+</main>
+<script>
+  const champ = document.getElementById("adresse");
+  const bouton = document.getElementById("connecter");
+  const erreur = document.getElementById("erreur");
+
+  async function connecter() {
+    const saisie = champ.value.trim();
+    if (!saisie) { erreur.textContent = "Indiquez une adresse."; return; }
+    bouton.disabled = true;
+    erreur.textContent = "";
+    // La coque valide, retient, puis recharge d'elle-même sur le client Web.
+    const reponse = await window.flixtunesBureau.definirServeur(saisie);
+    if (!reponse.ok) {
+      erreur.textContent = reponse.message ?? "Adresse invalide.";
+      bouton.disabled = false;
+    }
+  }
+
+  bouton.addEventListener("click", connecter);
+  champ.addEventListener("keydown", (evenement) => { if (evenement.key === "Enter") connecter(); });
+</script>
+</body>
+</html>

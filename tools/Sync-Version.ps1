@@ -26,6 +26,7 @@ $cibles = @(
   @{ Fichier = "packages/contracts/package.json"; Motif = '("version"\s*:\s*")[^"]+(")'; Valeur = $version },
   @{ Fichier = "apps/server/package.json";        Motif = '("version"\s*:\s*")[^"]+(")'; Valeur = $version },
   @{ Fichier = "apps/web/package.json";           Motif = '("version"\s*:\s*")[^"]+(")'; Valeur = $version },
+  @{ Fichier = "apps/desktop/package.json";       Motif = '("version"\s*:\s*")[^"]+(")'; Valeur = $version },
   @{ Fichier = "apps/windows/FlixTunes.Windows.csproj"; Motif = '(<Version>)[^<]+(</Version>)'; Valeur = $version },
   @{ Fichier = "compose.yaml";                    Motif = '(image:\s*flixtunes:)[^\s]+()';  Valeur = $version },
   @{ Fichier = "README.md";                       Motif = '(^# FlixTunes )[0-9][^\s]*()';   Valeur = $version },

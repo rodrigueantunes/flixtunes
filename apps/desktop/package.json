@@ -1,0 +1,17 @@
+{
+  "name": "@flixtunes/desktop",
+  "version": "0.5.6",
+  "private": true,
+  "description": "Client de bureau FlixTunes — l'interface du Web, la lecture par VLC",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copier-pages.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test --experimental-strip-types src/*.test.ts",
+    "start": "pnpm build && electron ."
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "typescript": "^5.9.2"
+  }
+}

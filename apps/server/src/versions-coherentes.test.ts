@@ -27,6 +27,7 @@ describe("cohérence des versions déclarées", () => {
     ["packages/contracts/package.json"],
     ["apps/server/package.json"],
     ["apps/web/package.json"],
+    ["apps/desktop/package.json"],
   ])("%s porte la version du produit", (relatif) => {
     expect(manifeste(relatif).version).toBe(version);
   });
