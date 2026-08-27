@@ -99,11 +99,67 @@ chiffrer.
 
 **Je propose de faire cette sonde avant d'écrire une ligne du client.** Elle demande une soirée.
 
+## 6 bis. La sonde a été faite — l'inconnue est levée
+
+*27 août 2026, Electron 33, VLC 3.0.21 installé sur le poste, épisode 1080p lu depuis le NAS.*
+
+### 6 bis.1 La façon évidente ne marche pas
+
+Premier essai, le plus direct : VLC dessine dans la fenêtre Electron elle-même, et la page HTML se
+met à fond transparent par-dessus.
+
+**La vidéo s'affiche bien dans la fenêtre — et elle recouvre entièrement l'interface.** Aucun réglage
+de transparence n'y change quoi que ce soit, parce que ce n'est pas une question d'alpha : VLC crée
+une fenêtre **fille**, et sous Windows une fenêtre fille se dessine toujours au-dessus de ce que
+peint son parent. Chromium peint dans le parent. Il passe donc dessous, définitivement.
+
+### 6 bis.2 Deux couches, et tout tient
+
+Second essai : une fenêtre pour la vidéo, et **une seconde fenêtre transparente possédée par la
+première** pour l'interface. Une fenêtre possédée reste au-dessus de son propriétaire *et* se compose
+avec lui, alpha compris.
+
+| Ce qu'il fallait constater | Résultat |
+| --- | --- |
+| La vidéo apparaît dans la fenêtre, pas à côté | **oui** |
+| Les commandes HTML se dessinent par-dessus | **oui**, et le dégradé de la barre laisse voir l'image à travers |
+| Déplacement et redimensionnement gardent les couches ensemble | **écart 0, 0, 0, 0 pixel** |
+| Un vrai clic du système atteint un bouton de l'interface | **oui** — le compteur de la page passe de 0 à 1 |
+
+Le dernier point méritait d'être éprouvé et non supposé : une couche transparente peut très bien se
+dessiner par-dessus tout en laissant filer les clics vers la fenêtre du dessous, auquel cas aucun
+bouton du lecteur ne répondrait. Le clic a été envoyé par le système, pas simulé dans la page.
+
+### 6 bis.3 Ce que la sonde a appris sur l'architecture
+
+La conséquence est plus élégante que prévu : **l'interface entière — catalogue compris — vit dans la
+couche du dessus**, et la fenêtre du dessous ne sert qu'à recevoir la vidéo. Elle reste noire quand
+rien ne joue. Il n'y a donc pas un « mode lecteur » à part : c'est le client Web du début à la fin,
+avec une surface vidéo qui s'allume derrière lui au moment voulu.
+
+### 6 bis.4 Un défaut de banc, encore
+
+La fenêtre vidéo n'avait aucune page chargée — elle n'a que la vidéo à montrer. Or sans contenu,
+Electron n'émet jamais l'événement « prête à montrer », et c'est lui qui déclenchait le lancement de
+VLC. J'ai donc vu une vidéo noire sous une interface correcte, et j'ai failli conclure que la couche
+transparente était opaque. Ce qui l'a démenti : **aucun processus VLC n'existait**.
+
+### 6 bis.5 Ce qui reste inconnu
+
+**Linux.** Tout ce qui précède est mesuré sous Windows. Sous X11, `--drawable-xid` devrait se
+comporter de la même façon ; sous **Wayland**, il n'y a pas d'identifiant de fenêtre à passer, et la
+question devra être reposée. Ce sera la première chose à vérifier au moment d'empaqueter le `.deb`, et
+non une découverte de fin de parcours.
+
+Et un détail d'honnêteté : le déplacement de la fenêtre a été **programmé**, non glissé à la souris.
+Un glissement émet des dizaines d'événements par seconde là où la sonde n'en a produit qu'un. Le
+chemin de code éprouvé est le même, mais la fluidité d'un glissement reste à constater.
+
 ## 7. Découpage proposé
 
 | N° | Contenu | Preuve de fin |
 | --- | --- | --- |
-| **1** | Sonde : Electron + VLC en processus fils, interface transparente par-dessus | les trois points du §6 constatés |
+| ~~**1**~~ | ~~Sonde : Electron + VLC en processus fils, interface transparente par-dessus~~ **Faite le 27 août 2026** — voir §6 bis | **les trois points constatés, plus un quatrième : le clic arrive** |
 | **2** | Coque minimale : fenêtre, chargement du client Web, mode bureau détecté | le catalogue s'affiche et se parcourt |
 | **3** | Le pont : `Player.tsx` en mode bureau pilote VLC au lieu d'une balise `<video>` | une lecture directe et une lecture convertie |
 | **4** | Capacités déclarées depuis la machine réelle, décodage matériel | le NAS ne convertit plus ce qu'il ne devrait pas |
