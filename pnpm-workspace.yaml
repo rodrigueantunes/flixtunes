@@ -19,6 +19,9 @@ verifyDepsBeforeRun: false
 
 allowBuilds:
   esbuild: true
+  # Electron télécharge son exécutable depuis son script d'installation. Sans cette autorisation,
+  # pnpm l'ignore en silence — l'installation « réussit » et le client de bureau n'a pas de binaire.
+  electron: true
 
 # Sous Windows, pnpm exécute les scripts de paquet via CMD.EXE — qui refuse un répertoire courant en
 # chemin UNC : il retombe sur le répertoire Windows, et tout chemin relatif d'un script (« tsc -p
