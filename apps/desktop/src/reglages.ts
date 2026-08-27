@@ -60,6 +60,28 @@ export function normaliserAdresse(saisie: string): string | null {
   return `${url.protocol}//${url.host}`;
 }
 
+/**
+ * Le flux qu'on s'apprête à confier à VLC vient-il bien du serveur auquel la coque est connectée ?
+ *
+ * La question n'est pas de principe. Le pont est offert à une page **chargée depuis le réseau**, et
+ * « ouvre ceci dans VLC » est le genre de pouvoir qu'on n'accorde pas sans le borner : sans cette
+ * vérification, n'importe quel script de cette page pourrait faire ouvrir un fichier du disque, ou
+ * une adresse quelconque d'Internet. Le serveur du foyer, et rien d'autre.
+ *
+ * Seuls `http` et `https` passent — pas de `file:`, pas de `smb:`, pas de protocole exotique dont
+ * VLC connaît la liste bien mieux que nous.
+ */
+export function memeServeur(uri: string, serveur: string | null): boolean {
+  if (!serveur) return false;
+  try {
+    const flux = new URL(uri);
+    if (flux.protocol !== "http:" && flux.protocol !== "https:") return false;
+    return flux.origin === new URL(serveur).origin;
+  } catch {
+    return false;
+  }
+}
+
 /** Une adresse du réseau domestique, par opposition à un nom public. */
 export function estLocale(hote: string): boolean {
   if (hote === "localhost" || hote.endsWith(".local")) return true;

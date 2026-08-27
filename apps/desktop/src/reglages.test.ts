@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { ecrireReglages, estLocale, lireReglages, normaliserAdresse } from "./reglages.ts";
+import { ecrireReglages, estLocale, lireReglages, memeServeur, normaliserAdresse } from "./reglages.ts";
 
 /**
  * L'adresse du serveur, seule chose que la coque retient.
@@ -63,4 +63,21 @@ test("les réglages se relisent, et un fichier abîmé ne bloque pas le démarra
   } finally {
     rmSync(dossier, { recursive: true, force: true });
   }
+});
+
+test("le pont n'ouvre dans VLC que ce qui vient du serveur du foyer", () => {
+  const serveur = "http://10.20.30.254:4000";
+  // Ce que le client Web demande vraiment : un flux de son propre serveur.
+  assert.equal(memeServeur("http://10.20.30.254:4000/api/playback/abc/master.m3u8", serveur), true);
+  assert.equal(memeServeur("http://10.20.30.254:4000/api/media/x/stream?profileId=y", serveur), true);
+
+  // Et tout ce qu'on refuse. Le pont est offert à une page chargée depuis le réseau : « ouvre ceci
+  // dans VLC » ne s'accorde pas sans le borner.
+  assert.equal(memeServeur("file:///C:/Windows/win.ini", serveur), false, "aucun fichier du disque");
+  assert.equal(memeServeur("smb://voisin/partage/film.mkv", serveur), false, "aucun protocole exotique");
+  assert.equal(memeServeur("http://ailleurs.example/film.mkv", serveur), false, "aucun autre hôte");
+  assert.equal(memeServeur("http://10.20.30.254:8080/film.mkv", serveur), false, "aucun autre port");
+  assert.equal(memeServeur("https://10.20.30.254:4000/film.mkv", serveur), false, "aucun autre schéma");
+  assert.equal(memeServeur("pas une adresse", serveur), false);
+  assert.equal(memeServeur("http://10.20.30.254:4000/x", null), false, "aucun serveur connu, aucune ouverture");
 });

@@ -28,6 +28,9 @@ export default defineConfig({
   ],
   server: {
     host: "0.0.0.0",
-    proxy: { "/api": "http://localhost:4000" },
+    // Le serveur visé pendant le développement. Par défaut celui qu'on lance à côté ; `FLIXTUNES_API`
+    // permet de viser le NAS, ce qui est la seule façon d'éprouver le client contre une vraie
+    // médiathèque — et, depuis le client de bureau, contre de vrais fichiers à lire tels quels.
+    proxy: { "/api": process.env.FLIXTUNES_API ?? "http://localhost:4000" },
   },
 });

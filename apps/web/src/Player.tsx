@@ -7,6 +7,10 @@ import { decodeSupportSnapshot, probeDecodeSupport } from "./decode-support";
 import { debitAnnonce, debitMemorise, memoriserDebit, plafondApresCoupures, REBUFFERS_AVANT_REPLI } from "./debit-reseau";
 import { decodageDegrade, type EchantillonDecodage, FENETRES_AVANT_REPLI } from "./qualite-decodage";
 import { placerVignette, VIGNETTE_HAUTEUR, VIGNETTE_LARGEUR } from "@flixtunes/contracts";
+import { pontBureau } from "./bureau";
+import { surfacePartagee, type SurfaceLecture } from "./surface-lecture";
+import { capacitesBureau } from "./capacites-bureau";
+import { analyserWebVtt, type Replique, repliquesA } from "./sous-titres-bureau";
 
 export function browserCapabilities(audioStreamIndex: number | null, subtitle: MediaStream | null, forceTranscode: boolean,
   modePreference: PlaybackCapabilities["modePreference"] = forceTranscode ? "compatible" : "auto",
@@ -243,7 +247,32 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
   media: MediaItem; profile: Profile; onClose: () => void; onPlayMedia: (mediaId: string) => void;
 }) {
 
-  const videoRef = useRef<HTMLVideoElement>(null);
+  /**
+   * Où la lecture a lieu.
+   *
+   * Deux références, et la distinction porte tout le client de bureau. `videoRef` est la **surface**
+   * de lecture : une balise vidéo dans un navigateur, VLC dans la coque. C'est elle que le lecteur
+   * commande — lis, mets en pause, va à telle seconde — et elle seule. `elementVideoRef` est la
+   * balise elle-même, et vaut `null` quand VLC décode : elle ne sert qu'aux quelques gestes qui
+   * n'ont de sens que dans le DOM — poser une piste de sous-titres, incruster la vidéo dans un coin
+   * de l'écran.
+   *
+   * Le partage est fait de telle sorte que le chemin du navigateur ne change pas d'un iota :
+   * `HTMLVideoElement` satisfait `SurfaceLecture` tel quel, sans adaptateur ni indirection.
+   */
+  const videoRef = useRef<SurfaceLecture | null>(null);
+  const elementVideoRef = useRef<HTMLVideoElement | null>(null);
+  /**
+   * VLC, s'il est là.
+   *
+   * La coque n'expose le pont de lecture que lorsque VLC est réellement installé, et la surface est
+   * partagée : il n'y a qu'un VLC et qu'un lecteur à la fois. Dans un navigateur, `null` — et rien
+   * de ce qui suit ne change quoi que ce soit au chemin existant.
+   */
+  const surfaceVlc = surfacePartagee();
+  // L'affectation se fait pendant le rendu, et non dans un effet : les effets qui lisent cette
+  // référence s'exécutent dès le premier passage, et ils la trouveraient vide.
+  if (surfaceVlc) videoRef.current = surfaceVlc;
   const pageRef = useRef<HTMLDivElement | null>(null);
   // Les commandes s'effacent après un temps d'inactivité : en plein écran, une barre permanente
   // recouvre le bas de l'image et transforme un film en interface. Elles reviennent au moindre
@@ -302,6 +331,16 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
   const [subtitlePosition, setSubtitlePosition] = useState<SubtitlePreference["position"]>("bottom");
   const [subtitleFont, setSubtitleFont] = useState<SubtitlePreference["fontFamily"]>("sans");
   const [subtitleEncoding, setSubtitleEncoding] = useState<SubtitlePreference["encodingOverride"]>("auto");
+  /**
+   * Les sous-titres quand c'est VLC qui décode.
+   *
+   * Il n'y a plus de balise vidéo à qui accrocher une piste : le lecteur charge donc lui-même le
+   * WebVTT — **exactement celui que le navigateur aurait chargé**, décalage de session compris — et
+   * affiche la réplique du moment. VLC est lancé sans sous-titres pour qu'il n'y en ait jamais deux
+   * jeux superposés.
+   */
+  const [urlSousTitreBureau, setUrlSousTitreBureau] = useState<string | null>(null);
+  const [repliquesBureau, setRepliquesBureau] = useState<Replique[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [message, setMessage] = useState<string | null>("Préparation de la lecture…");
   const [directRetry, setDirectRetry] = useState(false);
@@ -389,6 +428,17 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
   // Le plein écran se quitte aussi par Échap ou par un geste du système : sans écoute, le libellé du
   // bouton resterait « Quitter le plein écran » alors qu'on en est déjà sorti.
   useEffect(() => {
+    /*
+     * Deux plein écran, et un seul est celui du navigateur.
+     *
+     * Dans la coque de bureau, c'est une fenêtre du système qui s'agrandit — la fenêtre vidéo, que
+     * l'interface suit. Le document, lui, ne passe jamais en plein écran : `fullscreenchange` ne se
+     * déclenche pas, et le bouton serait resté sur son icône d'agrandissement pour toujours. La
+     * coque annonce donc son propre état, et elle l'annonce aussi quand la touche F11 est venue de
+     * l'extérieur de la page.
+     */
+    const coque = pontBureau();
+    if (coque) return coque.surPleinEcran(setFullScreen);
     const suivre = () => setFullScreen(Boolean(document.fullscreenElement));
     document.addEventListener("fullscreenchange", suivre);
     return () => document.removeEventListener("fullscreenchange", suivre);
@@ -427,11 +477,27 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
    *   à l'oublier.
    */
   const applySubtitleTracks = useCallback((playbackInfo: PlaybackInfo) => {
-    const video = videoRef.current;
-    if (!video) return;
     const decalage = subtitleOffsetRef.current - startOffsetRef.current;
+    const internalChoisi = playbackInfo.streams.find((stream) => stream.type === "subtitle" && stream.index === subtitleIndexRef.current);
+    const externalChoisi = playbackInfo.externalSubtitles?.find((subtitle) => subtitle.id === externalSubtitleIndexRef.current);
+    const video = elementVideoRef.current;
+    if (!video) {
+      /*
+       * VLC décode : il n'y a pas de balise vidéo, donc pas de piste à y accrocher.
+       *
+       * On retient l'adresse du WebVTT — le même que celui d'un navigateur, avec le même décalage —
+       * et le lecteur l'affichera lui-même par-dessus l'image. Une seule piste à la fois : le
+       * navigateur empile les balises et n'en montre qu'une, autant le dire clairement ici.
+       */
+      const interne = internalChoisi?.canExtractAsWebVtt
+        ? api.subtitleUrl(media.id, internalChoisi.index, profile.id, decalage) : null;
+      const externe = externalChoisi?.canConvertToWebVtt
+        ? api.externalSubtitleUrl(media.id, externalChoisi.id, profile.id, decalage, subtitleEncodingRef.current) : null;
+      setUrlSousTitreBureau(interne ?? externe);
+      return;
+    }
     video.querySelectorAll("track").forEach((track) => track.remove());
-    const internal = playbackInfo.streams.find((stream) => stream.type === "subtitle" && stream.index === subtitleIndexRef.current);
+    const internal = internalChoisi;
     if (internal?.canExtractAsWebVtt) {
       const track = document.createElement("track");
       track.kind = "subtitles";
@@ -442,7 +508,7 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
       positionSubtitleTrack(track, subtitlePositionRef.current);
       video.append(track);
     }
-    const external = playbackInfo.externalSubtitles?.find((subtitle) => subtitle.id === externalSubtitleIndexRef.current);
+    const external = externalChoisi;
     if (external?.canConvertToWebVtt) {
       const track = document.createElement("track");
       track.kind = "subtitles";
@@ -468,6 +534,31 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
     if (reconnectPositionRef.current > 0) video.addEventListener("loadedmetadata", () => {
       video.currentTime = Math.min(Math.max(0, reconnectPositionRef.current - startOffsetRef.current), Math.max(0, video.duration - .25)); reconnectPositionRef.current = 0;
     }, { once: true });
+    /*
+     * VLC décode : il ouvre le flux lui-même, et il n'y a plus de hls.js.
+     *
+     * Ce n'est pas une perte. hls.js existe pour donner au navigateur ce qu'il ne sait pas faire —
+     * découper un flux adaptatif et le pousser dans un `MediaSource`. VLC lit HLS nativement, et
+     * surtout il lit **le fichier tel quel**, ce qui est tout l'intérêt : la plupart des lectures du
+     * client de bureau ne passent plus par HLS du tout.
+     *
+     * Reste que le menu de qualité vient des paliers déclarés par hls.js : il est donc vide ici, et
+     * c'est honnête — une lecture directe n'a pas de paliers, et sur un flux converti c'est VLC qui
+     * choisit.
+     */
+    const surface = surfaceVlc;
+    if (surface) {
+      setQualityLevels([]);
+      setQualityLevel(-1);
+      const reponse = await surface.ouvrir(source);
+      setMessage(reponse.ok ? null : reponse.message ?? "Lecture impossible");
+      applySubtitleTracks(playbackInfo);
+      return;
+    }
+    // Passé ce point, la lecture est celle d'un navigateur : hls.js et la source se posent sur la
+    // balise vidéo, qui existe forcément puisque VLC vient d'être écarté.
+    const element = elementVideoRef.current;
+    if (!element) return;
     const HlsClass = playback.mode !== "direct" && "MediaSource" in window ? (await import("hls.js")).default : null;
     if (HlsClass?.isSupported()) {
       // `capLevelToPlayerSize` plafonnait la qualité aux dimensions rendues de l'élément vidéo. Dans
@@ -489,7 +580,7 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
         maxBufferSize: 120 * 1000 * 1000,
         capLevelToPlayerSize: false, startLevel: -1, abrEwmaDefaultEstimate: 8_000_000, abrBandWidthFactor: .8, abrBandWidthUpFactor: .65 });
       hls.loadSource(source);
-      hls.attachMedia(video);
+      hls.attachMedia(element);
       hls.on(HlsClass.Events.MANIFEST_PARSED, () => { hlsRecoveryRef.current = 0; setMessage(null);
         setQualityLevels(hls.levels.map((level, index) => ({ index, height: level.height, bitrate: level.bitrate }))); void video.play().catch(() => undefined); });
       hls.on(HlsClass.Events.LEVEL_SWITCHED, (_event, data) => { if (hls.autoLevelEnabled) setQualityLevel(-1); else setQualityLevel(data.level); });
@@ -531,7 +622,7 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
       });
       hlsRef.current = hls;
     } else {
-      video.src = source;
+      element.src = source;
       setMessage(null);
     }
     applySubtitleTracks(playbackInfo);
@@ -550,7 +641,13 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
     hlsRef.current = null;
     const video = videoRef.current;
     reconnectPositionRef.current = startOffsetRef.current + (video?.currentTime ?? 0);
-    if (video) { video.pause(); video.removeAttribute("src"); video.querySelectorAll("track").forEach((track) => track.remove()); video.load(); }
+    video?.pause();
+    // Vider la balise de sa source et de ses pistes n'a de sens que s'il y en a une. Quand VLC
+    // décode, c'est l'ouverture du flux suivant qui remplace le précédent, et les sous-titres sont
+    // effacés ici pour qu'aucune réplique du film d'avant ne survive à la bascule.
+    const element = elementVideoRef.current;
+    if (element) { element.removeAttribute("src"); element.querySelectorAll("track").forEach((track) => track.remove()); element.load(); }
+    else { setUrlSousTitreBureau(null); setRepliquesBureau([]); }
     if (sessionIdRef.current) {
       void api.stopPlayback(sessionIdRef.current).catch(() => undefined);
       sessionIdRef.current = null;
@@ -559,9 +656,12 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
       // La sonde de décodage précède la négociation : c'est elle qui décide des codecs, des
       // conteneurs et de la définition annoncés. Elle ne s'exécute qu'une fois par session et son
       // échec éventuel est sans conséquence — la négociation retombe alors sur les sondes anciennes.
-      await probeDecodeSupport().catch(() => undefined);
+      // La sonde interroge le navigateur : elle n'apprend rien quand c'est VLC qui décode, et ce
+      // qu'elle mesure n'entre alors dans aucune décision.
+      if (!surfaceVlc) await probeDecodeSupport().catch(() => undefined);
       const external = playbackInfo.externalSubtitles?.find((subtitle) => subtitle.id === externalSubtitleIndexRef.current) ?? null;
-      const clientCapabilities = browserCapabilities(audioIndexRef.current, playbackInfo.streams.find((stream) => stream.index === subtitleIndexRef.current) ?? null,
+      const declarer = surfaceVlc ? capacitesBureau : browserCapabilities;
+      const clientCapabilities = declarer(audioIndexRef.current, playbackInfo.streams.find((stream) => stream.index === subtitleIndexRef.current) ?? null,
         forceTranscode, modePreference, external?.id ?? null, external?.kind === "image", subtitleOffsetRef.current);
       clientCapabilities.dynamicRangePreference = dynamicRangeRef.current === "auto"
         ? profile.dynamicRangePriority ?? "auto" : dynamicRangeRef.current;
@@ -981,7 +1081,7 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
   // fichier SDR laisserait croire qu'on peut en fabriquer, ce qui n'est pas le cas.
   const sourceIsHdr = info?.streams.some((stream) => stream.type === "video" && stream.hdrFormat !== "sdr") ?? false;
   const sourceVideo = info?.streams.find((stream) => stream.type === "video");
-  const menuCapabilities = sourceIsHdr ? browserCapabilities(null, null, false) : null;
+  const menuCapabilities = sourceIsHdr ? (surfaceVlc ? capacitesBureau : browserCapabilities)(null, null, false) : null;
   const dynamicRanges = dynamicRangeChoices(sourceVideo, menuCapabilities?.hdrFormats ?? [], profile.dynamicRangePriority);
 
   /**
@@ -1011,14 +1111,25 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
    * dehors et rétablissait les siennes, avec la même durée fausse. C'est le conteneur qui est agrandi.
    */
   const toggleFullScreen = async () => {
+    registerInteraction();
+    // Dans la coque, c'est la fenêtre qui s'agrandit, pas le document : voir l'effet qui suit l'état.
+    const coque = pontBureau();
+    if (coque) { await coque.pleinEcran(); return; }
     const page = pageRef.current;
     if (!page) return;
-    registerInteraction();
     if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
     else await page.requestFullscreen?.().catch(() => undefined);
   };
 
-  const togglePiP = async () => { const video = videoRef.current; if (!video || !("pictureInPictureEnabled" in document)) return;
+  /**
+   * L'incrustation dans un coin de l'écran est un service du navigateur, rendu à une balise vidéo.
+   *
+   * Quand VLC décode, il n'y a pas de balise : le bouton n'est pas offert plutôt que d'être offert
+   * sans effet. L'équivalent existe côté système — une fenêtre toujours au-dessus — et viendra avec
+   * l'empaquetage, si le besoin s'en fait sentir.
+   */
+  const incrustationOfferte = !surfaceVlc && "pictureInPictureEnabled" in document;
+  const togglePiP = async () => { const video = elementVideoRef.current; if (!video || !incrustationOfferte) return;
     if (document.pictureInPictureElement) await document.exitPictureInPicture(); else await video.requestPictureInPicture(); };
 
   /**
@@ -1068,42 +1179,109 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
     return () => window.clearTimeout(timer);
   }, [applySubtitleTracks, info, requiresBurnIn, subtitleEncoding, subtitleOffset, subtitlePosition]);
 
+  /**
+   * Le repli après un échec de lecture directe, en deux marches et non en une.
+   *
+   * Il n'y en avait qu'une : tout échec direct partait en `compatible`, donc en transcodage. C'était
+   * sans conséquence tant que la lecture directe n'était retenue que sur un accord complet — un échec
+   * y était forcément un défaut de décodeur. Depuis que le serveur tente le direct sur un conteneur
+   * non déclaré, la cause la plus probable est tout autre : Firefox et Safari ne lisent pas le
+   * Matroska, et l'échec survient avant la moindre image.
+   *
+   * Envoyer ce cas au transcodage serait le pire des dénouements — on aurait remplacé un remux, qui
+   * copie l'image au bit près, par une conversion complète que le NAS peine à produire. D'où la
+   * première marche : le remux, qui range le même flux dans un conteneur que le lecteur accepte. La
+   * seconde n'est atteinte que s'il échoue à son tour, et là c'est bien le décodeur qui est en cause.
+   *
+   * Le repli vaut pour les deux surfaces. VLC échoue rarement — c'est tout l'intérêt de le mettre là
+   * — mais il échoue : un fichier tronqué, un partage réseau qui se dérobe. Priver le client de
+   * bureau de ce filet reviendrait à lui offrir un écran noir là où le Web se rattrape.
+   */
+  const surEchecDeLecture = useCallback(() => {
+    if (session?.mode === "direct" && info && !directRetry) {
+      // Le serveur ne peut pas constater cet échec : en lecture directe il n'a fait que servir le
+      // fichier, et tout s'est produit dans le lecteur. On le lui dit avant de replier.
+      const codec = info.streams.find((flux) => flux.type === "video")?.codec;
+      if (codec) void api.reportCodecFailure(deviceId(), codec, "Lecture directe interrompue par le lecteur");
+      setDirectRetry(true);
+      void start(info, "remux");
+    }
+    else if (session?.mode === "remux" && info && directRetry) {
+      // Le remux a échoué après un repli : le conteneur n'était donc pas seul en cause.
+      setMessage("Conversion complète, le flux n'a pas pu être lu tel quel.");
+      void start(info, "compatible");
+    }
+    else setMessage("Le lecteur n'a pas pu décoder ce flux.");
+  }, [directRetry, info, session, start]);
+
+  // La balise vidéo reçoit l'échec par une propriété de JSX ; VLC n'en a pas, il l'annonce comme un
+  // événement. C'est le seul endroit du lecteur où les deux surfaces se branchent différemment.
+  useEffect(() => {
+    if (!surfaceVlc) return;
+    surfaceVlc.addEventListener("error", surEchecDeLecture);
+    return () => surfaceVlc.removeEventListener("error", surEchecDeLecture);
+  }, [surEchecDeLecture, surfaceVlc]);
+
+  /**
+   * Charge le fichier de sous-titres que la balise `<track>` aurait chargé.
+   *
+   * Le même fichier, la même adresse, le même décalage : ce qui change est seulement qui le lit. Un
+   * échec est silencieux — le film continue sans sous-titres, ce qui vaut mieux qu'un message par
+   * dessus l'image.
+   */
+  useEffect(() => {
+    if (!surfaceVlc) return;
+    if (!urlSousTitreBureau) { setRepliquesBureau([]); return; }
+    let vivant = true;
+    void fetch(urlSousTitreBureau).then((reponse) => (reponse.ok ? reponse.text() : ""))
+      .then((texte) => { if (vivant) setRepliquesBureau(analyserWebVtt(texte)); })
+      .catch(() => { if (vivant) setRepliquesBureau([]); });
+    return () => { vivant = false; };
+  }, [surfaceVlc, urlSousTitreBureau]);
+
+  /**
+   * Le fond de la page s'efface pour laisser voir la vidéo, et VLC s'arrête quand on quitte.
+   *
+   * L'interface du client de bureau vit dans une fenêtre transparente posée au-dessus de la fenêtre
+   * vidéo. Le catalogue y est opaque, comme il doit l'être ; le lecteur, lui, doit devenir un
+   * simple vitrage — sans quoi il masquerait exactement ce qu'il sert à regarder.
+   *
+   * La classe va sur `html` **autant que** sur `body` : la feuille de style donne un fond aux deux,
+   * `:root` portant `#080b12` sous le dégradé de `body`. N'en effacer qu'un laissait l'autre, et la
+   * fenêtre restait opaque — du bleu-noir précisément là où la vidéo jouait.
+   */
+  useEffect(() => {
+    if (!surfaceVlc) return;
+    document.documentElement.classList.add("bureau-video");
+    document.body.classList.add("bureau-video");
+    return () => {
+      document.documentElement.classList.remove("bureau-video");
+      document.body.classList.remove("bureau-video");
+      surfaceVlc.fermer();
+    };
+  }, [surfaceVlc]);
+
   const audioStreams = info?.streams.filter((stream) => stream.type === "audio") ?? [];
   const subtitleStreams = info?.streams.filter((stream) => stream.type === "subtitle") ?? [];
+  // Les répliques du moment, calculées sur la position **dans le flux** : c'est l'échelle du fichier
+  // WebVTT, que le serveur a déjà décalé du début de session.
+  const repliquesVisibles = surfaceVlc ? repliquesA(repliquesBureau, currentTime - startOffsetRef.current) : [];
+  const habillageSousTitres = `subtitles-${subtitleSize} subtitles-${subtitlePosition} subtitles-font-${subtitleFont} subtitles-color-${subtitleColor}${subtitleBackground ? " subtitles-background" : ""}`;
 
   return (
-    <div className={`player-page${chromeVisible ? "" : " chrome-hidden"}`} ref={pageRef} onFocus={wakeChrome}>
-      <video ref={videoRef} className={`subtitles-${subtitleSize} subtitles-${subtitlePosition} subtitles-font-${subtitleFont} subtitles-color-${subtitleColor}${subtitleBackground ? " subtitles-background" : ""}`} autoPlay playsInline onError={() => {
-        /**
-         * Le repli après un échec de lecture directe, en deux marches et non en une.
-         *
-         * Il n'y en avait qu'une : tout échec direct partait en `compatible`, donc en transcodage.
-         * C'était sans conséquence tant que la lecture directe n'était retenue que sur un accord
-         * complet — un échec y était forcément un défaut de décodeur. Depuis que le serveur tente le
-         * direct sur un conteneur non déclaré, la cause la plus probable est tout autre : Firefox et
-         * Safari ne lisent pas le Matroska, et l'échec survient avant la moindre image.
-         *
-         * Envoyer ce cas au transcodage serait le pire des dénouements — on aurait remplacé un remux,
-         * qui copie l'image au bit près, par une conversion complète que le NAS peine à produire.
-         * D'où la première marche : le remux, qui range le même flux dans un conteneur que le
-         * navigateur accepte. La seconde n'est atteinte que s'il échoue à son tour, et là c'est bien
-         * le décodeur qui est en cause.
-         */
-        if (session?.mode === "direct" && info && !directRetry) {
-          // Le serveur ne peut pas constater cet échec : en lecture directe il n'a fait que servir le
-          // fichier, et tout s'est produit dans le lecteur. On le lui dit avant de replier.
-          const codec = info.streams.find((flux) => flux.type === "video")?.codec;
-          if (codec) void api.reportCodecFailure(deviceId(), codec, "Lecture directe interrompue par le lecteur");
-          setDirectRetry(true);
-          void start(info, "remux");
-        }
-        else if (session?.mode === "remux" && info && directRetry) {
-          // Le remux a échoué après un repli : le conteneur n'était donc pas seul en cause.
-          setMessage("Conversion complète, le flux n'a pas pu être lu tel quel.");
-          void start(info, "compatible");
-        }
-        else setMessage("Le lecteur n'a pas pu décoder ce flux.");
-      }} />
+    <div className={`player-page${chromeVisible ? "" : " chrome-hidden"}${surfaceVlc ? " player-page-bureau" : ""}`} ref={pageRef} onFocus={wakeChrome}>
+      {/*
+        Quand VLC décode, il n'y a pas de balise vidéo : l'image est peinte par un autre processus,
+        dans la fenêtre du dessous, et cette page est transparente par-dessus. Tout le reste du
+        lecteur — commandes, carte d'enchaînement, menus — est rigoureusement le même.
+      */}
+      {!surfaceVlc && <video ref={(element) => { elementVideoRef.current = element; videoRef.current = element; }}
+        className={habillageSousTitres} autoPlay playsInline onError={surEchecDeLecture} />}
+      {surfaceVlc && repliquesVisibles.length > 0 && (
+        <div className={`sous-titres-bureau ${habillageSousTitres}`} aria-live="off">
+          {repliquesVisibles.map((texte, rang) => <p key={`${rang}-${texte}`}>{texte}</p>)}
+        </div>
+      )}
       <div className="player-top">
         <button onClick={onClose} aria-label="Fermer le lecteur">←</button>
         <div><b>{media.showTitle ?? media.title}</b>{media.showTitle && <span>S{media.seasonNumber} E{media.episodeNumber} · {media.title}</span>}</div>
@@ -1162,7 +1340,7 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
           <label>Minuteur <select aria-label="Minuteur de lecture" value={sleepMinutes} onChange={(event) => startSleepTimer(Number(event.target.value))}><option value="0">Désactivé</option><option value="15">15 min</option><option value="30">30 min</option><option value="45">45 min</option><option value="60">60 min</option></select></label>
           <button onClick={() => void toggleFullScreen()} aria-label={fullScreen ? "Quitter le plein écran" : "Plein écran"}>
             {fullScreen ? "⤡" : "⤢"}</button>
-          {"pictureInPictureEnabled" in document && <button onClick={() => void togglePiP()} aria-label="Image dans l’image">PiP</button>}
+          {incrustationOfferte && <button onClick={() => void togglePiP()} aria-label="Image dans l’image">PiP</button>}
         </div>
       </div>
       {infoOpen && <aside className="playback-info" aria-label="Informations de lecture">

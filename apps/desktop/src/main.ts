@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, Menu, shell } from "electron";
 import path from "node:path";
-import { ecrireReglages, lireReglages, normaliserAdresse } from "./reglages.js";
+import { ecrireReglages, lireReglages, memeServeur, normaliserAdresse } from "./reglages.js";
+import { ETAT_INITIAL, Lecteur, trouverVlc } from "./vlc.js";
 
 /**
  * La coque du client de bureau.
@@ -33,6 +34,55 @@ function suivre(): void {
   fenetreInterface.setBounds(fenetreVideo.getContentBounds());
 }
 
+/**
+ * La fenêtre du dessous, désignée à VLC comme surface de dessin.
+ *
+ * On se fie à la taille du tampon plutôt qu'à l'architecture du processus : sous Windows la poignée
+ * fait 64 bits sur une machine 64 bits, sous X11 l'identifiant de fenêtre en fait 32 quelle que soit
+ * la machine. Lire huit octets là où il n'y en a que quatre lèverait une exception au lancement.
+ */
+function poigneeDe(fenetre: BrowserWindow): string | null {
+  if (fenetre.isDestroyed()) return null;
+  const tampon = fenetre.getNativeWindowHandle();
+  return tampon.length >= 8 ? tampon.readBigUInt64LE().toString() : String(tampon.readUInt32LE());
+}
+
+const lecteur = new Lecteur(() => (fenetreVideo ? poigneeDe(fenetreVideo) : null));
+
+// L'état de lecture est poussé vers l'interface, jamais demandé par elle : une barre de progression
+// qui interroge quatre fois par seconde traverserait le pont quatre fois par seconde pour rien.
+lecteur.surEtat((etat) => {
+  if (fenetreInterface && !fenetreInterface.isDestroyed()) {
+    fenetreInterface.webContents.send("flixtunes:etat-lecture", etat);
+  }
+});
+
+/**
+ * Le plein écran, et pourquoi il ne peut pas venir de la page.
+ *
+ * Une page ne sait agrandir que sa propre fenêtre. Or l'interface vit dans une fenêtre transparente
+ * posée sur la fenêtre vidéo : un plein écran demandé au document aurait étalé les commandes sur
+ * tout l'écran devant une vidéo restée à sa place. C'est la fenêtre du dessous qu'on agrandit, et
+ * l'interface la suit — le même mécanisme qui la fait suivre un déplacement.
+ *
+ * Il vaut pour toute l'application et non pour le seul lecteur : on parcourt parfois le catalogue
+ * sur un téléviseur, et rien ne justifierait d'y garder une barre de titre.
+ */
+function basculerPleinEcran(actif?: boolean): boolean {
+  if (!fenetreVideo || fenetreVideo.isDestroyed()) return false;
+  const vise = actif ?? !fenetreVideo.isFullScreen();
+  fenetreVideo.setFullScreen(vise);
+  suivre();
+  return vise;
+}
+
+function annoncerPleinEcran(actif: boolean): void {
+  suivre();
+  if (fenetreInterface && !fenetreInterface.isDestroyed()) {
+    fenetreInterface.webContents.send("flixtunes:etat-plein-ecran", actif);
+  }
+}
+
 function ouvrirFenetres(): void {
   fenetreVideo = new BrowserWindow({
     width: 1440,
@@ -61,6 +111,20 @@ function ouvrirFenetres(): void {
     },
   });
 
+  /*
+   * F11 partout dans l'application, et Échap pour en sortir.
+   *
+   * Les touches sont interceptées avant la page : le client Web les recevrait sans pouvoir en faire
+   * quoi que ce soit, puisque le plein écran ne lui appartient pas ici. Échap ne quitte que le plein
+   * écran, et seulement s'il y est — sans quoi elle fermerait des panneaux dont ce n'est pas le
+   * rôle de la coque de s'occuper.
+   */
+  fenetreInterface.webContents.on("before-input-event", (evenement, entree) => {
+    if (entree.type !== "keyDown") return;
+    if (entree.key === "F11") { evenement.preventDefault(); basculerPleinEcran(); return; }
+    if (entree.key === "Escape" && fenetreVideo?.isFullScreen()) { evenement.preventDefault(); basculerPleinEcran(false); }
+  });
+
   // Chaque événement est déclaré à part : les signatures d'Electron sont typées une par une, et une
   // boucle sur une liste de noms ne se laisse pas vérifier.
   fenetreVideo.on("move", suivre);
@@ -68,7 +132,12 @@ function ouvrirFenetres(): void {
   fenetreVideo.on("restore", suivre);
   fenetreVideo.on("maximize", suivre);
   fenetreVideo.on("unmaximize", suivre);
+  fenetreVideo.on("enter-full-screen", () => annoncerPleinEcran(true));
+  fenetreVideo.on("leave-full-screen", () => annoncerPleinEcran(false));
   fenetreVideo.on("closed", () => {
+    // VLC dessine dans cette fenêtre : elle disparaît, il n'a plus de raison d'être. Sans cela le
+    // processus survivrait à la fermeture, invisible et toujours en train de lire.
+    lecteur.arreter();
     if (fenetreInterface && !fenetreInterface.isDestroyed()) fenetreInterface.destroy();
     fenetreVideo = null;
     fenetreInterface = null;
@@ -124,6 +193,44 @@ app.whenReady().then(() => {
 
   ipcMain.handle("flixtunes:serveur", () => lireReglages(app.getPath("userData")).serveur);
 
+  /*
+   * VLC est-il installé ? La question se pose avant que la page n'existe.
+   *
+   * Le client Web décide au premier rendu de son lecteur s'il pilote VLC ou une balise vidéo. Une
+   * promesse arriverait après ce choix ; c'est donc l'une des rares réponses que le pont doit rendre
+   * sur-le-champ, et le seul endroit du programme où un aller-retour synchrone se justifie.
+   */
+  ipcMain.on("flixtunes:vlc-present", (evenement) => { evenement.returnValue = trouverVlc() !== null; });
+
+  /*
+   * Les commandes de lecture.
+   *
+   * Une seule mérite une garde, et c'est la première : « ouvre ceci ». Le pont est offert à une page
+   * chargée depuis le réseau, et VLC ouvre tout ce qu'on lui présente — y compris un fichier du
+   * disque. On n'accepte donc que ce qui vient du serveur auquel la coque est connectée. Les autres
+   * commandes ne portent qu'un nombre et ne peuvent rien ouvrir.
+   */
+  ipcMain.handle("flixtunes:lecteur-ouvrir", async (_evenement, uri: unknown) => {
+    const serveur = lireReglages(app.getPath("userData")).serveur;
+    if (typeof uri !== "string" || !memeServeur(uri, serveur)) {
+      return { ok: false, message: "Ce flux ne vient pas du serveur FlixTunes." };
+    }
+    return lecteur.ouvrir(uri);
+  });
+  ipcMain.handle("flixtunes:lecteur-lire", () => lecteur.lire());
+  ipcMain.handle("flixtunes:lecteur-pause", () => lecteur.pause());
+  ipcMain.handle("flixtunes:lecteur-aller", (_evenement, secondes: unknown) =>
+    lecteur.allerA(typeof secondes === "number" ? secondes : 0));
+  ipcMain.handle("flixtunes:lecteur-vitesse", (_evenement, valeur: unknown) =>
+    lecteur.vitesse(typeof valeur === "number" ? valeur : 1));
+  ipcMain.handle("flixtunes:lecteur-volume", (_evenement, valeur: unknown) =>
+    lecteur.volume(typeof valeur === "number" ? valeur : 1));
+  ipcMain.handle("flixtunes:lecteur-fermer", () => lecteur.fermer());
+  ipcMain.handle("flixtunes:lecteur-etat-courant", () => (trouverVlc() ? lecteur.etatCourant() : { ...ETAT_INITIAL }));
+
+  ipcMain.handle("flixtunes:plein-ecran", (_evenement, actif: unknown) =>
+    basculerPleinEcran(typeof actif === "boolean" ? actif : undefined));
+
   ouvrirFenetres();
 
   app.on("activate", () => {
@@ -145,5 +252,10 @@ app.on("web-contents-created", (_evenement, contenu) => {
 });
 
 app.on("window-all-closed", () => {
+  lecteur.arreter();
   app.quit();
 });
+
+// Un arrêt demandé par le système — session qui se ferme, machine qui s'éteint — n'emprunte pas le
+// chemin des fenêtres. VLC est un processus à part : il faut le renvoyer explicitement.
+app.on("before-quit", () => lecteur.arreter());

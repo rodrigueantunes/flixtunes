@@ -160,9 +160,9 @@ chemin de code éprouvé est le même, mais la fluidité d'un glissement reste �
 | N° | Contenu | Preuve de fin |
 | --- | --- | --- |
 | ~~**1**~~ | ~~Sonde : Electron + VLC en processus fils, interface transparente par-dessus~~ **Faite le 27 août 2026** — voir §6 bis | **les trois points constatés, plus un quatrième : le clic arrive** |
-| **2** | Coque minimale : fenêtre, chargement du client Web, mode bureau détecté | le catalogue s'affiche et se parcourt |
-| **3** | Le pont : `Player.tsx` en mode bureau pilote VLC au lieu d'une balise `<video>` | une lecture directe et une lecture convertie |
-| **4** | Capacités déclarées depuis la machine réelle, décodage matériel | le NAS ne convertit plus ce qu'il ne devrait pas |
+| ~~**2**~~ | ~~Coque minimale : fenêtre, chargement du client Web, mode bureau détecté~~ **Faite en r85** | **le catalogue s'affiche et se parcourt** |
+| ~~**3**~~ | ~~Le pont : `Player.tsx` en mode bureau pilote VLC au lieu d'une balise `<video>`~~ **Faite en r86** — voir `VALIDATION_0.5.6_R86.md` | **une lecture directe et une lecture convertie, constatées à l'écran** |
+| **4** | Capacités déclarées depuis la machine réelle ; choix de piste audio confié à VLC | le NAS ne convertit plus ce qu'il ne devrait pas, et le remux de séparation disparaît |
 | **5** | Empaquetage `.msi`, `.deb`, AppImage ; retrait du client WPF | un installateur par système |
 
 **Une à deux semaines**, contre trois à cinq pour la voie écartée — et sans toucher à Android.

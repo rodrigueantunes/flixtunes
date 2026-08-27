@@ -665,6 +665,53 @@ video.subtitles-color-white::cue { color: #fff; }
 video.subtitles-color-yellow::cue { color: #ffe45c; }
 video.subtitles-color-cyan::cue { color: #67e8f9; }
 video.subtitles-color-green::cue { color: #86efac; }
+
+/*
+  Le lecteur du client de bureau : la même interface, posée sur une vidéo qu'un autre processus peint.
+
+  L'image ne vient pas d'une balise vidéo mais de VLC, qui dessine dans la fenêtre du dessous. La
+  fenêtre du dessus — celle qui porte tout le client Web — est transparente, et le lecteur doit donc
+  s'effacer pour la laisser voir. Le catalogue, lui, reste opaque : c'est bien une interface qu'on
+  veut y lire, pas un écran noir.
+
+  La classe est posée sur `html` **et** sur `body`, et retirée quand le lecteur se ferme. Les deux,
+  parce que la feuille de style donne un fond aux deux : `:root` porte `#080b12` et `body` un dégradé
+  par-dessus. N'effacer que celui de `body` laissait l'autre — une fenêtre qu'on croyait transparente
+  et qui ne l'était pas, du bleu-noir exactement là où la vidéo aurait dû apparaître. Mesuré sur la
+  page en fonctionnement : `body` transparent, `html` à `rgb(8, 11, 18)`.
+*/
+html.bureau-video, body.bureau-video { background: transparent; }
+.player-page-bureau { background: transparent; }
+
+/*
+  Les sous-titres, dessinés par nous puisqu'il n'y a plus de balise à qui les confier.
+
+  Les valeurs reprennent une à une celles de `::cue` juste au-dessus — mêmes tailles relatives,
+  mêmes polices, mêmes couleurs, même ombre portée quand le fond est transparent. C'est la raison
+  d'être du procédé : les six réglages de sous-titres du profil continuent d'agir, et l'image est la
+  même que dans un navigateur.
+
+  Le placement, lui, est écrit ici alors que le Web le fait en JavaScript sur les repères de la
+  piste. Il n'y a pas de piste : trois règles de position remplacent trois lignes de code.
+*/
+.sous-titres-bureau { position: absolute; z-index: 1; left: 0; right: 0; display: grid; gap: .2rem;
+  padding: 0 8%; text-align: center; pointer-events: none; font-size: clamp(1rem, 2.7vw, 2.2rem);
+  line-height: 1.3; font-weight: 600; }
+.sous-titres-bureau p { margin: 0; white-space: pre-line; }
+.sous-titres-bureau.subtitles-bottom { bottom: 8%; }
+.sous-titres-bureau.subtitles-middle { top: 50%; transform: translateY(-50%); }
+.sous-titres-bureau.subtitles-top { top: 8%; }
+.sous-titres-bureau.subtitles-small { font-size: clamp(.8rem, 2.16vw, 1.76rem); }
+.sous-titres-bureau.subtitles-large { font-size: clamp(1.3rem, 3.51vw, 2.86rem); }
+.sous-titres-bureau.subtitles-font-sans { font-family: Inter, system-ui, sans-serif; }
+.sous-titres-bureau.subtitles-font-serif { font-family: Georgia, "Times New Roman", serif; }
+.sous-titres-bureau.subtitles-font-mono { font-family: Consolas, "Courier New", monospace; }
+.sous-titres-bureau.subtitles-background p { background: rgba(0, 0, 0, .78); padding: .1em .35em; }
+.sous-titres-bureau:not(.subtitles-background) p { background: transparent; text-shadow: 0 2px 4px #000, 0 0 2px #000; }
+.sous-titres-bureau.subtitles-color-white { color: #fff; }
+.sous-titres-bureau.subtitles-color-yellow { color: #ffe45c; }
+.sous-titres-bureau.subtitles-color-cyan { color: #67e8f9; }
+.sous-titres-bureau.subtitles-color-green { color: #86efac; }
 .player-message { position: absolute; padding: 1.5rem; display: grid; gap: 1rem; max-width: 440px; border: 1px solid var(--line); border-radius: 16px; background: #111722ee; text-align: center; }
 .player-message button { border: 0; border-radius: 9px; padding: .7rem; background: var(--blue); cursor: pointer; }
 .player-message ul { margin: 0; padding-left: 1.2rem; color: var(--muted); text-align: left; font-size: .75rem; }
