@@ -61,9 +61,13 @@ function ouvrirFenetres(): void {
     },
   });
 
-  for (const evenement of ["move", "resize", "restore", "maximize", "unmaximize"] as const) {
-    fenetreVideo.on(evenement, suivre);
-  }
+  // Chaque événement est déclaré à part : les signatures d'Electron sont typées une par une, et une
+  // boucle sur une liste de noms ne se laisse pas vérifier.
+  fenetreVideo.on("move", suivre);
+  fenetreVideo.on("resize", suivre);
+  fenetreVideo.on("restore", suivre);
+  fenetreVideo.on("maximize", suivre);
+  fenetreVideo.on("unmaximize", suivre);
   fenetreVideo.on("closed", () => {
     if (fenetreInterface && !fenetreInterface.isDestroyed()) fenetreInterface.destroy();
     fenetreVideo = null;
