@@ -5,7 +5,7 @@ import { contextBridge, ipcRenderer } from "electron";
  *
  * Il est volontairement minuscule, et il le restera : chaque fonction exposée ici est une porte
  * ouverte dans une page qui charge du contenu distant. On n'y met que ce que la coque seule peut
- * faire — retenir une adresse, et commander VLC.
+ * faire — retenir une adresse, commander VLC, agrandir la fenêtre.
  *
  * **C'est aussi par sa présence que le client Web sait qu'il tourne dans la coque.** Une page qui
  * trouve `window.flixtunesBureau` sait qu'elle peut confier la lecture à VLC ; la même page dans un

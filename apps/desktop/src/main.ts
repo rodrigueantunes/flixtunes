@@ -6,10 +6,12 @@ import { ETAT_INITIAL, Lecteur, trouverVlc } from "./vlc.js";
 /**
  * La coque du client de bureau.
  *
- * Elle ne dessine rien. Tout ce qui s'affiche vient du **client Web** — le même que dans un
- * navigateur, servi par le NAS —, et c'est ce qui garantit qu'il n'y a pas deux interfaces à tenir à
- * jour. La coque ne fait que trois choses : ouvrir les fenêtres, retenir l'adresse du serveur, et
- * plus tard confier la lecture à VLC.
+ * Elle ne dessine qu'un écran, celui qui demande l'adresse du serveur. Tout le reste vient du
+ * **client Web** — le même que dans un navigateur, servi par le NAS —, et c'est ce qui garantit
+ * qu'il n'y a pas deux interfaces à tenir à jour. La coque ne fait que quatre choses : ouvrir les
+ * fenêtres, retenir l'adresse du serveur, confier la lecture à VLC, et agrandir la fenêtre au plein
+ * écran — cette dernière parce qu'une page ne sait agrandir que la sienne, et que ce n'est pas la
+ * bonne.
  *
  * **Deux fenêtres, et ce n'est pas un détail.** La sonde du 27 août 2026 l'a établi : si VLC dessine
  * dans la fenêtre qui porte l'interface, il la recouvre entièrement — une fenêtre fille se peint
