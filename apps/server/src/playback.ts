@@ -881,9 +881,28 @@ function decodeSubtitleEntities(value: string): string {
 }
 
 interface SubtitleCue { start: number; end: number; text: string }
+
+/**
+ * Les sous-titres, décalés puis bornés à la ligne de temps demandée.
+ *
+ * Le décalage sert deux usages. Le premier, réglé par la personne, corrige un fichier dont les
+ * sous-titres avancent ou retardent. Le second, **négatif**, ramène des sous-titres écrits en temps
+ * de film sur le temps d'un flux qui ne commence pas au début : une lecture reprise à huit minutes
+ * ouvre une session qui compte à partir de zéro, et les sous-titres non décalés visaient alors une
+ * position que le flux n'atteignait jamais.
+ *
+ * Ce qui tombe avant le début du flux est **écarté**, et non ramené à zéro : `subtitleTimestamp`
+ * borne à zéro, si bien que tous les sous-titres antérieurs se seraient empilés sur la première
+ * seconde. Un sous-titre à cheval sur le début, lui, commence au début.
+ */
 function cuesToWebVtt(cues: SubtitleCue[], offsetSeconds: number): string {
-  return `WEBVTT\n\n${cues.filter((cue) => cue.end > cue.start).map((cue) =>
-    `${subtitleTimestamp(cue.start + offsetSeconds)} --> ${subtitleTimestamp(cue.end + offsetSeconds)}\n${decodeSubtitleEntities(cue.text)}`)
+  const decales = cues
+    .filter((cue) => cue.end > cue.start)
+    .map((cue) => ({ ...cue, start: cue.start + offsetSeconds, end: cue.end + offsetSeconds }))
+    .filter((cue) => cue.end > 0)
+    .map((cue) => ({ ...cue, start: Math.max(0, cue.start) }));
+  return `WEBVTT\n\n${decales.map((cue) =>
+    `${subtitleTimestamp(cue.start)} --> ${subtitleTimestamp(cue.end)}\n${decodeSubtitleEntities(cue.text)}`)
     .join("\n\n")}\n`;
 }
 

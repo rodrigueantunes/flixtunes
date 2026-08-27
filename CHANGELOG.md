@@ -1,5 +1,13 @@
 # Journal des versions
 
+## 0.5.6.r84 — les sous-titres d'une lecture reprise s'affichent enfin, sur le Web
+
+- **Toute lecture reprise en cours de route perdait ses sous-titres**, sur le Web, dès qu'elle passait par un flux HLS. Le serveur ouvre alors une session qui **commence au point de reprise** et compte à partir de zéro ; les sous-titres, eux, portent les temps du film. Une reprise à huit minutes faisait donc chercher au navigateur un sous-titre pour la huitième **seconde**. Mesuré dans le lecteur en service : 107 sous-titres chargés, piste sélectionnée, mode « showing » — et **aucun actif**.
+- **Le client Web soustrait désormais le début de session** dans l'adresse de la piste. Tout le reste de l'interface faisait déjà cette addition — horloge, barre de progression, chapitres ; la piste de sous-titres était la seule à l'oublier. Android, lui, la faisait depuis le traitement de la fenêtre de session : c'est le Web qui n'avait jamais reçu la correction.
+- **Le serveur écarte ce qui précède le début du flux** au lieu de le ramener à zéro. Le formatage borne les temps négatifs à zéro : tous les sous-titres antérieurs s'empilaient donc sur la première seconde. Android envoyant déjà un décalage négatif, il en souffrait sans que personne l'ait relié à ça.
+- Quatre cas verrouillent la conversion : décalage négatif, sous-titre antérieur écarté, sous-titre à cheval sur la reprise ramené au début du flux, et le décalage réglé à la main qui continue de fonctionner seul.
+- 761 tests serveur et 174 tests Web, tous verts.
+
 ## 0.5.6.r83 — deux défauts du lecteur Android, vus en service
 
 - **Un film affichait « null » en gras, et son titre en dessous.** `optString` d'`org.json` a un piège : quand la valeur JSON vaut `null`, il ne rend pas une chaîne vide mais **la chaîne « null »** — quatre caractères qui passent tous les tests de non-vacuité. Un film, dont la série est nulle par nature, était donc pris pour une série nommée « null », et son titre relégué à la ligne réservée au numéro d'épisode. Toute lecture d'un champ facultatif passe désormais par un garde-fou qui rejette cette chaîne-là.

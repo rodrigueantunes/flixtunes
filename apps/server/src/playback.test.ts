@@ -548,3 +548,48 @@ describe("chaîne colorimétrique HDR", () => {
     expect(matrix.colorPipelines?.find((item) => item.id === "hdr10-output")?.available).toBe(true);
   });
 });
+
+describe("sous-titres d'un flux qui ne commence pas au début", () => {
+  const srt = [
+    "1", "00:00:10,000 --> 00:00:12,000", "avant la reprise", "",
+    "2", "00:08:05,000 --> 00:08:07,000", "à cheval sur la reprise", "",
+    "3", "00:10:00,000 --> 00:10:02,000", "après la reprise", "",
+  ].join("\n");
+
+  it("ramène les sous-titres sur la ligne de temps du flux", () => {
+    /*
+     * Le défaut vu en service : une lecture reprise à huit minutes ouvre une session qui compte à
+     * partir de zéro, mais les sous-titres portent les temps du film. Ils étaient chargés,
+     * sélectionnés, et n'apparaissaient jamais — la balise vidéo en était à sa huitième seconde quand
+     * eux visaient la huitième minute.
+     */
+    const vtt = convertTextSubtitleToWebVtt("srt", srt, -480);
+
+    expect(vtt).toContain("00:02:00.000 --> 00:02:02.000");
+    expect(vtt, "le sous-titre d'après la reprise est décalé, pas perdu").toContain("après la reprise");
+  });
+
+  it("écarte ce qui précède le début du flux au lieu de l'empiler sur la première seconde", () => {
+    // `subtitleTimestamp` borne à zéro : sans ce tri, tous les sous-titres antérieurs se seraient
+    // affichés d'un coup au démarrage.
+    const vtt = convertTextSubtitleToWebVtt("srt", srt, -480);
+
+    expect(vtt, "ce qui est déjà passé n'a plus lieu d'être").not.toContain("avant la reprise");
+    expect(vtt?.match(/00:00:00\.000 --> 00:00:00\.000/g) ?? [], "aucun sous-titre de durée nulle").toEqual([]);
+  });
+
+  it("un sous-titre à cheval sur la reprise commence au début du flux", () => {
+    const vtt = convertTextSubtitleToWebVtt("srt", srt, -486);
+
+    expect(vtt).toContain("à cheval sur la reprise");
+    expect(vtt, "il commence au début plutôt qu'à un temps négatif").toContain("00:00:00.000 --> 00:00:01.000");
+  });
+
+  it("le décalage réglé par la personne continue de fonctionner seul", () => {
+    const vtt = convertTextSubtitleToWebVtt("srt", srt, 2);
+
+    expect(vtt).toContain("00:00:12.000 --> 00:00:14.000");
+    expect(vtt, "rien n'est écarté quand le flux commence au début").toContain("avant la reprise");
+  });
+});
+

@@ -412,10 +412,24 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
     return false;
   }, []);
 
-  /** Reconstruit les pistes WebVTT du lecteur sans toucher au flux vidéo en cours. */
+  /**
+   * Reconstruit les pistes WebVTT du lecteur sans toucher au flux vidéo en cours.
+   *
+   * Le décalage envoyé au serveur additionne deux choses de nature différente :
+   *
+   * - celui que la personne a réglé, qui corrige un fichier dont les sous-titres avancent ou
+   *   retardent ;
+   * - **moins le début de la session**, parce qu'un flux qui ne commence pas au début du film compte
+   *   à partir de zéro. Une lecture reprise à huit minutes affichait ainsi des sous-titres écrits pour
+   *   la huitième minute alors que la balise vidéo en était à sa huitième *seconde* : ils étaient
+   *   chargés, sélectionnés, et n'apparaissaient jamais. Tout le reste de l'interface faisait déjà
+   *   cette addition — l'horloge, la barre, les chapitres —, la piste de sous-titres était la seule
+   *   à l'oublier.
+   */
   const applySubtitleTracks = useCallback((playbackInfo: PlaybackInfo) => {
     const video = videoRef.current;
     if (!video) return;
+    const decalage = subtitleOffsetRef.current - startOffsetRef.current;
     video.querySelectorAll("track").forEach((track) => track.remove());
     const internal = playbackInfo.streams.find((stream) => stream.type === "subtitle" && stream.index === subtitleIndexRef.current);
     if (internal?.canExtractAsWebVtt) {
@@ -423,7 +437,7 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
       track.kind = "subtitles";
       track.label = languageName(internal);
       track.srclang = internal.language?.slice(0, 2) || "und";
-      track.src = api.subtitleUrl(media.id, internal.index, profile.id, subtitleOffsetRef.current);
+      track.src = api.subtitleUrl(media.id, internal.index, profile.id, decalage);
       track.default = true;
       positionSubtitleTrack(track, subtitlePositionRef.current);
       video.append(track);
@@ -434,7 +448,7 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
       track.kind = "subtitles";
       track.label = external.name;
       track.srclang = external.language?.slice(0, 2) || "und";
-      track.src = api.externalSubtitleUrl(media.id, external.id, profile.id, subtitleOffsetRef.current, subtitleEncodingRef.current);
+      track.src = api.externalSubtitleUrl(media.id, external.id, profile.id, decalage, subtitleEncodingRef.current);
       track.default = true;
       positionSubtitleTrack(track, subtitlePositionRef.current);
       video.append(track);
