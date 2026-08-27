@@ -45,4 +45,27 @@ class IntituleLecteurTest {
         assertEquals("FlixTunes", intituleLecteur(null, null, 0, 0).titre)
         assertEquals("FlixTunes", intituleLecteur("   ", null, 0, 0).titre)
     }
+
+    @Test
+    fun `la chaine null d'org json ne devient pas un nom de serie`() {
+        /*
+         * Le defaut vu en service : le bandeau affichait « null » en gras, et le titre du film en
+         * dessous — a la place reservee au numero d'episode. `optString` d'org.json rend la chaine
+         * « null » quand la valeur JSON vaut null, et quatre caracteres passent tous les tests de
+         * non-vacuite. Un film, dont la serie est nulle par nature, etait donc pris pour une serie.
+         */
+        assertNull(texteUtile("null"))
+        assertNull(texteUtile(""))
+        assertNull(texteUtile("   "))
+        assertNull(texteUtile(null))
+        assertEquals("Top Gun", texteUtile("Top Gun"))
+        assertEquals("Top Gun", texteUtile("  Top Gun  "))
+    }
+
+    @Test
+    fun `un film n'affiche que son titre, sans seconde ligne`() {
+        val intitule = intituleLecteur(titre = texteUtile("Top Gun"), serie = texteUtile("null"), saison = 0, episode = 0)
+        assertEquals("Top Gun", intitule.titre)
+        assertNull(intitule.sousTitre)
+    }
 }

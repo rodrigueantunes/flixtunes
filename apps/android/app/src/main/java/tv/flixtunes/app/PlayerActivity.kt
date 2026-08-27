@@ -58,6 +58,7 @@ import tv.flixtunes.app.ui.lecteur.DELAI_AUTOPLAY_SECONDES
 import tv.flixtunes.app.ui.lecteur.EtatLecteur
 import tv.flixtunes.app.ui.lecteur.PisteChoix
 import tv.flixtunes.app.playback.dureeAffichee
+import tv.flixtunes.app.playback.texteUtile
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
@@ -170,6 +171,8 @@ class PlayerActivity : ComponentActivity() {
     private var introEcartee = false
     /** La carte a été ouverte par le générique : à la fin du média, on enchaîne sans redécompter. */
     private var carteParGenerique = false
+    /** A-t-on vu ce média avant son générique ? Voir `annoncerAuGenerique`. */
+    private var debutAvantGeneriqueVu = false
     /** « Annuler » vaut pour tout le reste de l'épisode. */
     private var enchainementEcarte = false
     /** L'épisode qui suit, retenu pour l'annoncer dès le générique. */
@@ -963,8 +966,8 @@ class PlayerActivity : ComponentActivity() {
      */
     private fun appliquerContexteMedia(media: org.json.JSONObject) {
         val intitule = intituleLecteur(
-            titre = media.optString("title").takeIf { it.isNotBlank() },
-            serie = media.optString("showTitle").takeIf { it.isNotBlank() },
+            titre = texteUtile(media.optString("title")),
+            serie = texteUtile(media.optString("showTitle")),
             saison = media.optInt("seasonNumber", 0),
             episode = media.optInt("episodeNumber", 0),
         )
@@ -1357,6 +1360,8 @@ class PlayerActivity : ComponentActivity() {
             // Les deux marqueurs de générique, calculés par le serveur à partir des chapitres du
             // fichier : une seule lecture des intitulés pour le Web comme pour Android.
             debutGeneriqueSecondes = playbackInfo.optDouble("creditsStartSeconds", -1.0).takeIf { it >= 0 }
+            // Nouveau média : on n'a encore rien vu de lui.
+            debutAvantGeneriqueVu = false
             introSecondes = playbackInfo.optJSONObject("intro")?.let { bloc ->
                 val debut = bloc.optDouble("startSeconds", -1.0)
                 val fin = bloc.optDouble("endSeconds", -1.0)
@@ -1524,7 +1529,20 @@ class PlayerActivity : ComponentActivity() {
         if (enchainementEcarte || carteParGenerique) return
         val debut = debutGeneriqueSecondes ?: return
         val suivant = voisinSuivant ?: return
-        if (dureeSecondes <= debut || position < debut) return
+        if (dureeSecondes <= debut) return
+        /*
+         * La carte ne s'arme qu'après avoir vu ce média **avant** son générique.
+         *
+         * Sans cette condition, elle surgissait au premier instant de l'épisode suivant, proposant
+         * déjà celui d'après. La cause : la préparation de session pose le marqueur de générique du
+         * nouvel épisode alors que le lecteur tient encore l'ancien, dont la position est près de la
+         * fin. Un seul rafraîchissement dans cet intervalle suffisait à croire le générique atteint.
+         *
+         * Le prix, assumé : sauter directement dans le générique d'un épisode qu'on vient d'ouvrir
+         * n'affiche pas la carte. C'est un geste délibéré, et l'épisode suivant reste à un bouton.
+         */
+        if (position < debut) { debutAvantGeneriqueVu = true; return }
+        if (!debutAvantGeneriqueVu) return
         if (!intent.getBooleanExtra(EXTRA_AUTOPLAY_NEXT, true)) return
         val compte = getSharedPreferences("playback", MODE_PRIVATE).getInt("autoplayCount:$profileId", 0)
         if (compte >= intent.getIntExtra(EXTRA_AUTOPLAY_LIMIT, 3)) return
@@ -1541,7 +1559,7 @@ class PlayerActivity : ComponentActivity() {
                 etatLecteur = etatLecteur.copy(
                     autoplayRestantSecondes = kotlin.math.ceil(restant).toInt(),
                     autoplayTotalSecondes = kotlin.math.ceil(dureeSecondes - debut).toInt().coerceAtLeast(1),
-                    autoplayTitre = suivant.optString("title").takeIf { it.isNotBlank() },
+                    autoplayTitre = texteUtile(suivant.optString("title")),
                     autoplaySousTitre = numeroEpisode(suivant.optInt("seasonNumber", 0), suivant.optInt("episodeNumber", 0)),
                 )
                 if (restant <= 0.0) { demarrerEpisodeEnAttente(); return@launch }
@@ -1576,7 +1594,7 @@ class PlayerActivity : ComponentActivity() {
                 masquage?.cancel()
                 // Le titre de l'épisode en gras, son numéro en dessous : on sait déjà quelle série
                 // on regarde, c'est l'épisode qui s'annonce. C'est la forme de la carte du Web.
-                val titreSuivant = next.optString("title").takeIf { it.isNotBlank() }
+                val titreSuivant = texteUtile(next.optString("title"))
                 val numeroSuivant = numeroEpisode(next.optInt("seasonNumber", 0), next.optInt("episodeNumber", 0))
                 for (restant in DELAI_AUTOPLAY_SECONDES downTo 1) {
                     etatLecteur = etatLecteur.copy(
@@ -1601,7 +1619,10 @@ class PlayerActivity : ComponentActivity() {
         carteParGenerique = false
         enchainementEcarte = false
         introEcartee = false
+        debutAvantGeneriqueVu = false
         debutGeneriqueSecondes = null
+        // Le voisin appartenait à l'épisode qu'on quitte : le garder ferait proposer le mauvais.
+        voisinSuivant = null
         introSecondes = null
         etatLecteur = etatLecteur.copy(autoplayRestantSecondes = null, autoplayTitre = null,
             autoplaySousTitre = null, passerGeneriqueVisible = false)

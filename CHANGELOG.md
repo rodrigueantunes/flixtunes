@@ -1,5 +1,12 @@
 # Journal des versions
 
+## 0.5.6.r83 — deux défauts du lecteur Android, vus en service
+
+- **Un film affichait « null » en gras, et son titre en dessous.** `optString` d'`org.json` a un piège : quand la valeur JSON vaut `null`, il ne rend pas une chaîne vide mais **la chaîne « null »** — quatre caractères qui passent tous les tests de non-vacuité. Un film, dont la série est nulle par nature, était donc pris pour une série nommée « null », et son titre relégué à la ligne réservée au numéro d'épisode. Toute lecture d'un champ facultatif passe désormais par un garde-fou qui rejette cette chaîne-là.
+- **La carte « épisode suivant » surgissait au premier instant de l'épisode qu'on venait de lancer**, proposant déjà celui d'après. La préparation de session pose le marqueur de générique du **nouvel** épisode alors que le lecteur tient encore l'**ancien**, dont la position est près de la fin : un seul rafraîchissement dans cet intervalle suffisait à croire le générique atteint. La carte ne s'arme désormais qu'après avoir vu ce média **avant** son générique.
+- Le voisin mémorisé est en outre oublié au changement d'épisode : il appartenait à celui qu'on quitte.
+- 213 tests Android, 0 échec.
+
 ## 0.5.6.r82 — la couche interface et la couche données se détachent de la plateforme
 
 - **Deux fichiers empêchaient tout le dossier `ui/` de bouger.** `Gabarit.kt` apportait cinq imports Android pour deux fonctions qui interrogent l'appareil ; `PleinEcran.kt` en apportait trois pour une extension d'`Activity` qui n'a jamais été appelée par un composable. Les premières sont parties dans `AppareilAndroid.kt`, le second a quitté `ui/`. **Il ne reste plus un seul `import android.` dans l'interface.**

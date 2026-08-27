@@ -3,6 +3,20 @@ package tv.flixtunes.app.playback
 /** Ce qu'on affiche faute de tout autre nom. Ne devrait plus servir : le serveur nomme le média. */
 const val MARQUE = "FlixTunes"
 
+/**
+ * Le texte d'un champ facultatif du serveur, ou `null` s'il n'y en a pas.
+ *
+ * `optString` d'`org.json` a un piège : quand la valeur JSON vaut `null`, il ne rend pas une chaîne
+ * vide mais **la chaîne « null »**, quatre caractères qui passent tous les tests de non-vacuité. Un
+ * film, dont `showTitle` est nul par nature, était donc pris pour une série nommée « null » : le
+ * bandeau affichait « null » en gras et le titre du film en dessous, à la place réservée au numéro
+ * d'épisode.
+ *
+ * Toute lecture d'un champ facultatif passe désormais par ici.
+ */
+fun texteUtile(valeur: String?): String? =
+    valeur?.trim()?.takeIf { it.isNotEmpty() && it != "null" }
+
 /** Les deux lignes du bandeau : ce qu'on regarde, et où l'on en est dans la série. */
 data class IntituleLecteur(val titre: String, val sousTitre: String?)
 
