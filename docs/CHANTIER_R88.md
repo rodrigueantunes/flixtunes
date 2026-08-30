@@ -159,11 +159,42 @@ Les fichiers sont servis en clair sur `datasets.imdbws.com`, rafraîchis quotidi
 | `title.akas.tsv.gz` | 488,5 Mio | **oui** — les titres alternatifs, y compris français |
 | `title.ratings.tsv.gz` | 8,2 Mio | **oui** — la note et le nombre de votes |
 | `title.episode.tsv.gz` | 52 Mio | **oui** pour les séries — série parente, saison, épisode |
-| `title.principals.tsv.gz` | 744,6 Mio | non — c'est la distribution, et c'est le travail de TMDB |
-| `name.basics.tsv.gz` | 294,6 Mio | non — même raison |
+| `title.principals.tsv.gz` | 744,6 Mio | **la distribution — voir ci-dessous** |
+| `name.basics.tsv.gz` | 294,6 Mio | les personnes, sans photo |
 
-Écarter les deux derniers économise un gigaoctet, et ne retire rien à un **repli** : ce qu'on lui
-demande, c'est d'identifier une œuvre quand TMDB ne répond pas, pas de refaire un second catalogue.
+### La distribution y est, mais elle est plus maigre que celle de TMDB
+
+`title.principals` porte bien les acteurs, avec leurs personnages : colonnes `tconst, ordering,
+nconst, category, job, characters`, et les rôles les plus fréquents sont `actor`, `actress`,
+`writer`, `director`. Relevé sur 13 520 œuvres du début du fichier :
+
+| Mesure | Valeur |
+| --- | --- |
+| Personnes par œuvre, **médiane** | **10** |
+| Maximum observé | 35 |
+| Photo de la personne | **aucune** — `name.basics` n'a pas de colonne d'image |
+
+Le nom du fichier ne ment pas : ce sont les **principaux**, pas la distribution complète. Dix par
+œuvre en médiane, là où TMDB en rend jusqu'à vingt-quatre **avec les portraits**. Comme source pour
+l'écran « Talents », ce serait donc un recul et non un progrès — ce qui n'enlève rien à son intérêt
+comme repli, quand TMDB ne répond pas du tout.
+
+*Réserve honnête sur cette mesure : l'échantillon est le début du fichier, donc des œuvres anciennes
+et courtes. La médiane de dix demande à être confirmée sur des films récents avant d'en tirer une
+conclusion définitive.*
+
+### Il n'y a pas de résumé, dans aucune langue
+
+Vérifié deux fois : les sept fichiers publiés n'ont aucune colonne de synopsis, et les noms
+plausibles d'un huitième fichier — `title.description`, `title.plot`, `title.overview`,
+`title.summaries` — répondent tous **absent**.
+
+Le **site** d'IMDb affiche bien des résumés, en français compris — c'est sans doute de là que vient l'impression.
+Mais ce que le site affiche et ce que les jeux de données publient sont deux choses différentes, et
+seule la seconde est utilisable sans extraire des pages, ce qu'on ne fera pas.
+
+Un résumé venant d'IMDb passerait donc par l'**API licenciée** — le connecteur existe déjà dans le
+code, en attente d'un accès payant. C'est une décision de budget, pas de technique.
 
 ### Et en français ?
 
