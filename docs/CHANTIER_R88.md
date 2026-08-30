@@ -137,14 +137,44 @@ Ce que je propose, dans cet ordre :
 
 ## 6. Ajouter IMDb
 
-À dire franchement avant de chiffrer : **IMDb n'a pas d'interface publique**. Ce qui existe :
+À dire franchement avant de chiffrer : **IMDb n'a pas d'API publique**. Ce qui existe :
 
 | Voie | Ce qu'on obtient | Ce que ça coûte |
 | --- | --- | --- |
 | Les **identifiants** IMDb via TMDB | déjà là — TMDB rend `external_ids` | rien, c'est fait |
-| Les **exports de données** IMDb (fichiers publics) | notes, votes, titres alternatifs, équipe | un import périodique, quelques centaines de Mio |
-| Une **API tierce** (OMDb…) | notes et résumés | une clé, une limite de requêtes, une dépendance de plus |
+| Les **jeux de données** publics | titres, années, titres alternatifs, notes, épisodes | un téléchargement périodique — **aucune clé, aucun compte** |
+| Une **API licenciée** | tout | le connecteur existe déjà dans le code, en attente d'un accès payant |
+| Une **API tierce** (OMDb…) | notes et résumés | une clé, une limite de requêtes, un second point de panne |
 | Extraire des pages du site | tout | interdit par leurs conditions — écarté |
+
+### Aucune clé n'est nécessaire
+
+Les fichiers sont servis en clair sur `datasets.imdbws.com`, rafraîchis quotidiennement, sous licence
+**non commerciale** — ce qui couvre exactement un serveur personnel. Tailles **relevées le 30 août
+2026**, dans les en-têtes HTTP :
+
+| Fichier | Taille | Utile au repli ? |
+| --- | --- | --- |
+| `title.basics.tsv.gz` | 215,7 Mio | **oui** — titre, titre original, année, type, durée, genres |
+| `title.akas.tsv.gz` | 488,5 Mio | **oui** — les titres alternatifs, y compris français |
+| `title.ratings.tsv.gz` | 8,2 Mio | **oui** — la note et le nombre de votes |
+| `title.episode.tsv.gz` | 52 Mio | **oui** pour les séries — série parente, saison, épisode |
+| `title.principals.tsv.gz` | 744,6 Mio | non — c'est la distribution, et c'est le travail de TMDB |
+| `name.basics.tsv.gz` | 294,6 Mio | non — même raison |
+
+Écarter les deux derniers économise un gigaoctet, et ne retire rien à un **repli** : ce qu'on lui
+demande, c'est d'identifier une œuvre quand TMDB ne répond pas, pas de refaire un second catalogue.
+
+### Ce qui coûtera vraiment, et qu'il faudra mesurer sur le NAS
+
+Pas le téléchargement — trois quarts de gigaoctet une fois par mois. C'est l'**import**.
+`title.akas` porte des dizaines de millions de lignes, et les avaler telles quelles sur un Celeron à
+quatre cœurs donnerait une base de plusieurs gigaoctets pour un service de secours. Le filtre se pose
+donc à l'entrée, pas après : les régions et langues qui nous concernent, les types d'œuvre qu'on
+range. Le chiffre d'après filtrage se mesure sur la machine où ça tourne, pas ici.
+
+Et comme toute fonction qui coûte cela : **elle s'active**. Désactivée au départ, réglage en base,
+arrêt net — la même règle que le repérage des génériques, pour la même raison.
 
 **Son rôle est tranché** : « c'est un repli en cas d'échec de TMDB qui reste priorité. » Cela simplifie
 beaucoup, et cela change la voie à prendre.
