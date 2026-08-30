@@ -25,7 +25,13 @@ l'intérêt qu'elle a *pour ce projet-là*, pas dans l'absolu.
 
 ### 2.1 Étape 57 — le rapport coût/intérêt est le plus défavorable du plan
 
-`apps/windows` contient déjà un client WPF complet : catalogue, fiche, lecteur, découverte du
+> **Note du 30 août 2026.** Ce qui suit raisonne sur le client WPF, qui n'existe plus : il a été
+> retiré en r87 et remplacé par un client de bureau qui **porte l'interface du client Web** et confie
+> la lecture à un VLC embarqué. La conclusion de la section — ne pas refondre un moteur de lecture
+> pour le client le moins utilisé — n'en est que renforcée : ce moteur est désormais celui de VLC, et
+> personne n'a à l'écrire.
+
+`apps/windows` contenait un client WPF complet : catalogue, fiche, lecteur, découverte du
 serveur, et des tests. **Il lit déjà des médias, via libVLC.** L'étape 57 n'est donc pas une création
 mais une **refonte du moteur de lecture** — libmpv/libplacebo, D3D11VA/Vulkan, HDR Windows, cadence
 écran, bitstream HDMI vers un ampli, matrice GPU Intel/NVIDIA/AMD.

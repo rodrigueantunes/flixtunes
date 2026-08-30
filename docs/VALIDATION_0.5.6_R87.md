@@ -105,13 +105,64 @@ inventer aurait été pire que de s'en tenir à ce qu'on sait :
 | Compilation TypeScript | aucune erreur |
 | Décodage | matériel — D3D11VA sur RTX 5070 Ti |
 
-## 7. Suite
+## 7. L'installateur emporte tout
 
-| Étape | Contenu |
+`FlixTunes-Bureau-0.5.6-x64.msi`, **131 Mio**, et rien à installer d'autre sur la machine qui le
+reçoit. Vérifié après installation : le programme ouvre `resources/vlc/vlc.exe`, **sa** copie, et
+non celle du système — lu sur la ligne de commande du processus.
+
+VLC est taillé de 183 à 117 Mio, et chaque retrait tient à l'usage qu'on en fait :
+
+| Écarté | Pourquoi |
 | --- | --- |
-| ~~1 à 4~~ | ~~sonde, coque, pont de lecture, choix des pistes~~ — faites |
-| 5 | empaquetage `.msi`, `.deb`, AppImage ; retrait du client WPF |
+| interface Qt, 19 Mio | on lance avec `--intf dummy` : elle ne s'ouvre jamais |
+| traductions sauf `fr`, 42 Mio | elles ne s'affichent nulle part — l'interface est celle du Web |
+| animations, habillages, rendu binaural | rien ici ne les active |
+| ActiveX, greffon de navigateur | deux technologies mortes |
+| **le désinstalleur de VLC** | celui-là pour une autre raison : un programme qui propose de désinstaller autre chose n'a rien à faire dans le dossier de FlixTunes |
 
-Deux demandes reçues en cours de route et non traitées ici : l'habillage des boutons du lecteur —
-qui relève du client Web, donc vaut pour les trois plateformes — et les réglages de sous-titres qui
-ne s'appliqueraient pas en direct.
+**Aucun codec n'est touché.** Y tailler ferait exactement ce que ce client existe pour éviter : un
+fichier qui ne se lit plus et un NAS qui se remet à convertir.
+
+Le logo est l'icône, sur l'exécutable comme dans la barre des tâches — portée par la fenêtre du
+dessous, l'autre étant retirée de la barre.
+
+## 8. Deux pièges de l'empaquetage
+
+**Des liens symboliques macOS dans une archive Windows.** electron-builder télécharge des outils dont
+l'archive en contient ; Windows refuse de les créer sans un privilège qu'une session ordinaire n'a
+pas, et la construction s'arrêtait sur une partie qui ne nous sert à rien. Le script extrait
+désormais l'archive lui-même en écartant ce dossier — rien à régler sur la machine.
+
+**`**/build/` avalait l'icône de l'installateur**, le même piège que `data/` en r77. La ressource a
+été renommée plutôt que le motif contourné : un dossier nommé `build` qui n'est pas une sortie de
+construction invite le malentendu.
+
+## 9. Une commande pour tous les clients
+
+`tools/Build-Release.ps1` demande la version puis la révision — la valeur du journal est proposée,
+Entrée l'accepte — ou les reçoit en paramètres. Le dossier de sortie est une variable en tête de
+script, et l'en-tête documente les deux formes.
+
+La version saisie est écrite à sa source unique et propagée ; la révision estampille les paquets
+**et** le titre du journal. C'est la règle du projet : une révision ne monte qu'à la génération.
+
+Le script produit ce que son système sait produire et nomme le reste. Sous Windows : paquet ASUSTOR,
+APK Android, `.msi`. Sous Linux : `.deb` et AppImage. Lancé sur les deux, il remplit le même dossier.
+
+## 10. Le client WPF est retiré
+
+Il portait une seconde interface, écrite à la main, en retard sur celle du Web et sans les écrans
+d'administration, l'accès distant ni la liste personnelle. Le client de bureau ne la réécrit pas :
+il **est** le client Web. Le dépôt passe de trois interfaces à deux, et perd avec lui un SDK .NET
+épinglé et deux déclarations de version à tenir.
+
+## 11. Suite
+
+Les cinq étapes du chantier sont faites. Restent deux limites énoncées plutôt que tues :
+
+- le `.deb` et l'AppImage sont configurés et le rassemblement des morceaux de VLC d'un système Debian
+  est écrit, mais **aucune machine Linux n'était disponible** : ce chemin n'est pas éprouvé ;
+- le menu **Qualité** est vide en mode bureau — une lecture directe n'a pas de paliers, et sur un
+  flux converti c'est VLC qui choisit — et l'**incrustation dans un coin** n'est pas offerte, étant
+  un service que le navigateur rend à une balise vidéo.

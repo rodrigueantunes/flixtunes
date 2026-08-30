@@ -1,6 +1,6 @@
 # FlixTunes 0.5.6
 
-FlixTunes est un serveur multimédia auto-hébergé conçu pour un NAS, accompagné de clients modernes pour le Web, Windows, Android TV et Android mobile.
+FlixTunes est un serveur multimédia auto-hébergé conçu pour un NAS, accompagné de clients modernes pour le Web, le bureau — Windows et Linux —, Android TV et Android mobile.
 
 Le premier jalon fournit :
 
@@ -19,7 +19,7 @@ Le premier jalon fournit :
 - la recherche côté serveur et les fiches films/séries avec saisons et épisodes ;
 - une interface web responsive et installable (PWA), pensée télécommande et tactile.
 - une application Android mobile et Android TV adaptative, avec Media3, D-pad et découverte du serveur local.
-- une application Windows x64 autonome avec libVLC, détection mDNS, HDR, sortie audio déclarée et sélection des pistes — **client expérimental**, réseau local seulement, voir [apps/windows/README.md](apps/windows/README.md) ;
+- un client de bureau pour Windows et Linux qui **porte l'interface du client Web** — le même lecteur, les mêmes écrans — et confie la lecture à un VLC embarqué : le NAS ne convertit plus ni les conteneurs ni les codecs qu'un navigateur refuse ;
 - un déploiement NAS Docker/Compose avec surveillance des dossiers, sauvegardes, restauration et diagnostic.
 
 ## Construire une livraison
@@ -34,7 +34,7 @@ script refuse de s'exécuter depuis un partage réseau — pnpm n'y crée pas se
 lance les tests des quatre clients, et estampille l'APK et le paquet ASUSTOR du **même** numéro.
 
 `tools/Sync-Version.ps1` propage la version depuis `package.json` vers les contrats, le client
-Windows, l'image Compose, ce README et le Dockerfile. Un test échoue si l'un d'eux dérive.
+l'image Compose, ce README et le Dockerfile. Un test échoue si l'un d'eux dérive.
 
 ## Démarrage
 
@@ -117,7 +117,7 @@ pnpm --filter @flixtunes/server test:ffmpeg
 
 ## Livraison NAS et clients
 
-Le guide [NAS_DEPLOYMENT.md](docs/NAS_DEPLOYMENT.md) décrit le montage des dossiers et le lancement Compose. Les clients Android et Windows sont produits dans `artifacts/` par `tools/Build-Release.ps1`. Les capacités de lecture sont détaillées dans [CODEC_MATRIX.md](docs/CODEC_MATRIX.md) et la recette finale dans [VALIDATION_0.2.0.md](docs/VALIDATION_0.2.0.md).
+Le guide [NAS_DEPLOYMENT.md](docs/NAS_DEPLOYMENT.md) décrit le montage des dossiers et le lancement Compose. Les clients Android et de bureau sont produits dans `artifacts/` par `tools/Build-Release.ps1`. Les capacités de lecture sont détaillées dans [CODEC_MATRIX.md](docs/CODEC_MATRIX.md) et la recette finale dans [VALIDATION_0.2.0.md](docs/VALIDATION_0.2.0.md).
 
 Les installations automatisées Windows, Linux, NAS natif, Docker et ASUSTOR ainsi que la procédure de mise à jour sans perte sont décrites dans [SERVER_INSTALLATION.md](docs/SERVER_INSTALLATION.md).
 

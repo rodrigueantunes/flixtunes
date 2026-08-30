@@ -4,8 +4,11 @@
 
 .DESCRIPTION
   La version vivait à sept endroits, et ils avaient divergé : le produit annonçait 0.5.6, les
-  contrats 0.5.3, le client Windows 0.4.0, l'image Compose et le titre du README 0.2.0. Un écran de
-  diagnostic ne veut plus rien dire dans ces conditions, et une matrice de compatibilité encore moins.
+  contrats 0.5.3, l'image Compose et le titre du README 0.2.0. Un écran de diagnostic ne veut plus
+  rien dire dans ces conditions, et une matrice de compatibilité encore moins.
+
+  Le client WPF, qui en déclarait une huitième, a été retiré : le client de bureau Electron le
+  remplace, et il porte l'interface du Web au lieu de la réécrire.
 
   La source unique est `package.json` à la racine. Ce script y lit la version et réécrit les autres.
   Il est vérifié par un test — `versions-coherentes.test.ts` — qui échoue si l'un d'eux dérive : la
@@ -27,10 +30,8 @@ $cibles = @(
   @{ Fichier = "apps/server/package.json";        Motif = '("version"\s*:\s*")[^"]+(")'; Valeur = $version },
   @{ Fichier = "apps/web/package.json";           Motif = '("version"\s*:\s*")[^"]+(")'; Valeur = $version },
   @{ Fichier = "apps/desktop/package.json";       Motif = '("version"\s*:\s*")[^"]+(")'; Valeur = $version },
-  @{ Fichier = "apps/windows/FlixTunes.Windows.csproj"; Motif = '(<Version>)[^<]+(</Version>)'; Valeur = $version },
   @{ Fichier = "compose.yaml";                    Motif = '(image:\s*flixtunes:)[^\s]+()';  Valeur = $version },
   @{ Fichier = "README.md";                       Motif = '(^# FlixTunes )[0-9][^\s]*()';   Valeur = $version },
-  @{ Fichier = "apps/windows/README.md";          Motif = '(^# Client Windows FlixTunes )[0-9][^\s]*()'; Valeur = $version },
   @{ Fichier = "Dockerfile";                      Motif = '(--global pnpm@)[^\s]+()';       Valeur = $pnpm }
 )
 

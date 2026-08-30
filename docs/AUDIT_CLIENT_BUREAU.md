@@ -163,7 +163,7 @@ chemin de code éprouvé est le même, mais la fluidité d'un glissement reste �
 | ~~**2**~~ | ~~Coque minimale : fenêtre, chargement du client Web, mode bureau détecté~~ **Faite en r85** | **le catalogue s'affiche et se parcourt** |
 | ~~**3**~~ | ~~Le pont : `Player.tsx` en mode bureau pilote VLC au lieu d'une balise `<video>`~~ **Faite en r86** — voir `VALIDATION_0.5.6_R86.md` | **une lecture directe et une lecture convertie, constatées à l'écran** |
 | ~~**4**~~ | ~~Capacités déclarées depuis la machine réelle ; choix de piste audio confié à VLC~~ **Faite en r87** — voir `VALIDATION_0.5.6_R87.md` | **le remux de séparation et l'incrustation des sous-titres image ont disparu** |
-| **5** | Empaquetage `.msi`, `.deb`, AppImage ; retrait du client WPF | un installateur par système |
+| ~~**5**~~ | ~~Empaquetage `.msi`, `.deb`, AppImage ; retrait du client WPF~~ **Faite en r87** | **`.msi` autonome de 131 Mio, VLC embarqué, client WPF retiré.** Le `.deb` et l'AppImage sont configurés et se construisent sur une machine Linux — non éprouvés depuis Windows. |
 
 **Une à deux semaines**, contre trois à cinq pour la voie écartée — et sans toucher à Android.
 

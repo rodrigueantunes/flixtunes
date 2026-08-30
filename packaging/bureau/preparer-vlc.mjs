@@ -7,10 +7,10 @@
  * là où un paquet système l'aurait reçue tout seul. Le contrepoids est qu'un installateur qui
  * fonctionne sans rien demander à personne est le seul qu'on puisse donner à quelqu'un.
  *
- * ## Ce qu'on emporte, et ce qu'on laisse
+ * ## Windows : on taille dans ce qui est installé
  *
- * VLC installé pèse 183 Mio. On n'en prend pas la moitié, et chaque retrait se justifie par la façon
- * dont ce client s'en sert — jamais par la taille seule :
+ * VLC installé pèse 183 Mio. On n'en prend pas les deux tiers, et chaque retrait se justifie par la
+ * façon dont ce client s'en sert — jamais par la taille seule :
  *
  * | Écarté | Pourquoi |
  * | --- | --- |
@@ -26,12 +26,29 @@
  * Tout le reste part tel quel, **codecs compris**. Tailler dans les codecs ferait exactement ce que
  * ce client existe pour éviter : un fichier qui ne se lit plus et un NAS qui se remet à convertir.
  *
+ * ## Linux : on tire les paquets d'Ubuntu
+ *
+ * On les télécharge au lieu de copier ceux de la machine, et pour une raison qui compte : **cela
+ * marche depuis Windows**. Le paquet Linux se construit alors sur la machine qui construit tout le
+ * reste, sous la même estampille, au lieu d'attendre qu'on en démarre une seconde.
+ *
+ * Un `.deb` est une archive `ar` contenant une archive `tar` ; le `tar` de Windows lit les deux, y
+ * compris la compression zstd que Debian emploie désormais. Aucun outil à installer.
+ *
+ * On y prend la **même version de VLC** que sous Windows. Deux clients du même produit qui n'auraient
+ * pas le même moteur de lecture finiraient par n'avoir pas les mêmes défauts, et chaque rapport
+ * demanderait d'abord de savoir sur lequel on est tombé.
+ *
+ * Rien n'est taillé de ce côté : `vlc-plugin-base` ne porte déjà que ce qui sert, et l'interface Qt
+ * vit dans un paquet à part qu'on ne prend pas.
+ *
  * ## La licence
  *
  * VLC est sous GPL v2 ou ultérieure, FlixTunes sous GPL v3 : l'embarquement est régulier. Le texte
  * de licence de VLC voyage avec ses binaires, et le dépôt public tient lieu d'offre de sources.
  */
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -51,6 +68,12 @@ const ECARTES = new Set([
 const GREFFONS_ECARTES = new Set(["gui", "visualization"]);
 /** La seule langue qui puisse apparaître dans une trace de ce client. */
 const LANGUE_GARDEE = "fr";
+
+/** L'architecture des paquets Ubuntu, et la version de VLC qu'on y prend — la meme que sous Windows. */
+const ARCHITECTURE_LINUX = process.env.FLIXTUNES_ARCH_LINUX ?? "x86_64-linux-gnu";
+const VERSION_VLC_LINUX = process.env.FLIXTUNES_VERSION_VLC ?? "3.0.23-1";
+const DEPOT_UBUNTU = process.env.FLIXTUNES_DEPOT_UBUNTU ?? "http://archive.ubuntu.com/ubuntu/pool/universe/v/vlc";
+const PAQUETS_LINUX = ["libvlccore9", "libvlc5", "vlc-bin", "vlc-plugin-base"];
 
 function sourceVlc() {
   const trouve = SOURCES_WINDOWS.find((chemin) => existsSync(path.join(chemin, "vlc.exe")));
@@ -79,8 +102,27 @@ function mesurer(dossier) {
   return { octets, fichiers };
 }
 
-export function preparerVlc(destination) {
-  if (process.platform === "linux") return preparerVlcLinux(destination);
+function executer(ligne, cwd) {
+  const bilan = spawnSync(ligne, { shell: true, cwd, stdio: "ignore" });
+  if (bilan.status !== 0) throw new Error(`« ${ligne} » a échoué (code ${bilan.status})`);
+}
+
+/** Le `tar` capable de lire un `.deb` : celui de Windows, ou celui du système. */
+function tarDuSysteme() {
+  return process.platform === "win32"
+    ? path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe")
+    : "tar";
+}
+
+/**
+ * @param destination Où déposer la copie.
+ * @param cible `win32` ou `linux` — le système que l'installateur visera, pas celui qui construit.
+ */
+export function preparerVlc(destination, cible = process.platform) {
+  return cible === "linux" ? preparerVlcLinux(destination) : preparerVlcWindows(destination);
+}
+
+function preparerVlcWindows(destination) {
   const source = sourceVlc();
   rmSync(destination, { recursive: true, force: true });
   mkdirSync(destination, { recursive: true });
@@ -109,42 +151,118 @@ export function preparerVlc(destination) {
   }
 
   const { octets, fichiers } = mesurer(destination);
-  return { source, destination, fichiers, mio: octets / (1024 * 1024) };
+  return { source, destination, fichiers, mio: octets / (1024 * 1024), dependances: [] };
+}
+
+function preparerVlcLinux(destination) {
+  const tar = tarDuSysteme();
+  const atelier = path.join(path.dirname(destination), "vlc-linux-atelier");
+  const arbre = path.join(atelier, "arbre");
+  rmSync(destination, { recursive: true, force: true });
+  rmSync(atelier, { recursive: true, force: true });
+  mkdirSync(arbre, { recursive: true });
+  mkdirSync(destination, { recursive: true });
+
+  for (const nom of PAQUETS_LINUX) {
+    const fichier = `${nom}_${VERSION_VLC_LINUX}_amd64.deb`;
+    executer(`curl -fsSL -o "${fichier}" "${DEPOT_UBUNTU}/${fichier}"`, atelier);
+    executer(`"${tar}" -xf "${fichier}"`, atelier);
+    const charge = readdirSync(atelier).find((entree) => entree.startsWith("data.tar"));
+    if (!charge) throw new Error(`${fichier} ne contient pas de data.tar.*`);
+    /*
+     * L'extraction rend un code d'erreur, et on l'accepte : les seules entrees qui echouent sont les
+     * **liens symboliques**, que Windows refuse de creer sans un privilege qu'une session ordinaire
+     * n'a pas. Les vrais fichiers, eux, arrivent tous — verifie entree par entree. On les reconstitue
+     * ensuite en copies, ce qu'un chargeur de bibliotheques ne distingue pas d'un lien.
+     *
+     * Ce qui manquerait vraiment se voit plus bas : la liste des morceaux est verifiee, et l'absence
+     * de l'un d'eux arrete la construction.
+     */
+    tolerer(`"${tar}" -xf "${charge}" -C "arbre"`, atelier);
+    rmSync(path.join(atelier, charge), { force: true });
+  }
+
+  const lib = path.join(arbre, "usr", "lib", ARCHITECTURE_LINUX);
+  copier(path.join(arbre, "usr", "bin", "vlc"), path.join(destination, "vlc"));
+  copier(path.join(lib, "vlc", "plugins"), path.join(destination, "plugins"));
+  copier(path.join(lib, "vlc", "lua"), path.join(destination, "lua"));
+  for (const dossier of [lib, path.join(lib, "vlc")]) {
+    for (const entree of readdirSync(dossier, { withFileTypes: true })) {
+      if (!entree.isFile() || !/^libvlc.*\.so(\.\d+)+$/.test(entree.name)) continue;
+      for (const nom of nomsDeBibliotheque(entree.name)) {
+        cpSync(path.join(dossier, entree.name), path.join(destination, nom));
+      }
+    }
+  }
+
+  const essentiels = ["vlc", "plugins", "lua", "libvlc.so.5", "libvlccore.so.9"];
+  const manquants = essentiels.filter((nom) => !existsSync(path.join(destination, nom)));
+  if (manquants.length > 0) {
+    throw new Error(`Ces morceaux manquent dans les paquets Ubuntu : ${manquants.join(", ")}.`);
+  }
+  const licence = path.join(arbre, "usr", "share", "doc", "vlc-bin", "copyright");
+  if (existsSync(licence)) cpSync(licence, path.join(destination, "COPYING.txt"));
+
+  const dependances = lireDependances(atelier, tar);
+  rmSync(atelier, { recursive: true, force: true });
+  const { octets, fichiers } = mesurer(destination);
+  return { source: DEPOT_UBUNTU, destination, fichiers, mio: octets / (1024 * 1024), dependances };
 }
 
 /**
- * Réunit les morceaux de VLC d'un système Debian ou Ubuntu en un seul dossier.
+ * Les noms sous lesquels une bibliotheque doit se trouver.
  *
- * Rien n'est taillé ici : le paquet `vlc-plugin-base` ne porte déjà que ce qui sert, et l'interface
- * Qt vit dans un paquet à part qu'on n'installe pas. Le tri fait sous Windows n'aurait donc rien à
- * retirer.
+ * Debian livre `libvlc.so.5.6.1` et laisse `ldconfig` poser `libvlc.so.5` a cote. Personne ne le fera
+ * ici : on ecrit les deux noms, et le chargeur trouve celui qu'il cherche.
  */
-function preparerVlcLinux(destination) {
-  const manquants = [];
-  rmSync(destination, { recursive: true, force: true });
-  mkdirSync(destination, { recursive: true });
-  for (const morceau of MORCEAUX_LINUX) {
-    const depuis = morceau.depuis.replace("@", ARCHITECTURE_LINUX);
-    if (!existsSync(depuis)) { manquants.push(depuis); continue; }
-    cpSync(depuis, path.join(destination, morceau.vers), { recursive: true });
-  }
-  if (manquants.length > 0) {
-    throw new Error(
-      `VLC est incomplet sur cette machine. Manquent : ${manquants.join(", ")}.
-`
-      + "Installez « vlc-bin » et « vlc-plugin-base », ou indiquez l'architecture par FLIXTUNES_ARCH_LINUX.",
-    );
-  }
-  const { octets, fichiers } = mesurer(destination);
-  return { source: "/usr", destination, fichiers, mio: octets / (1024 * 1024) };
+function nomsDeBibliotheque(fichier) {
+  const noms = [fichier];
+  const majeure = /^(.*\.so)\.(\d+)(?:\.\d+)*$/.exec(fichier);
+  if (majeure) noms.push(`${majeure[1]}.${majeure[2]}`);
+  return [...new Set(noms)];
+}
+
+function copier(depuis, vers) {
+  if (!existsSync(depuis)) throw new Error(`Absent des paquets Ubuntu : ${depuis}`);
+  cpSync(depuis, vers, { recursive: true, dereference: true });
+}
+
+function tolerer(ligne, cwd) {
+  spawnSync(ligne, { shell: true, cwd, stdio: "ignore" });
+}
+
+/**
+ * Ce dont VLC a besoin en plus, lu dans le paquet lui-même plutôt que deviné.
+ *
+ * Une soixantaine de bibliothèques que la distribution fournit — codecs, sous-titres, disques. Elles
+ * sont **déclarées** par notre `.deb` et non embarquées : c'est la seule part de l'installateur qui
+ * ne voyage pas avec lui, et elle est dite plutôt que tue.
+ */
+function lireDependances(atelier, tar) {
+  const paquet = `vlc-plugin-base_${VERSION_VLC_LINUX}_amd64.deb`;
+  const coin = path.join(atelier, "controle");
+  mkdirSync(coin, { recursive: true });
+  executer(`"${tar}" -xf "${paquet}" -C "controle"`, atelier);
+  const controle = readdirSync(coin).find((entree) => entree.startsWith("control.tar"));
+  if (!controle) return [];
+  executer(`"${tar}" -xf "${controle}"`, coin);
+  const texte = readFileSync(path.join(coin, "control"), "utf8");
+  const trouve = /^Depends:[ \t]*([^\n]*(?:\n[ \t][^\n]*)*)/m.exec(texte);
+  if (!trouve) return [];
+  return trouve[1].split(",")
+    .map((entree) => entree.trim().split(/[\s(]/)[0])
+    .filter((nom) => nom.length > 0 && !nom.startsWith("vlc-"));
 }
 
 // Appelé directement, et non importé. La comparaison passe par `pathToFileURL` : sous Windows, un
 // chemin de fichier n'est pas une URL, et les recoller à la main donne des faux négatifs silencieux.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const ici = path.dirname(fileURLToPath(import.meta.url));
-  const destination = process.argv[2] ?? path.join(ici, "..", "..", "apps", "desktop", "vendor", "vlc");
-  const bilan = preparerVlc(path.resolve(destination));
+  const cible = process.argv.includes("--linux") ? "linux" : process.platform;
+  const donne = process.argv.slice(2).find((argument) => !argument.startsWith("--"));
+  const destination = donne ?? path.join(ici, "..", "..", "apps", "desktop", "vendor", "vlc");
+  const bilan = preparerVlc(path.resolve(destination), cible);
   console.log(`VLC préparé depuis ${bilan.source}`);
   console.log(`  ${bilan.fichiers} fichiers, ${bilan.mio.toFixed(1)} Mio dans ${bilan.destination}`);
+  if (bilan.dependances.length > 0) console.log(`  ${bilan.dependances.length} bibliothèques déclarées en dépendance`);
 }

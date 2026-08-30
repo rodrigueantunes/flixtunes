@@ -1,4 +1,0 @@
-<Project Sdk="MSTest.Sdk/4.3.2">
-  <PropertyGroup><TargetFramework>net8.0-windows</TargetFramework><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings><UseWPF>true</UseWPF></PropertyGroup>
-  <ItemGroup><ProjectReference Include="..\FlixTunes.Windows.csproj" /></ItemGroup>
-</Project>

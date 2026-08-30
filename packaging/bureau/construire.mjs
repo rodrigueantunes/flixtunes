@@ -10,14 +10,20 @@
  *   3. peupler le cache d'outils d'electron-builder — voir plus bas, c'est le passage délicat ;
  *   4. produire l'installateur du système sur lequel on tourne.
  *
- * ## Ce que Linux demande, et qu'on ne peut pas faire depuis Windows
+ * ## Les paquets Linux demandent une machine Linux
  *
- * Le `.deb` et l'AppImage sont configurés, mais ils ne se construisent **que sur une machine
- * Linux** : leurs formats s'assemblent avec des outils qui n'existent pas ici, et surtout le VLC
- * qu'ils doivent emporter est fait de binaires Linux — ceux de cette machine ne leur serviraient à
- * rien. Le script le dit plutôt que d'échouer à mi-chemin.
+ * Le VLC qu'ils emportent, lui, s'assemble n'importe où : `preparer-vlc.mjs` le tire des paquets
+ * Ubuntu, et le `tar` de Windows sait les ouvrir. C'était l'inconnue, et elle est levée — la machine
+ * qui construit n'a même pas besoin d'avoir VLC installé.
+ *
+ * L'assemblage des paquets, non. Le `.deb` passe par **fpm**, un outil que le monde Debian fournit
+ * et que Windows n'a pas ; l'**AppImage** pose un lien symbolique que Windows refuse de créer sans
+ * un privilège qu'une session ordinaire n'a pas. Les deux sortent donc d'une machine Linux — ou
+ * d'un Windows en mode développeur, pour l'AppImage seule.
+ *
+ * Le script le dit avant de commencer, plutôt que d'échouer après avoir téléchargé cent mégaoctets.
  */
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -73,22 +79,62 @@ function preparerOutilsWindows() {
   console.log("  outils de signature extraits sans la partie macOS");
 }
 
+/**
+ * L'estampille du paquet : la version du produit **et** la révision d'empaquetage.
+ *
+ * `${version}` d'electron-builder ne connaît que la première, et les paquets sortaient donc en
+ * « 0.5.6 » tout court — deux révisions différentes portaient le même nom de fichier, ce qui rend
+ * impossible de dire lequel on a installé.
+ *
+ * La révision vient de la livraison quand c'est elle qui appelle, du journal des versions sinon :
+ * son premier titre porte celle de l'entrée en cours.
+ */
+function estampille() {
+  const version = JSON.parse(readFileSync(path.join(COQUE, "package.json"), "utf8")).version;
+  const imposee = process.env.FLIXTUNES_PACKAGE_REVISION;
+  if (imposee) return `${version}.${imposee}`;
+  const journal = readFileSync(path.join(RACINE, "CHANGELOG.md"), "utf8");
+  const trouve = /^##\s+\d+\.\d+\.\d+\.(r\d+)/m.exec(journal);
+  if (!trouve) throw new Error("Aucune révision lisible dans le premier titre de CHANGELOG.md.");
+  return `${version}.${trouve[1]}`;
+}
+
 console.log("1. compilation de la coque");
 lancer(`node "${path.join(RACINE, "node_modules", "typescript", "bin", "tsc")}" -p tsconfig.json`);
 lancer("node scripts/copier-pages.mjs");
 
-console.log("2. VLC embarqué");
-const vlc = preparerVlc(path.join(COQUE, "vendor", "vlc"));
+const cible = process.argv.includes("--linux") ? "linux" : process.platform;
+if (cible === "linux" && process.platform !== "linux") {
+  console.error("Les paquets Linux s'assemblent sur une machine Linux : le .deb passe par fpm, que");
+  console.error("Windows n'a pas, et l'AppImage pose un lien symbolique qu'il refuse de creer.");
+  console.error("Le VLC Linux, lui, s'assemble d'ici : « node packaging/bureau/preparer-vlc.mjs --linux ».");
+  process.exit(2);
+}
+console.log(`2. VLC embarqué (${cible})`);
+const vlc = preparerVlc(path.join(COQUE, "vendor", "vlc"), cible);
 console.log(`  ${vlc.fichiers} fichiers, ${vlc.mio.toFixed(1)} Mio`);
+if (vlc.dependances.length > 0) {
+  // La liste declaree par notre .deb est figee dans package.json : elle ne change qu'avec la version
+  // de VLC. On la compare a celle qu'Ubuntu annonce, et on le dit plutot que de la reecrire en
+  // silence — un paquet dont les dependances bougent sans qu'on l'ait voulu est un paquet qu'on ne
+  // sait plus expliquer.
+  const declarees = JSON.parse(readFileSync(path.join(COQUE, "package.json"), "utf8")).build?.deb?.depends ?? [];
+  const ecart = vlc.dependances.filter((nom) => !declarees.includes(nom));
+  if (ecart.length > 0) console.log(`  ATTENTION : ${ecart.length} dependances non declarees — ${ecart.join(", ")}`);
+}
 
 console.log("3. outils d'empaquetage");
 preparerOutilsWindows();
 
-console.log("4. installateur");
-if (process.platform === "win32") {
-  lancer("npx electron-builder --win --publish never");
-} else if (process.platform === "linux") {
-  lancer("npx electron-builder --linux --publish never");
+const marque = estampille();
+console.log(`4. installateur ${marque}`);
+// L'estampille passe par l'environnement plutôt que par la ligne de commande : `${arch}` et `${ext}`
+// sont des motifs d'electron-builder, et un shell les remplacerait par du vide avant qu'il ne les voie.
+const avecEstampille = { env: { ...process.env, FLIXTUNES_ESTAMPILLE: marque } };
+if (cible === "linux") {
+  lancer("npx electron-builder --linux deb AppImage --publish never", avecEstampille);
+} else if (process.platform === "win32") {
+  lancer("npx electron-builder --win --publish never", avecEstampille);
 } else {
   throw new Error(`Aucune cible d'empaquetage pour ${process.platform}.`);
 }

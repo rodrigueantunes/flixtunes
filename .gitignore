@@ -20,8 +20,6 @@ local.properties
 
 # Sorties de compilation .NET. Sans elles, le premier index emportait dix copies de
 # `libavcodec_plugin.dll` — dix-sept mégaoctets pièce — pour quatre cibles et deux configurations.
-apps/windows/**/bin/
-apps/windows/**/obj/
 publish/
 
 # Base de données et clés propres aux suites de tests. Elles contiennent une clé de chiffrement de

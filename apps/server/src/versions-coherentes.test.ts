@@ -7,9 +7,12 @@ import { describe, expect, it } from "vitest";
  * La version du produit ne se déclare qu'à un seul endroit.
  *
  * Elle vivait à sept, et ils avaient divergé sans que rien ne le signale : le produit annonçait
- * 0.5.6, les contrats 0.5.3, le client Windows 0.4.0, l'image Compose et le titre du README 0.2.0.
- * Un écran de diagnostic ne veut plus rien dire dans ces conditions — on ne sait plus quel correctif
- * porte la machine qu'on interroge — et une matrice de compatibilité encore moins.
+ * 0.5.6, les contrats 0.5.3, l'image Compose et le titre du README 0.2.0. Un écran de diagnostic ne
+ * veut plus rien dire dans ces conditions — on ne sait plus quel correctif porte la machine qu'on
+ * interroge — et une matrice de compatibilité encore moins.
+ *
+ * Le client WPF en déclarait une huitième ; il a été retiré, remplacé par le client de bureau qui
+ * porte l'interface du Web au lieu de la réécrire.
  *
  * `tools/Sync-Version.ps1` propage la version depuis le `package.json` de la racine. Ce cas-ci vérifie
  * qu'elle l'a bien été : la cohérence ne dépend donc pas de la mémoire de celui qui livre.
@@ -32,16 +35,9 @@ describe("cohérence des versions déclarées", () => {
     expect(manifeste(relatif).version).toBe(version);
   });
 
-  it("le client Windows porte la version du produit", () => {
-    expect(lire("apps/windows/FlixTunes.Windows.csproj")).toContain(`<Version>${version}</Version>`);
-  });
-
-  it("l'image Compose et les titres des README portent la version du produit", () => {
+  it("l'image Compose et le titre du README portent la version du produit", () => {
     expect(lire("compose.yaml")).toContain(`image: flixtunes:${version}`);
     expect(lire("README.md").split("\n")[0]).toBe(`# FlixTunes ${version}`);
-    // Le client Windows a son propre README, et son propre statut : la version, elle, reste commune.
-    expect(lire("apps/windows/README.md").split("\n")[0])
-      .toBe(`# Client Windows FlixTunes ${version} — **expérimental**`);
   });
 
   it("le pnpm installé par le Dockerfile est celui que le dépôt déclare", () => {
