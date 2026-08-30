@@ -58,7 +58,8 @@
       "icon": "ressources-paquet/icon.png",
       "category": "AudioVideo",
       "description": "Client de bureau FlixTunes : l'interface du client Web, la lecture par VLC embarqué.",
-      "synopsis": "Votre cinéma local"
+      "synopsis": "Votre cinéma local",
+      "executableName": "flixtunes"
     },
     "deb": {
       "depends": [
@@ -146,7 +147,8 @@
         "libxml2-16",
         "libzvbi0t64",
         "zlib1g"
-      ]
+      ],
+      "compression": "gz"
     },
     "artifactName": "FlixTunes-Bureau-${env.FLIXTUNES_ESTAMPILLE}-${arch}.${ext}",
     "electronVersion": "33.4.11",

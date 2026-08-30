@@ -249,9 +249,12 @@ function lireDependances(atelier, tar) {
   const texte = readFileSync(path.join(coin, "control"), "utf8");
   const trouve = /^Depends:[ \t]*([^\n]*(?:\n[ \t][^\n]*)*)/m.exec(texte);
   if (!trouve) return [];
+  // Ce qu'on embarque soi-même ne se déclare pas : `libvlccore9` et `libvlc5` voyagent dans le
+  // paquet, exiger de la distribution qu'elle les fournisse aussi serait faux — et empêcherait
+  // l'installation là où une autre version de VLC est en place.
   return trouve[1].split(",")
     .map((entree) => entree.trim().split(/[\s(]/)[0])
-    .filter((nom) => nom.length > 0 && !nom.startsWith("vlc-"));
+    .filter((nom) => nom.length > 0 && !nom.startsWith("vlc-") && !PAQUETS_LINUX.includes(nom));
 }
 
 // Appelé directement, et non importé. La comparaison passe par `pathToFileURL` : sous Windows, un

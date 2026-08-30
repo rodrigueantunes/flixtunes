@@ -40,14 +40,15 @@
   du journal et le dit. C'est la règle du projet : une révision ne monte qu'à la génération, et
   l'entrée en cours porte le numéro du paquet qu'on est en train de produire.
 
-  ## Deux systèmes, deux moitiés
+  ## Ce que Windows produit, et la seule chose qu'il ne produit pas
 
-  Le paquet ASUSTOR et l'APK Android se construisent sous Windows. Le `.deb` et l'AppImage se
-  construisent **sur une machine Linux** : leurs formats s'y assemblent, et surtout le VLC qu'ils
-  emportent est fait de binaires Linux — ceux d'une machine Windows ne leur serviraient à rien.
+  Lancé sous Windows, le script sort tout sauf une pièce : le paquet ASUSTOR, l'APK Android, le
+  `.msi` **et** le `.deb`. Ce dernier n'a pas besoin d'une machine Linux — ni son VLC, tiré des
+  paquets Ubuntu, ni son format, dont `packaging/bureau/` fabrique l'outillage manquant.
 
-  Le script produit donc ce que le système sur lequel il tourne sait produire, et nomme ce qui
-  manque. Lancé sur les deux, il remplit le même dossier de sortie.
+  Reste l'**AppImage**. Son agencement pose un lien symbolique, que Windows refuse de créer sans un
+  privilège qu'une session ordinaire n'a pas. Elle se construit sur une machine Linux, où le même
+  script remplit le même dossier de sortie.
 
 .PARAMETER Version
   Version du produit, `0.5.6` par exemple. Demandée si absente.
@@ -191,12 +192,19 @@ try {
   # La revision voyage par l'environnement : c'est elle qui nomme les paquets, du bureau comme
   # d'Android. Sans elle, deux revisions differentes porteraient le meme nom de fichier.
   $env:FLIXTUNES_PACKAGE_REVISION = $Revision
+  # Sous Windows on produit les deux paquets : le .msi, puis le .deb. Le VLC embarque differe d'un
+  # systeme a l'autre et occupe le meme dossier, alors les passes s'enchainent — chacune repose le
+  # sien avant d'appeler electron-builder.
+  $constructeur = Join-Path $root "packaging/bureau/construire.mjs"
+  $ciblesBureau = if ($surWindows) { @("windows", "linux") } else { @("linux") }
   Push-Location (Join-Path $root "apps/desktop")
   try {
-    & node (Join-Path $root "packaging/bureau/construire.mjs")
-    if ($LASTEXITCODE -ne 0) { throw "La construction du client de bureau a echoue." }
+    foreach ($cibleBureau in $ciblesBureau) {
+      if ($cibleBureau -eq "linux") { & node $constructeur "--linux" } else { & node $constructeur }
+      if ($LASTEXITCODE -ne 0) { throw "La construction du client de bureau ($cibleBureau) a echoue." }
+    }
   } finally { Pop-Location }
-  $motifs = if ($surWindows) { @("*.msi") } else { @("*.deb", "*.AppImage") }
+  $motifs = if ($surWindows) { @("*.msi", "*.deb") } else { @("*.deb", "*.AppImage") }
   foreach ($motif in $motifs) {
     $paquets = Get-ChildItem (Join-Path $root "apps/desktop/release") -Filter $motif -ErrorAction SilentlyContinue
     if (-not $paquets) { throw "Aucun paquet de bureau en $motif." }
@@ -205,7 +213,7 @@ try {
       $produits += $paquet.Name
     }
   }
-  if ($surWindows) { $absents += ".deb et AppImage (a construire sur une machine Linux)" }
+  if ($surWindows) { $absents += "AppImage (elle pose un lien symbolique : machine Linux requise)" }
   else { $absents += ".msi (a construire sur une machine Windows)" }
 
   # --- 6. Android, a la meme estampille --------------------------------------------------------

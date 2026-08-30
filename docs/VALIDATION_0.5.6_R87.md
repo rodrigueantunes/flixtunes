@@ -107,7 +107,7 @@ inventer aurait été pire que de s'en tenir à ce qu'on sait :
 
 ## 7. L'installateur emporte tout
 
-`FlixTunes-Bureau-0.5.6-x64.msi`, **131 Mio**, et rien à installer d'autre sur la machine qui le
+`FlixTunes-Bureau-0.5.6.r87-x64.msi`, **131 Mio**, et rien à installer d'autre sur la machine qui le
 reçoit. Vérifié après installation : le programme ouvre `resources/vlc/vlc.exe`, **sa** copie, et
 non celle du système — lu sur la ligne de commande du processus.
 
@@ -148,7 +148,9 @@ La version saisie est écrite à sa source unique et propagée ; la révision es
 **et** le titre du journal. C'est la règle du projet : une révision ne monte qu'à la génération.
 
 Le script produit ce que son système sait produire et nomme le reste. Sous Windows : paquet ASUSTOR,
-APK Android, `.msi`. Sous Linux : `.deb` et AppImage. Lancé sur les deux, il remplit le même dossier.
+APK Android, `.msi` **et** `.deb` — le paquet Debian ne demande pas de machine Linux, section 11.
+Seule l'AppImage manque à cet appel. Lancé sur une machine Linux, le même script remplit le même
+dossier de sortie et l'y ajoute.
 
 ## 10. Le client WPF est retiré
 
@@ -157,12 +159,42 @@ d'administration, l'accès distant ni la liste personnelle. Le client de bureau 
 il **est** le client Web. Le dépôt passe de trois interfaces à deux, et perd avec lui un SDK .NET
 épinglé et deux déclarations de version à tenir.
 
-## 11. Suite
+## 11. Le paquet Debian se construit sous Windows
+
+La veille, on avait écrit l'inverse. Le constat était juste sur les faits et faux sur la conclusion :
+chacun des obstacles se lève, et aucun ne tient à une limite de Windows.
+
+| Obstacle | Ce qui bloquait, mesuré | Ce qu'on a fait |
+| --- | --- | --- |
+| `fpm` ne recevait pas ses arguments | electron-builder met un saut de ligne dans la description d'un paquet ; RubyGems installe `fpm` comme un **fichier de commandes**, et `cmd` coupe la ligne là | un relais **exécutable** de trente lignes — une ligne de commande Windows porte très bien un saut de ligne, c'est `cmd` qui ne sait pas la relire |
+| `fpm` ne trouvait pas `tar` | il découpe le `PATH` sur `:` — « C:\… » devient « C » — et cherche `tar` sans extension | les deux corrigés en mémoire, la gemme n'est pas touchée |
+| le mauvais `tar` répondait | celui de Git lit « C:\… » comme une machine distante | `System32` en tête du chemin de recherche |
+| `ar` n'existe pas | il ferme le conteneur du `.deb` | on l'écrit, en création seule : un en-tête de soixante octets par membre |
+| tout sortait en `0666` | un système de fichiers Windows n'a pas de bit d'exécution | les droits sont reposés dans l'archive, après coup |
+
+Le paquet obtenu : **114 Mio**, `FlixTunes-Bureau-0.5.6.r87-amd64.deb`. Son contenu a été relu depuis
+l'archive plutôt que supposé :
+
+```
+drwxr-xr-x  ./opt/FlixTunes/
+-rwsr-xr-x  ./opt/FlixTunes/chrome-sandbox          (setuid, ce qu'exige Chromium)
+-rwxr-xr-x  ./opt/FlixTunes/chrome_crashpad_handler
+-rwxr-xr-x  ./opt/FlixTunes/flixtunes
+-rw-r--r--  ./opt/FlixTunes/libffmpeg.so            (une bibliothèque n'a pas à être exécutable)
+-rwxr-xr-x  ./opt/FlixTunes/resources/vlc/vlc
+-rwxr-xr-x  ./postinst                              (dpkg l'exécute)
+```
+
+Il **n'a pas encore été installé** sur une machine Linux : c'est la vérification qui reste, et elle
+est nommée plutôt que supposée acquise. La compression est `gzip` et non `xz` pour une raison de
+réparabilité : Node rouvre et referme du gzip sans rien installer.
+
+## 12. Suite
 
 Les cinq étapes du chantier sont faites. Restent deux limites énoncées plutôt que tues :
 
-- le `.deb` et l'AppImage sont configurés et le rassemblement des morceaux de VLC d'un système Debian
-  est écrit, mais **aucune machine Linux n'était disponible** : ce chemin n'est pas éprouvé ;
+- le `.deb` sort de la commande, son contenu est relu, mais il n'a **pas encore été installé** sur une
+  machine Linux ; l'AppImage, elle, n'est pas produite du tout — un lien symbolique l'en empêche ;
 - le menu **Qualité** est vide en mode bureau — une lecture directe n'a pas de paliers, et sur un
   flux converti c'est VLC qui choisit — et l'**incrustation dans un coin** n'est pas offerte, étant
   un service que le navigateur rend à une balise vidéo.

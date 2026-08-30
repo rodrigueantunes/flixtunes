@@ -46,3 +46,7 @@ __pycache__/
 # dans l'historique.
 apps/desktop/vendor/
 apps/desktop/release/
+
+# Le relais vers fpm et le « ar » que `construire.mjs` compile pour empaqueter sous Windows. Deux
+# exécutables de trente lignes, refaits en une seconde à chaque construction.
+apps/desktop/outils-paquet/

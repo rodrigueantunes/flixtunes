@@ -10,34 +10,36 @@
  *   3. peupler le cache d'outils d'electron-builder — voir plus bas, c'est le passage délicat ;
  *   4. produire l'installateur du système sur lequel on tourne.
  *
- * ## Les paquets Linux demandent une machine Linux
+ * ## Le paquet Debian se construit sous Windows
  *
- * Le VLC qu'ils emportent, lui, s'assemble n'importe où : `preparer-vlc.mjs` le tire des paquets
- * Ubuntu, et le `tar` de Windows sait les ouvrir. C'était l'inconnue, et elle est levée — la machine
- * qui construit n'a même pas besoin d'avoir VLC installé.
+ * Il a fallu lever quatre obstacles, chacun mesuré, aucun insurmontable :
  *
- * L'assemblage des paquets, non — et les deux raisons ont été mesurées, pas supposées.
+ * 1. **Le VLC embarqué.** `preparer-vlc.mjs` le tire des paquets Ubuntu ; le `tar` de Windows sait
+ *    ouvrir un `.deb` et sa charge zstd. La machine qui construit n'a même pas besoin de VLC.
+ * 2. **fpm ne recevait pas ses arguments.** electron-builder met un saut de ligne dans la description
+ *    d'un paquet — un `\n` en dur dans son gabarit —, et RubyGems installe `fpm` comme
+ *    un fichier de commandes, qui ne peut pas en porter. Un exécutable, lui, le peut : `Relais-Fpm.ps1`
+ *    en compile un de trente lignes.
+ * 3. **fpm ne trouvait pas ses outils.** Il découpe le `PATH` sur `:` — le séparateur d'Unix, pas
+ *    celui de Windows — et cherche `tar` sans extension. `rustine-fpm.rb` corrige les deux en mémoire,
+ *    sans toucher à la gemme installée.
+ * 4. **`ar` n'existe pas sous Windows.** Plutôt que d'exiger MSYS2 ou LLVM, `Archiveur-Ar.ps1` en
+ *    écrit un de création seule : le conteneur d'un `.deb` tient en un en-tête par membre.
  *
- * Le **`.deb`** passe par `fpm`. On peut l'installer sous Windows, Ruby compris, et il s'y lance :
- * ce n'est donc pas l'outil qui manque. Mais electron-builder construit sa description ainsi —
- * `` `${synopsis || ""}
- ${description}` ``, le saut de ligne est en dur — et un fichier de
- * commandes Windows ne peut pas porter un argument qui en contient. La ligne de commande se coupe
- * là, fpm ne reçoit jamais les chemins à empaqueter, et se plaint de n'avoir aucun paramètre.
- * Aucun réglage n'y échappe : retirer le synopsis laisse le saut de ligne en tête.
+ * Reste une chose que Windows ne sait pas dire : le **bit d'exécution**. Le paquet sort avec `0666`
+ * partout, et rien ne se lancerait. `corriger-modes-deb.mjs` repose les droits dans l'archive
+ * elle-même, après coup.
  *
- * L'**AppImage** pose un lien symbolique, que Windows refuse de créer sans un privilège qu'une
- * session ordinaire n'a pas. Celle-là sortirait peut-être d'un Windows en mode développeur — non
- * vérifié, c'est seulement l'erreur qu'elle rapporte.
- *
- * Les deux sortent donc d'une machine Linux, où rien de tout cela ne se pose. Le script le dit avant
- * de commencer, plutôt que d'échouer après avoir téléchargé cent mégaoctets.
+ * L'**AppImage**, elle, ne sort pas d'ici : son agencement pose un lien symbolique, que Windows
+ * refuse de créer sans un privilège qu'une session ordinaire n'a pas. Elle se construit sur une
+ * machine Linux — ou peut-être sur un Windows en mode développeur, non vérifié.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { preparerVlc } from "./preparer-vlc.mjs";
+import { corrigerPaquet } from "./corriger-modes-deb.mjs";
 
 const ICI = path.dirname(fileURLToPath(import.meta.url));
 const RACINE = path.resolve(ICI, "..", "..");
@@ -109,19 +111,43 @@ function estampille() {
   return `${version}.${trouve[1]}`;
 }
 
+/**
+ * L'outillage Debian sous Windows : un relais vers fpm, un `ar`, et la rustine qui corrige sa
+ * recherche d'outils. Rend les variables d'environnement à passer à electron-builder.
+ *
+ * `System32` est mis en tête du chemin pour une raison précise : c'est le `tar` de Windows qu'on veut,
+ * et non celui de Git — ce dernier lit « C:\… » comme une machine distante et échoue.
+ */
+function preparerOutilsDebian() {
+  const outils = path.join(COQUE, "outils-paquet");
+  const dire = (ligne) => spawnSync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${ligne}"`, { shell: true, encoding: "utf8" });
+
+  const relais = dire(`${path.join(ICI, "Relais-Fpm.ps1")}" -Destination "${outils}`);
+  if (relais.status !== 0) {
+    console.error(relais.stderr?.trim() || "Le relais vers fpm n'a pas pu être construit.");
+    console.error("Installez Ruby puis « gem install fpm » : le paquet Debian en dépend.");
+    process.exit(2);
+  }
+  // Le script rend une ligne de JSON, précédée le cas échéant d'avertissements : on garde la dernière.
+  const { ruby, script } = JSON.parse(relais.stdout.trim().split(/\r?\n/).pop().trim());
+  const archiveur = dire(`${path.join(ICI, "Archiveur-Ar.ps1")}" -Destination "${outils}`);
+  if (archiveur.status !== 0) { console.error(archiveur.stderr?.trim()); process.exit(2); }
+
+  const system32 = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32");
+  console.log("  fpm et ar prêts");
+  return {
+    PATH: [system32, outils, process.env.PATH].join(path.delimiter),
+    FLIXTUNES_RUBY: ruby,
+    FLIXTUNES_FPM: script,
+    FLIXTUNES_RUSTINE_FPM: path.join(ICI, "rustine-fpm.rb"),
+  };
+}
+
 console.log("1. compilation de la coque");
 lancer(`node "${path.join(RACINE, "node_modules", "typescript", "bin", "tsc")}" -p tsconfig.json`);
 lancer("node scripts/copier-pages.mjs");
 
 const cible = process.argv.includes("--linux") ? "linux" : process.platform;
-if (cible === "linux" && process.platform !== "linux") {
-  console.error("Les paquets Linux s'assemblent sur une machine Linux. Le .deb echoue ici meme avec fpm");
-  console.error("installe : electron-builder met un saut de ligne dans sa description, et un fichier de");
-  console.error("commandes Windows ne peut pas porter un argument qui en contient. L'AppImage, elle, pose");
-  console.error("un lien symbolique que Windows refuse de creer.");
-  console.error("Le VLC Linux, lui, s'assemble d'ici : « node packaging/bureau/preparer-vlc.mjs --linux ».");
-  process.exit(2);
-}
 console.log(`2. VLC embarqué (${cible})`);
 const vlc = preparerVlc(path.join(COQUE, "vendor", "vlc"), cible);
 console.log(`  ${vlc.fichiers} fichiers, ${vlc.mio.toFixed(1)} Mio`);
@@ -137,14 +163,25 @@ if (vlc.dependances.length > 0) {
 
 console.log("3. outils d'empaquetage");
 preparerOutilsWindows();
+const outillageDebian = cible === "linux" && process.platform === "win32" ? preparerOutilsDebian() : {};
 
 const marque = estampille();
 console.log(`4. installateur ${marque}`);
 // L'estampille passe par l'environnement plutôt que par la ligne de commande : `${arch}` et `${ext}`
 // sont des motifs d'electron-builder, et un shell les remplacerait par du vide avant qu'il ne les voie.
-const avecEstampille = { env: { ...process.env, FLIXTUNES_ESTAMPILLE: marque } };
+const avecEstampille = { env: { ...process.env, FLIXTUNES_ESTAMPILLE: marque, ...outillageDebian } };
 if (cible === "linux") {
-  lancer("npx electron-builder --linux deb AppImage --publish never", avecEstampille);
+  // L'AppImage n'est demandée que sur une machine Linux : voir l'en-tête.
+  const formats = process.platform === "linux" ? "deb AppImage" : "deb";
+  lancer(`npx electron-builder --linux ${formats} --publish never`, avecEstampille);
+  if (process.platform === "win32") {
+    console.log("5. droits du paquet Debian");
+    for (const nom of readdirSync(path.join(COQUE, "release")).filter((entree) => entree.endsWith(".deb"))) {
+      const bilan = corrigerPaquet(path.join(COQUE, "release", nom));
+      for (const [archive, combien] of Object.entries(bilan)) console.log(`  ${nom} — ${archive} : ${combien} entrées`);
+    }
+    console.log("  AppImage non produite : elle demande une machine Linux.");
+  }
 } else if (process.platform === "win32") {
   lancer("npx electron-builder --win --publish never", avecEstampille);
 } else {
