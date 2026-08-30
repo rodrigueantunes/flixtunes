@@ -14,10 +14,10 @@ Rien n'est engagé tant que le feu vert n'est pas donné, point par point ou en 
 | --- | --- | --- | --- | --- |
 | 1 | Génériques à l'ajout | **oui, prouvée** — SILO S03E09 | ~~moyen~~ | **fait** |
 | 2 | Bouton « analyser les génériques restants » | sans objet, c'est un ajout | ~~faible~~ | **fait** |
-| 3 | Talent limité | **la cause est ailleurs** — voir §3 | moyen | une mesure sur sa base |
+| 3 | Talent limité | — | — | **abandonné** à sa demande |
 | 4 | ~20 films manquants | non — demande une mesure | moyen | l'accès aux fichiers |
 | 5 | TMDB qui disparaît | **oui, mesurée** | ~~moyen~~ | **fait** |
-| 6 | Ajouter IMDb | sans objet | **moyen à élevé** | son rôle est tranché : repli de TMDB |
+| 6 | Ajouter IMDb | sans objet | **faible** pour le manuel | son rôle est tranché — voir §6 |
 | 7 | Défilement en haut à l'ouverture | **oui** | ~~faible~~ | **fait** |
 | 8 | Boutons restants (thème) | oui | ~~faible~~ | **fait** |
 | 9 | Sous-titres dédoublés | non | — | **mis de côté** à sa demande |
@@ -62,36 +62,19 @@ côté de l'interrupteur, qui affiche le nombre de saisons restantes avant de pa
 « Et seulement ça » est important et sera tenu : le bouton ne relance **aucune** analyse de
 bibliothèque, ne retouche aucune fiche, ne redescend chez aucun fournisseur.
 
-## 3. Les personnes liées à un film sont plafonnées
+## 3. Les personnes liées à un film — **abandonné**
 
-**Mesuré**, dans `tmdb.ts` :
-
-| Ligne | Plafond | Effet |
-| --- | --- | --- |
-| 463 | `.slice(0, 24)` sur le casting | 24 acteurs au maximum, quel que soit le film |
-| 489 | `>= 12` sur l'équipe | 12 personnes hors acteurs, réalisation comprise |
-
-Rien n'est cassé : ces plafonds ont été posés pour ne pas gonfler la base. Mais ils sont **arbitraires
-et invisibles** — rien à l'écran ne dit qu'on regarde une liste tronquée.
-
-### Sauf que le plafond n'est pas ce qu'on voit
-
-Réponse du 30 août : « c'est très bien comme c'est mais étrange, j'en ramène pas autant. » Autrement
-dit les listes affichées sont **bien en deçà de 24**, et le plafond n'est donc pas ce qui coupe.
-
-Cela déplace entièrement le point. Quatre endroits peuvent perdre des personnes entre TMDB et
-l'écran, et il faut mesurer lequel avant de toucher à quoi que ce soit :
-
-1. **La demande** — `credits` n'est joint qu'à l'œuvre racine (`rootWork`) ; un épisode ou une saison
-   pourrait n'en recevoir aucun.
-2. **L'enregistrement** — la clé de déduplication est `acteur:<id>:<personnage>` ; deux rôles du même
-   acteur comptent pour deux, mais un personnage vide pourrait en écraser un autre.
-3. **La lecture** — la fiche affichée pourrait tronquer, indépendamment de ce qui est en base.
-4. **L'ancienneté** — une fiche enregistrée avant une correction garde ce qu'elle avait ; rien ne
-   reprend une correspondance automatique déjà sûre.
-
-Ce qu'il me faut : **un film précis** et le nombre de personnes affichées. Je compare alors à ce que
-TMDB rend pour lui, et la marche se voit d'un coup.
+> **Décision du 30 août 2026 : le point 3 sort du chantier.**
+>
+> Il avait déjà changé deux fois de nature. Le plafond de vingt-quatre acteurs, d'abord soupçonné, ne
+> pouvait pas être la cause puisque les listes affichées sont en deçà. Restait à mesurer où les
+> personnes se perdent entre TMDB et l'écran, ce qui demandait un film précis.
+>
+> Cette mesure n'aura pas lieu : le point est abandonné. Il est laissé ici, avec ce qu'on en sait,
+> plutôt que supprimé — si le manque se reprécise un jour, le travail d'analyse est déjà fait.
+>
+> Ce qui reste acquis et mesuré : `tmdb.ts:463` coupe le casting à 24, la ligne 489 l'équipe à 12, et
+> rien à l'écran ne dit que la liste est tronquée.
 
 ## 4. Une vingtaine de films manquants
 
@@ -135,25 +118,60 @@ Ce que je propose, dans cet ordre :
    fait attendre le délai que TMDB indique, puis on recommence.
 3. **Ne pas y aller si vite.** Une file à cadence bornée pour les appels TMDB, plutôt que des rafales.
 
-## 6. Ajouter IMDb
+## 6. Ajouter IMDb — **choix manuel, et non repli**
 
-À dire franchement avant de chiffrer : **IMDb n'a pas d'API publique**. Ce qui existe :
+> **Décision du 30 août 2026 :** IMDb n'est plus un repli automatique de TMDB. Il devient un **choix
+> manuel**, et éventuellement un candidat quand TMDB ne rend rien du tout.
 
-| Voie | Ce qu'on obtient | Ce que ça coûte |
+Ce resserrage change tout, et en mieux : la partie que vous voulez le plus est aussi la moins chère,
+et elle ne demande **ni clé, ni jeu de données, ni import**.
+
+### Ce qui existe déjà, et que personne n'a branché sur un bouton
+
+TMDB sait résoudre un identifiant IMDb directement — `tmdb.ts:574` appelle `/find` avec
+`external_source=imdb_id`, et rend la fiche avec une confiance de 1. Le code s'en sert **aujourd'hui**
+quand l'identifiant vient d'un fichier NFO ou d'un suffixe à la Jellyfin.
+
+Ce qu'il ne sait pas faire, c'est le recevoir **depuis l'écran de correspondance**. La route
+`POST /api/catalog/:id/match` prend un couple `{fournisseur, identifiant}` ; un identifiant IMDb y
+partirait vers le connecteur licencié, qui n'est pas configuré, au lieu de passer par `/find`.
+
+L'ajout est donc petit : accepter `tt…` dans l'écran de correction et le faire passer par le chemin
+qui existe. Et le résultat est **meilleur** qu'un enregistrement issu des jeux de données —
+
+| | Par `/find` sur TMDB | Par les jeux de données IMDb |
 | --- | --- | --- |
-| Les **identifiants** IMDb via TMDB | déjà là — TMDB rend `external_ids` | rien, c'est fait |
-| Les **jeux de données** publics | titres, années, titres alternatifs, notes, épisodes | un téléchargement périodique — **aucune clé, aucun compte** |
-| Une **API licenciée** | tout | le connecteur existe déjà dans le code, en attente d'un accès payant |
-| Une **API tierce** (OMDb…) | notes et résumés | une clé, une limite de requêtes, un second point de panne |
-| Extraire des pages du site | tout | interdit par leurs conditions — écarté |
+| Titre et année | oui | oui |
+| Résumé français | **oui** | non, dans aucune langue |
+| Jaquette et fond | **oui** | non |
+| Distribution avec portraits | **oui**, jusqu'à 24 | 10 en médiane, sans photo |
+| Coût | **rien** — le chemin existe | 765 Mio, un import à chaque rafraîchissement |
 
-### Aucune clé n'est nécessaire
+Autrement dit : coller un identifiant IMDb dans l'écran de correction vous rend une **fiche TMDB
+complète**. C'est exactement « la possibilité manuelle » demandée, en mieux et pour presque rien.
+
+### Le second cas — « meilleur candidat sans TMDB » — coûte cher pour un gain rare
+
+Celui-là, lui, demande vraiment les jeux de données : pour proposer une candidate IMDb, il faut
+pouvoir chercher un titre hors ligne, donc les avoir importés. Le coût est décrit plus bas, et il
+n'est pas anodin sur un Celeron.
+
+La question honnête est de savoir combien de fois ce cas se présenterait. TMDB ignore peu de choses,
+et les manques du point 4 — *A Star Is Born* 1976, par exemple — ne sont **pas** des manques de TMDB :
+c'est une œuvre qu'il connaît parfaitement, avec ses quatre versions. Le défaut est donc dans
+l'appariement, pas dans la couverture, et IMDb n'y changerait rien.
+
+**Ma recommandation : faire le premier, et attendre pour le second.** Le choix manuel se livre vite et
+sert tout de suite ; le second se décidera quand un titre réellement absent de TMDB se présentera. S'il
+ne s'en présente jamais, on aura épargné au NAS un import d'un million de lignes pour rien.
+
+### Si vous voulez tout de même les jeux de données : aucune clé n'est nécessaire
 
 Les fichiers sont servis en clair sur `datasets.imdbws.com`, rafraîchis quotidiennement, sous licence
 **non commerciale** — ce qui couvre exactement un serveur personnel. Tailles **relevées le 30 août
 2026**, dans les en-têtes HTTP :
 
-| Fichier | Taille | Utile au repli ? |
+| Fichier | Taille | Utile au second cas ? |
 | --- | --- | --- |
 | `title.basics.tsv.gz` | 215,7 Mio | **oui** — titre, titre original, année, type, durée, genres |
 | `title.akas.tsv.gz` | 488,5 Mio | **oui** — les titres alternatifs, y compris français |
@@ -234,14 +252,9 @@ arrêt net — la même règle que le repérage des génériques, pour la même 
 **Son rôle est tranché** : « c'est un repli en cas d'échec de TMDB qui reste priorité. » Cela simplifie
 beaucoup, et cela change la voie à prendre.
 
-Un repli doit répondre **quand TMDB ne répond pas** — donc être là, hors ligne, sans dépendre d'un
-second service qui pourrait tomber en même temps. Les **exports publics** d'IMDb conviennent
-exactement : un import périodique, quelques centaines de mégaoctets, aucune requête au moment où l'on
-en a besoin. Une API tierce, elle, serait un second point de panne déguisé en filet de sécurité.
-
-À noter : la r88 réduit déjà la fréquence de ce repli. TMDB n'est plus écarté pour une limitation de
-débit, et l'analyse automatique attend son retour — le cas où IMDb prendrait la main devient rare, ce
-qui est le bon ordre des choses.
+Et si une API tierce venait à tenter quelqu'un : elle serait un second point de panne déguisé en
+filet de sécurité, puisqu'elle peut tomber au même moment que TMDB. Les fichiers, eux, sont déjà là
+quand on en a besoin.
 
 ## 7. Le défilement doit repartir en haut à chaque écran
 
@@ -387,15 +400,20 @@ réglage ne l'y autorise, tout ce qui suit change de forme — et il vaut mieux 
 désignait une ligne de requête, et le test le prouve — sur l'ancienne version, la saison était visitée
 zéro fois.
 
+**Prêt à partir, et petit :**
+
+1. **6, la moitié manuelle** — accepter un identifiant `tt…` dans l'écran de correspondance et le
+   faire passer par le `/find` de TMDB, qui existe déjà. Rend une fiche **complète**, résumé français
+   et jaquette compris. Aucun jeu de données, aucune clé.
+
 **Ce qui attend une mesure chez vous :**
 
-1. **3** — un film précis et le nombre de personnes affichées. La cause n'est pas le plafond, il faut
-   donc trouver où les personnes se perdent entre TMDB et l'écran.
-2. **4** — *A Star Is Born* 1976 est identifié ; les autres titres compléteront le tableau.
+2. **4** — *A Star Is Born* 1976 est identifié ; les autres titres compléteront le tableau. C'est un
+   défaut d'appariement et non de couverture : TMDB connaît parfaitement ses quatre versions.
 
-**Ce qui attend d'être écrit :**
+**Ce qui attend un besoin réel :**
 
-3. **6** — le rôle est tranché (repli de TMDB), la voie est celle des exports publics. La r88 réduit
-   déjà la fréquence de ce repli, ce qui laisse le temps de le faire proprement.
+3. **6, la moitié automatique** — les jeux de données, pour proposer une candidate IMDb quand TMDB ne
+   rend rien. À décider le jour où un titre réellement absent de TMDB se présente.
 
-**Mis de côté à sa demande :** le 9. **Reporté :** le 10.
+**Abandonné :** le 3. **Mis de côté :** le 9. **Reporté :** le 10.
