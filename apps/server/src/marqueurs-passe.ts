@@ -164,6 +164,23 @@ export interface BilanPasse {
  *
  * C'est ce double filtre qui rend la passe supportable : elle ne réécoute pas une médiathèque
  * entière, seulement ce qui est nouveau.
+ *
+ * ## Le dernier épisode restait dehors
+ *
+ * Deux conditions se ressemblent et ne disent pas la même chose, et la requête confondait les deux :
+ *
+ * - **« la saison a au moins deux épisodes »** — la vraie contrainte, parce qu'une empreinte sonore se
+ *   reconnaît en comparant des épisodes entre eux ; seul, il n'y a rien à comparer ;
+ * - **« au moins deux épisodes n'ont pas encore leur repère »** — ce que le `HAVING` appliquait, le
+ *   filtre s'exerçant avant le regroupement.
+ *
+ * Elles coïncident tant qu'une saison est largement incomplète, et divergent exactement à la fin :
+ * quand il ne reste **qu'un** épisode sans repère, la saison sortait de la liste et cet épisode
+ * n'était plus jamais repris. Constaté sur *Silo* S03E09 — le dernier de la saison, et le seul
+ * sans générique.
+ *
+ * La condition de taille porte donc maintenant sur la saison entière, et celle de travail restant est
+ * comptée à part.
  */
 function saisonsIncompletes(): Array<{ show_title: string; season_number: number | null }> {
   return db.prepare(`
@@ -171,9 +188,9 @@ function saisonsIncompletes(): Array<{ show_title: string; season_number: number
     FROM media_items m
     LEFT JOIN marqueurs_generique g ON g.media_id = m.id
     WHERE m.kind = 'episode' AND m.available = 1 AND m.show_title IS NOT NULL AND m.file_path IS NOT NULL
-      AND g.intro_start_seconds IS NULL AND g.ecoute_le IS NULL
     GROUP BY m.show_title, m.season_number
-    HAVING COUNT(*) >= 2`)
+    HAVING COUNT(*) >= 2
+       AND SUM(CASE WHEN g.intro_start_seconds IS NULL AND g.ecoute_le IS NULL THEN 1 ELSE 0 END) >= 1`)
     .all() as unknown as Array<{ show_title: string; season_number: number | null }>;
 }
 

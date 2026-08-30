@@ -52,6 +52,20 @@ export function LibraryManager({ onClose, onChanged }: { onClose: () => void; on
    * Arrêter la passe sans désactiver le repérage : « pas maintenant » plutôt que « jamais ».
    * La prochaine analyse reprendra là où le travail en est.
    */
+  /*
+   * Reprendre le repérage sur ce qui manque, et rien d'autre.
+   *
+   * Sans ce bouton, relancer une passe demandait soit d'éteindre puis rallumer le repérage — un
+   * réglage détourné en action —, soit d'attendre la fin d'une analyse de bibliothèque, donc d'en
+   * relancer une : reparcourir des milliers de fichiers pour quelques saisons.
+   */
+  const reprendreGeneriques = async () => {
+    setBasculeEnCours(true);
+    try { setGeneriques(await api.reprendreGeneriques()); }
+    catch { /* Le sondage suivant rétablira l'affichage. */ }
+    finally { setBasculeEnCours(false); }
+  };
+
   const arreterGeneriques = async () => {
     setBasculeEnCours(true);
     try { setGeneriques(await api.arreterGeneriques()); }
@@ -235,6 +249,17 @@ export function LibraryManager({ onClose, onChanged }: { onClose: () => void; on
                 */}
               {generiques.enCours && <button className="scan-toggle" disabled={basculeEnCours}
                 onClick={() => void arreterGeneriques()}>Arrêter</button>}
+              {/*
+                * Reprendre, et rien de plus : ce bouton ne relance aucune analyse de bibliothèque, ne
+                * retouche aucune fiche et n'interroge aucun fournisseur. Il annonce le nombre de
+                * saisons avant de partir, parce qu'un travail chiffré se décide au lieu de se subir.
+                */}
+              {!generiques.enCours && generiques.actif && generiques.saisonsTotal > generiques.saisonsFaites
+                && <button className="scan-toggle" disabled={basculeEnCours}
+                  title="Écoute les saisons qui n'ont pas encore de repère. Aucune bibliothèque n'est réanalysée."
+                  onClick={() => void reprendreGeneriques()}>
+                  Reprendre ({generiques.saisonsTotal - generiques.saisonsFaites} saison{generiques.saisonsTotal - generiques.saisonsFaites > 1 ? "s" : ""})
+                </button>}
               <time>{generiques.enCours && generiques.debuteLe ? `depuis ${new Date(generiques.debuteLe).toLocaleTimeString()}` : ""}</time>
             </div>
             <div className="scan-progress">

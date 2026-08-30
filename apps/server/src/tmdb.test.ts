@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { config } from "./config.js";
-import { classificationAge, fetchMetadataBundle, numeroRelatif, resetTmdbRuntimeCaches, titleMatchScore } from "./tmdb.js";
+import { classificationAge, fetchMetadataBundle, numeroRelatif, resetTmdbRuntimeCaches, titleMatchScore, tmdbBreaker } from "./tmdb.js";
+import { LimiteDeDebit } from "./resilience.js";
 
 const originalToken = config.tmdbToken;
 
@@ -256,5 +257,66 @@ describe("numérotation absolue", () => {
     expect(numeroRelatif(saisons, 0)).toBeNull();
     expect(numeroRelatif(saisons, -3)).toBeNull();
     expect(numeroRelatif(saisons, 4.5)).toBeNull();
+  });
+});
+
+/**
+ * Le défaut mesuré en r87 : TMDB « disparaissait » au bout de quelques centaines de fiches, puis
+ * revenait trente à soixante secondes plus tard. Il n'était jamais tombé — il demandait d'attendre,
+ * et le coupe-circuit comptait cette demande comme une panne.
+ */
+describe("TMDB face à une limitation de débit", () => {
+  const filmDune = {
+    id: 438631, title: "Dune", original_title: "Dune", overview: "Une épopée.",
+    release_date: "2021-09-15", runtime: 155, original_language: "en",
+  };
+
+  it("attend le délai demandé, puis obtient la fiche", async () => {
+    config.tmdbToken = "test-token";
+    const attentes: number[] = [];
+    let recherches = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/search/movie")) {
+        recherches += 1;
+        // Le premier appel est freiné, le second passe : c'est le comportement d'un service vivant.
+        if (recherches === 1) {
+          attentes.push(1);
+          return new Response(null, { status: 429, headers: { "retry-after": "0" } });
+        }
+        return Response.json({ results: [filmDune] });
+      }
+      if (url.includes("/movie/438631")) return Response.json({ ...filmDune, external_ids: {} });
+      return new Response(null, { status: 404 });
+    }));
+
+    const bundle = await fetchMetadataBundle({
+      kind: "movie", title: "Dune", year: 2021, showTitle: null, seasonNumber: null, episodeNumber: null,
+    }, "fr-FR");
+
+    expect(attentes).toHaveLength(1);
+    expect(recherches).toBe(2);
+    expect(bundle?.movie?.title).toBe("Dune");
+  });
+
+  it("renonce en disant « limite de débit », et non « panne »", async () => {
+    config.tmdbToken = "test-token";
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 429, headers: { "retry-after": "0" } })));
+
+    await expect(fetchMetadataBundle({
+      kind: "movie", title: "Dune", year: 2021, showTitle: null, seasonNumber: null, episodeNumber: null,
+    }, "fr-FR")).rejects.toBeInstanceOf(LimiteDeDebit);
+
+    // Et surtout : le fournisseur n'est pas isolé pour autant. C'est tout l'objet de la correction.
+    expect(tmdbBreaker.state).toBe("closed");
+  });
+
+  it("porte le code HTTP dans le message, pour que l'écran puisse le dire", async () => {
+    config.tmdbToken = "test-token";
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 503 })));
+
+    await expect(fetchMetadataBundle({
+      kind: "movie", title: "Dune", year: 2021, showTitle: null, seasonNumber: null, episodeNumber: null,
+    }, "fr-FR")).rejects.toThrow("TMDB 503");
   });
 });

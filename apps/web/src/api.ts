@@ -244,6 +244,8 @@ export const api = {
   /** Où en est le repérage des génériques de séries. Voir `marqueurs-passe` côté serveur. */
   activerGeneriques: (actif: boolean) => request<EtatGeneriques>("/system/generiques", { method: "POST", body: JSON.stringify({ actif }) }),
   arreterGeneriques: () => request<EtatGeneriques>("/system/generiques/arret", { method: "POST" }),
+  /** Reprendre le repérage sur les saisons restantes, sans relancer la moindre analyse. */
+  reprendreGeneriques: () => request<EtatGeneriques>("/system/generiques/passe", { method: "POST" }),
   generiques: () => request<EtatGeneriques>("/system/generiques"),
   startScan: (input: ScanRequest) => request<{ jobs: ScanJob[] }>("/scans", { method: "POST", body: JSON.stringify(input) }),
   cancelScan: (id: string) => request<ScanJob>(`/scans/${encodeURIComponent(id)}/cancel`, { method: "POST" }),

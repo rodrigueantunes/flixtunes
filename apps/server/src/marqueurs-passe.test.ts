@@ -192,4 +192,49 @@ describe("enchaînement des sources de repères", () => {
     const bilan = await completerLesGeneriques({ signal: controle.signal });
     expect(bilan.saisonsEcoutees).toBe(0);
   });
+
+  /**
+   * Le dernier épisode d'une saison restait sans générique, pour toujours.
+   *
+   * Constaté sur *Silo* S03E09. Deux conditions se ressemblaient et la requête les confondait : « la
+   * saison a au moins deux épisodes » — la vraie contrainte, une empreinte sonore se reconnaissant
+   * par comparaison — et « au moins deux épisodes n'ont pas encore leur repère », que le `HAVING`
+   * appliquait en réalité.
+   *
+   * Elles coïncident tant qu'une saison est largement incomplète, et divergent **exactement à la
+   * fin** : quand il ne restait qu'un épisode sans repère, la saison sortait de la file et cet
+   * épisode n'était plus jamais repris. Le cas le plus visible est le pire — c'est celui d'une
+   * série qu'on vient de finir de regarder.
+   */
+  it("reprend une saison où il ne reste qu'un seul épisode sans repère", async () => {
+    const serie = "Passe témoin F";
+    /*
+     * La configuration de Silo S03E09 : huit épisodes déjà traités, un neuvième qui ne l'est pas.
+     *
+     * « Déjà traités » veut dire ici **écoutés**, et non chapitrés : c'est ce qui isole le défaut.
+     * Un épisode chapitré serait complété par ses voisins avant même que la file sonore n'entre en
+     * jeu, et le cas ne prouverait rien de la file elle-même.
+     */
+    for (let numero = 1; numero <= 8; numero += 1) {
+      const id = poserEpisode(serie, numero);
+      db.prepare(`INSERT INTO marqueurs_generique (media_id, intro_start_seconds, intro_end_seconds, source_intro, ecoute_le)
+        VALUES (?, 30, 110, 'empreinte', CURRENT_TIMESTAMP)`).run(id);
+    }
+    poserEpisode(serie, 9);
+
+    const bilan = await completerLesGeneriques({});
+
+    // Avant correction : zéro. La saison ne comptait qu'un épisode restant, et le seuil de deux
+    // — qui devait porter sur la taille de la saison — la faisait sortir de la file pour toujours.
+    expect(bilan.saisonsEcoutees, "la saison doit revenir dans la file").toBeGreaterThanOrEqual(1);
+  });
+
+  /* La contrainte réelle demeure : seul, un épisode n'a rien à quoi se comparer. */
+  it("laisse de côté une saison d'un seul épisode, qui n'a pas de voisin", async () => {
+    const serie = "Passe témoin G";
+    poserEpisode(serie, 1);
+
+    const bilan = await completerLesGeneriques({});
+    expect(bilan.saisonsEcoutees, "rien à comparer, rien à écouter").toBe(0);
+  });
 });

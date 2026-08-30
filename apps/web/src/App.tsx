@@ -850,7 +850,31 @@ export function App() {
     return () => clearTimeout(minuteur);
   }, [playing, details]);
 
-  const navigate = (next: AppView) => { setView(next); setSearchOpen(false); setQuery(""); window.location.hash = next === "home" ? "top" : next === "movies" ? "films" : next === "shows" ? "series" : "historique"; if (!isTestDom) window.scrollTo({ top: 0, behavior: scrollBehavior() }); };
+  const navigate = (next: AppView) => { setView(next); setSearchOpen(false); setQuery(""); window.location.hash = next === "home" ? "top" : next === "movies" ? "films" : next === "shows" ? "series" : "historique"; };
+
+  /**
+   * Un écran s'ouvre en haut. Tous les écrans, et par toutes les voies.
+   *
+   * `navigate` remettait bien la page en haut, mais c'est la navigation principale : elle ne voit ni
+   * le retour au choix du groupe, ni l'écran des profils, ni la sortie du lecteur. On arrivait donc
+   * sur « Choisissez votre groupe » à la hauteur où la page précédente avait été laissée.
+   *
+   * Recopier un `scrollTo` à chaque endroit était la mauvaise réponse : c'est ainsi qu'un des cas
+   * finit toujours par être oublié — celui-là l'avait été. On nomme donc l'écran courant, et **un
+   * seul** effet observe ce nom. Un nouvel écran, quel qu'il soit, hérite du comportement sans que
+   * personne ait à y penser.
+   */
+  const ecranCourant = playing ? `lecteur:${playing}`
+    : !introComplete || firstRunRequired === null || remoteLoginRequired === null ? "chargement"
+      : remoteLoginRequired ? "connexion"
+        : firstRunRequired ? "installation"
+          : (groupOpen || !group) ? "groupe"
+            : profileOpen ? "profils"
+              : `principal:${view}`;
+  useEffect(() => {
+    if (isTestDom) return;
+    window.scrollTo({ top: 0, behavior: scrollBehavior() });
+  }, [ecranCourant]);
   // Le fond noir plutôt qu'un indicateur : le lecteur arrive en quelques dizaines de millisecondes
   // depuis le cache du navigateur, et une roue qui clignote au passage se remarque bien davantage que
   // l'attente qu'elle prétend meubler. Le rôle et le libellé restent, pour qui n'a que la voix.

@@ -12,19 +12,20 @@ Rien n'est engagé tant que le feu vert n'est pas donné, point par point ou en 
 
 | | Point | Cause trouvée ? | Effort | À décider |
 | --- | --- | --- | --- | --- |
-| 1 | Génériques à l'ajout | **partielle** | moyen | le symptôme exact |
-| 2 | Bouton « analyser les génériques restants » | sans objet, c'est un ajout | **faible** | — |
-| 3 | Talent limité | **oui, mesurée** | faible | le plafond voulu |
+| 1 | Génériques à l'ajout | **oui, prouvée** — SILO S03E09 | ~~moyen~~ | **fait** |
+| 2 | Bouton « analyser les génériques restants » | sans objet, c'est un ajout | ~~faible~~ | **fait** |
+| 3 | Talent limité | **la cause est ailleurs** — voir §3 | moyen | une mesure sur sa base |
 | 4 | ~20 films manquants | non — demande une mesure | moyen | l'accès aux fichiers |
-| 5 | TMDB qui disparaît | **oui, mesurée** | moyen | — |
-| 6 | Ajouter IMDb | sans objet | **moyen à élevé** | ce qu'on en attend |
-| 7 | Défilement en haut à l'ouverture | **oui** | faible | — |
-| 8 | Boutons restants (thème) | oui | faible | — |
-| 9 | Sous-titres dédoublés | non — trois pistes possibles | moyen | un cas reproductible |
+| 5 | TMDB qui disparaît | **oui, mesurée** | ~~moyen~~ | **fait** |
+| 6 | Ajouter IMDb | sans objet | **moyen à élevé** | son rôle est tranché : repli de TMDB |
+| 7 | Défilement en haut à l'ouverture | **oui** | ~~faible~~ | **fait** |
+| 8 | Boutons restants (thème) | oui | ~~faible~~ | **fait** |
+| 9 | Sous-titres dédoublés | non | — | **mis de côté** à sa demande |
 | 10 | Live TV et fournisseurs | **reporté** — voir §10 | — | la question des sources |
 
-Les points 2, 3, 7 et 8 sont petits et sûrs : ils peuvent partir tout de suite. **Le 10 est reporté**
-— la décision est prise et sa raison est en tête de sa section. La r88 porte donc les neuf autres.
+**Cinq points sont faits** — 1, 2, 5, 7 et 8. Le 9 et le 10 sont mis de côté à sa demande. Restent le
+3, dont la cause s'est révélée être ailleurs que le plafond, le 4, et le 6 dont le rôle est maintenant
+tranché.
 
 ---
 
@@ -73,10 +74,24 @@ bibliothèque, ne retouche aucune fiche, ne redescend chez aucun fournisseur.
 Rien n'est cassé : ces plafonds ont été posés pour ne pas gonfler la base. Mais ils sont **arbitraires
 et invisibles** — rien à l'écran ne dit qu'on regarde une liste tronquée.
 
-Trois questions avant de toucher : quel plafond voulez-vous (50 ? tout le casting ?), faut-il le même
-pour les films et les séries, et faut-il **rejouer** les fiches déjà enregistrées — sans quoi les
-films déjà en base garderont leurs 24 acteurs jusqu'à une correction manuelle. Le coût réel est là,
-pas dans le changement de chiffre.
+### Sauf que le plafond n'est pas ce qu'on voit
+
+Réponse du 30 août : « c'est très bien comme c'est mais étrange, j'en ramène pas autant. » Autrement
+dit les listes affichées sont **bien en deçà de 24**, et le plafond n'est donc pas ce qui coupe.
+
+Cela déplace entièrement le point. Quatre endroits peuvent perdre des personnes entre TMDB et
+l'écran, et il faut mesurer lequel avant de toucher à quoi que ce soit :
+
+1. **La demande** — `credits` n'est joint qu'à l'œuvre racine (`rootWork`) ; un épisode ou une saison
+   pourrait n'en recevoir aucun.
+2. **L'enregistrement** — la clé de déduplication est `acteur:<id>:<personnage>` ; deux rôles du même
+   acteur comptent pour deux, mais un personnage vide pourrait en écraser un autre.
+3. **La lecture** — la fiche affichée pourrait tronquer, indépendamment de ce qui est en base.
+4. **L'ancienneté** — une fiche enregistrée avant une correction garde ce qu'elle avait ; rien ne
+   reprend une correspondance automatique déjà sûre.
+
+Ce qu'il me faut : **un film précis** et le nombre de personnes affichées. Je compare alors à ce que
+TMDB rend pour lui, et la marche se voit d'un coup.
 
 ## 4. Une vingtaine de films manquants
 
@@ -131,10 +146,17 @@ Ce que je propose, dans cet ordre :
 | Une **API tierce** (OMDb…) | notes et résumés | une clé, une limite de requêtes, une dépendance de plus |
 | Extraire des pages du site | tout | interdit par leurs conditions — écarté |
 
-Ma lecture : ce que vous cherchez est probablement la **note IMDb** et peut-être les titres alternatifs
-pour mieux apparier — pas un second catalogue. Si c'est cela, la voie des exports publics est la
-bonne : elle est légale, hors ligne, et elle sert aussi le point 4 en donnant à l'appariement des
-titres alternatifs qu'il n'a pas aujourd'hui. Dites-moi ce que vous en attendez et je chiffre celle-là.
+**Son rôle est tranché** : « c'est un repli en cas d'échec de TMDB qui reste priorité. » Cela simplifie
+beaucoup, et cela change la voie à prendre.
+
+Un repli doit répondre **quand TMDB ne répond pas** — donc être là, hors ligne, sans dépendre d'un
+second service qui pourrait tomber en même temps. Les **exports publics** d'IMDb conviennent
+exactement : un import périodique, quelques centaines de mégaoctets, aucune requête au moment où l'on
+en a besoin. Une API tierce, elle, serait un second point de panne déguisé en filet de sécurité.
+
+À noter : la r88 réduit déjà la fréquence de ce repli. TMDB n'est plus écarté pour une limitation de
+débit, et l'analyse automatique attend son retour — le cas où IMDb prendrait la main devient rare, ce
+qui est le bon ordre des choses.
 
 ## 7. Le défilement doit repartir en haut à chaque écran
 
@@ -276,24 +298,19 @@ réglage ne l'y autorise, tout ce qui suit change de forme — et il vaut mieux 
 
 ## Ordre proposé
 
-**Ce qui peut partir sans rien attendre :**
-
-1. **7 et 8** ensemble — mêmes écrans, correction visible tout de suite.
-2. **2** — un bouton, une route, rien de risqué.
-3. **5** — la cause est connue, et c'est celle qui gêne le plus au quotidien.
-
-**Ce qui attend une décision de votre part :**
-
-4. **3** — dès que le plafond voulu est fixé.
-5. **6** — quand on aura dit ce qu'on attend d'IMDb.
+**Livré en r88 :** les points 1, 2, 5, 7 et 8. Le 1 s'est réglé grâce à *Silo* S03E09 : l'exemple
+désignait une ligne de requête, et le test le prouve — sur l'ancienne version, la saison était visitée
+zéro fois.
 
 **Ce qui attend une mesure chez vous :**
 
-6. **1** — le symptôme exact.
-7. **9** — un titre où le dédoublement se voit.
-8. **4** — la liste des vingt films, ou l'accès pour la produire.
+1. **3** — un film précis et le nombre de personnes affichées. La cause n'est pas le plafond, il faut
+   donc trouver où les personnes se perdent entre TMDB et l'écran.
+2. **4** — *A Star Is Born* 1976 est identifié ; les autres titres compléteront le tableau.
 
-**Reporté :** le 10.
+**Ce qui attend d'être écrit :**
 
-Rien ne commence sans un feu vert. Les trois premiers n'ont besoin d'aucune réponse : un mot suffit à
-les lancer, et les autres suivront à mesure que les décisions et les mesures arriveront.
+3. **6** — le rôle est tranché (repli de TMDB), la voie est celle des exports publics. La r88 réduit
+   déjà la fréquence de ce repli, ce qui laisse le temps de le faire proprement.
+
+**Mis de côté à sa demande :** le 9. **Reporté :** le 10.

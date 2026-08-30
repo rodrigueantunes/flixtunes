@@ -1,9 +1,9 @@
 import type { MetadataProviderStatus, MetadataSearchCandidate } from "@flixtunes/contracts";
 import type { ParsedMedia } from "./media-parser.js";
-import { fetchMetadataBundle, resetTmdbRuntimeCaches, searchMetadata, titleMatchScore, type EntityMetadata, type MetadataBundle } from "./tmdb.js";
+import { fetchMetadataBundle, resetTmdbRuntimeCaches, searchMetadata, titleMatchScore, tmdbBreaker, type EntityMetadata, type MetadataBundle } from "./tmdb.js";
 import { MATCH_THRESHOLDS, rankMetadataMatches, scoreMetadataMatch } from "./match-engine.js";
 import { searchAnilist } from "./anilist.js";
-import { CircuitBreaker, fetchWithTimeout } from "./resilience.js";
+import { CircuitBreaker, fetchWithTimeout, LimiteDeDebit } from "./resilience.js";
 import { getProviderConfiguration, type ProviderConfiguration } from "./provider-settings.js";
 import { fetchTvmazeBundle, fetchWikidataBundle, resetOpenMetadataCaches, searchTvmaze, searchWikidata } from "./open-metadata.js";
 
@@ -340,10 +340,50 @@ export function tmdbConfirmedByFallback(
     || right.score - left.score)[0] ?? null;
 }
 
+/**
+ * Interroger TMDB, et **attendre son retour** plutôt que se contenter d'un autre.
+ *
+ * TMDB reste le fournisseur de référence : quand la fiche existe chez lui, c'est la sienne qu'on
+ * veut. Se rabattre parce qu'il était occupé trente secondes produit une fiche pauvre qu'il faudra
+ * reprendre — et jusqu'à r87, une fiche automatique au-dessus du seuil n'était jamais reprise.
+ * Trente-neuf films de la médiathèque étaient restés ainsi sur Wikidata.
+ *
+ * Pendant une analyse automatique, la patience ne coûte rien : personne ne regarde l'écran, et le
+ * coupe-circuit dit exactement combien de temps il reste. On attend donc ce délai, puis on
+ * recommence — au plus trois fois, soit un peu plus de deux minutes. Passé cela, le service est
+ * considéré comme réellement absent et le repli reprend ses droits, marqué « à revoir ».
+ *
+ * **Une recherche interactive n'attend pas** : quelqu'un est devant l'écran, et une fenêtre figée
+ * deux minutes est un défaut, pas une précaution. C'est tout l'objet de `patienter`.
+ */
+const TOURS_DE_PATIENCE = 3;
+
+async function tmdbEnPatientant(
+  patienter: boolean,
+  operation: () => Promise<MetadataBundle | null>,
+): Promise<{ bundle: MetadataBundle | null; indisponible: boolean }> {
+  for (let tour = 0; ; tour += 1) {
+    try {
+      return { bundle: await operation(), indisponible: false };
+    } catch (error) {
+      const attente = error instanceof LimiteDeDebit ? error.attendreMs : tmdbBreaker.msAvantReouverture();
+      // On n'attend que ce qui a une fin connue. Une panne franche — clé refusée, réseau coupé —
+      // n'ouvre aucun délai : elle se constate tout de suite et le repli part sans faire patienter.
+      if (!patienter || attente <= 0 || tour >= TOURS_DE_PATIENCE - 1) {
+        return { bundle: null, indisponible: true };
+      }
+      console.info(`[FlixTunes] TMDB indisponible, reprise dans ${Math.round(attente / 1000)} s `
+        + `(essai ${tour + 2} sur ${TOURS_DE_PATIENCE})`);
+      await new Promise((resolve) => setTimeout(resolve, attente + 250));
+    }
+  }
+}
+
 export async function fetchMetadataWithProviders(
   parsed: ParsedMedia,
   language: string,
   forced?: { provider: string; id: string },
+  options: { patienter?: boolean } = {},
 ): Promise<MetadataBundle | null> {
   const explicitId = Boolean(forced || parsed.externalIds?.tmdb || parsed.externalIds?.imdb || parsed.externalIds?.tvdb);
   // Une détection « revue » signale plusieurs preuves locales proches ; elle ne doit pas interdire à
@@ -365,14 +405,13 @@ export async function fetchMetadataWithProviders(
    */
   let tmdbIndisponible = false;
   if (!forced || forced.provider === "tmdb") {
-    try {
-      const tmdb = await fetchMetadataBundle(parsed, language, forced?.id ?? parsed.externalIds?.tmdb);
-      if (tmdb && detectionAllowsAutomatic) {
-        return augmentArtworkWithFanart(tmdb, parsed.kind === "episode" ? "tv" : "movie", language);
-      }
-    } catch {
-      // Un fournisseur secondaire assure la continuité, mais son résultat ne vaudra pas certitude.
-      tmdbIndisponible = true;
+    // Pendant une analyse automatique, on patiente : voir `tmdbEnPatientant`. Un fournisseur
+    // secondaire assure ensuite la continuité, mais son résultat ne vaudra jamais certitude.
+    const essai = await tmdbEnPatientant(options.patienter === true,
+      () => fetchMetadataBundle(parsed, language, forced?.id ?? parsed.externalIds?.tmdb));
+    tmdbIndisponible = essai.indisponible;
+    if (essai.bundle && detectionAllowsAutomatic) {
+      return augmentArtworkWithFanart(essai.bundle, parsed.kind === "episode" ? "tv" : "movie", language);
     }
   }
   const kind = parsed.kind === "episode" ? "tv" : "movie";

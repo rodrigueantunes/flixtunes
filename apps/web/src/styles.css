@@ -76,6 +76,50 @@ button, input, select { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
 button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid var(--blue-light); outline-offset: 3px; }
 button { color: inherit; }
+/*
+ * Les cases a cocher et les boutons radio portent la couleur de l'application.
+ *
+ * La teinte etait posee a quatre endroits differents — reglages experts, bascule de fiche, pistes du
+ * lecteur, choix de genre — et manquait partout ailleurs : la case « Compte enfant » de l'ecran des
+ * profils s'affichait en gris systeme sur fond bleu nuit. Une seule declaration ici, et les quatre
+ * repetitions disparaissent avec le defaut.
+ */
+input[type="radio"] { accent-color: var(--blue); }
+/*
+ * La case à cocher, elle, demande davantage qu'une couleur d'accent.
+ *
+ * `accent-color` ne teinte que l'état **coché** : décochée, la case restait le petit carré gris du
+ * système, posé sur un panneau bleu nuit — « Compte enfant » sur l'écran des profils, « Fond sombre »
+ * dans le panneau des pistes. C'est le même défaut que les boutons bruts, sur un contrôle plus petit.
+ *
+ * On reprend donc la silhouette des commandes : bordure fine, fond translucide, rayon de l'échelle.
+ * Cochée, elle devient l'aplat bleu de l'application, avec sa marque tracée en bordures — ni image,
+ * ni police à charger.
+ */
+input[type="checkbox"] {
+  appearance: none;
+  width: 17px;
+  height: 17px;
+  display: inline-grid;
+  place-content: center;
+  border: 1px solid #ffffff38;
+  border-radius: 5px;
+  background: #101722cc;
+  cursor: pointer;
+  transition: background var(--duree-reponse), border-color var(--duree-reponse);
+}
+input[type="checkbox"]:hover:not(:disabled) { border-color: #ffffff66; }
+input[type="checkbox"]:checked { border-color: var(--blue); background: var(--blue); }
+input[type="checkbox"]:checked::after {
+  content: "";
+  width: 9px;
+  height: 5px;
+  border: 2px solid #fff;
+  border-top: 0;
+  border-right: 0;
+  transform: rotate(-45deg) translate(1px, -1px);
+}
+input[type="checkbox"]:disabled { opacity: .45; cursor: not-allowed; }
 svg { width: 1.25rem; height: 1.25rem; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
 .app-shell { min-height: 100vh; overflow: hidden; }
@@ -134,6 +178,16 @@ svg { width: 1.25rem; height: 1.25rem; fill: none; stroke: currentColor; stroke-
 .group-gate > p { color: var(--muted); }
 .group-grid { width: min(900px, 100%); display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 1rem; margin: 2rem 0; }
 .group-grid article { display: grid; gap: .45rem; padding: .75rem; border: 1px solid var(--line); border-radius: 20px; background: #ffffff08; }
+/*
+ * Renommer et Supprimer : deux commandes de même rang, sur une seule ligne.
+ *
+ * Elles étaient collées à gauche, de hauteurs différentes — un bouton et un lien —, ce qui donnait
+ * une ligne bancale sous chaque carte. Le retrait garde sa couleur d'alerte et son absence de cadre,
+ * comme partout ailleurs : c'est la seule commande de la carte qui défait quelque chose.
+ */
+.group-grid article > div { display: flex; align-items: center; justify-content: center; gap: .4rem; }
+.group-grid article > div > button { min-height: 34px; padding: 0 .75rem; font-size: .78rem; }
+.group-grid article > div > .profile-delete { margin-top: 0; }
 .group-choice { min-height: 150px; display: grid; place-items: center; gap: .5rem; border: 0; border-radius: 15px; background: #101827; color: white; cursor: pointer; }
 .group-choice span { display: grid; place-items: center; width: 70px; height: 70px; border-radius: 22px; background: linear-gradient(135deg, #2968ff, #8b5cf6); font-size: 2rem; font-weight: 800; }
 .group-choice b { font-size: 1.1rem; }
@@ -386,7 +440,7 @@ h1, h2 { font-family: "Manrope", sans-serif; }
 .expert-controls > label { display: grid; gap: .32rem; color: #bcc5d5; font-size: .78rem; font-weight: 600; }
 .expert-controls select, .expert-controls input:not([type="checkbox"]) { width: min(100%, 26rem); min-height: 40px; padding: .5rem .7rem; }
 .expert-toggle { display: flex !important; align-items: center; gap: .55rem; cursor: pointer; }
-.expert-toggle input { width: 17px; height: 17px; accent-color: var(--blue); }
+.expert-toggle input { width: 17px; height: 17px; }
 /* Un bouton seul dans une grille en occupe toute la largeur : « Refaire les mesures » barrait le
    panneau d'un bord à l'autre et prenait l'allure d'une action principale. */
 .expert-controls > button, .expert-controls > .expert-actions { justify-self: start; }
@@ -466,7 +520,7 @@ h1, h2 { font-family: "Manrope", sans-serif; }
 .library-form input[type="text"], .library-form input:not([type]), .library-form select { width: 100%; min-height: 46px; padding: .7rem .8rem; border: 1px solid var(--line); border-radius: var(--rayon-commande); background: #090d15; color: white; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem; }
 .toggle-field { margin-top: 1rem; display: flex; align-items: flex-start; gap: .8rem; padding: .9rem; border: 1px solid var(--line); border-radius: 12px; background: #0b111b; cursor: pointer; }
-.toggle-field input { margin-top: .25rem; accent-color: var(--blue); }
+.toggle-field input { margin-top: .25rem; }
 .toggle-field span { display: grid; gap: .25rem; }
 .toggle-field span:first-child { margin: 0; }
 .toggle-field small { color: var(--muted); line-height: 1.4; }
@@ -488,7 +542,17 @@ h1, h2 { font-family: "Manrope", sans-serif; }
 .scan-job > button,
 .scan-toggle,
 .library-actions button,
-.diagnostics-panel button:not(.provider-advanced-toggle) {
+.diagnostics-panel button:not(.provider-advanced-toggle),
+/*
+ * Et les écrans d'ouverture, où le même défaut avait survécu.
+ *
+ * « Renommer », sur l'écran de choix du groupe, était resté un bouton brut : boîte gris clair, texte
+ * noir, au milieu d'un dégradé bleu nuit. Il pesait visuellement plus lourd que « Ajouter », qui est
+ * pourtant l'aplat bleu — exactement le renversement décrit plus haut pour « Films uniquement ».
+ * « Annuler », qui n'apparaît que pendant un renommage, avait le même sort.
+ */
+.group-grid article > div > button:not(.profile-delete),
+.group-create > button[type="button"] {
   border: 1px solid var(--line);
   border-radius: var(--rayon-commande);
   background: #ffffff08;
@@ -501,7 +565,9 @@ h1, h2 { font-family: "Manrope", sans-serif; }
 .scan-job > button:hover:not(:disabled),
 .scan-toggle:hover:not(:disabled),
 .library-actions button:hover:not(:disabled),
-.diagnostics-panel button:not(.provider-advanced-toggle):hover:not(:disabled) { background: #ffffff16; border-color: #ffffff2e; }
+.diagnostics-panel button:not(.provider-advanced-toggle):hover:not(:disabled),
+.group-grid article > div > button:not(.profile-delete):hover:not(:disabled),
+.group-create > button[type="button"]:hover:not(:disabled) { background: #ffffff16; border-color: #ffffff2e; }
 .scan-launchers button:disabled,
 .provider-setup form > button:disabled,
 .scan-toggle:disabled,
@@ -653,7 +719,23 @@ footer > button:first-of-type { margin-left: auto; }
  */
 .player-top button,
 .player-command-row button,
-.player-command-row select {
+.player-command-row select,
+/*
+ * Le panneau **Pistes** avait été oublié, et il portait le défaut à l'état pur.
+ *
+ * « Lecture automatique » est le bouton bleu ; « Lire directement », « Remux sans perte » et « Mode
+ * compatible » sortaient en **aplats gris du navigateur**, presque aussi lourds que lui. On avait
+ * donc quatre commandes de poids comparable là où une seule est l'action proposée — le renversement
+ * décrit plus haut, sur l'écran où il se voit le plus. Les listes de réglage des sous-titres et le
+ * champ de décalage étaient dans le même cas.
+ *
+ * Elles héritent de la peau du lecteur, et non de celle des panneaux : elles vivent au-dessus de
+ * l'image, comme le reste des commandes de cet écran.
+ */
+.playback-choice-actions button:not(.primary),
+.player-message-actions button,
+.player-tracks select,
+.player-tracks input[type="number"] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -671,7 +753,21 @@ footer > button:first-of-type { margin-left: auto; }
 }
 .player-top button:hover,
 .player-command-row button:hover,
-.player-command-row select:hover { background: #17223ae8; border-color: #ffffff66; }
+.player-command-row select:hover,
+.playback-choice-actions button:not(.primary):hover:not(:disabled),
+.player-message-actions button:hover,
+.player-tracks select:hover:not(:disabled) { background: #17223ae8; border-color: #ffffff66; }
+/*
+ * Un réglage éteint se voit, et ne s'actionne pas.
+ *
+ * Les six réglages d'apparence sont désactivés devant un sous-titre image — r87 — parce qu'aucun ne
+ * peut s'y appliquer. Encore faut-il que cela se lise : sans cette règle, un `select` désactivé
+ * gardait la même couleur qu'un actif et paraissait simplement inerte.
+ */
+.player-tracks select:disabled,
+.player-tracks input:disabled { opacity: .45; cursor: not-allowed; }
+/* Le texte des listes reste à gauche : centrer un libellé de réglage le rend illisible en survol. */
+.player-tracks select, .player-tracks input[type="number"] { justify-content: flex-start; font-weight: 500; }
 
 /* Une icône seule : ronde, et sans le rembourrage qui déformerait le cercle. */
 .player-icon-button { width: 38px; min-width: 38px; padding: 0; border-radius: var(--rayon-pastille); font-size: 1.1rem; }
@@ -684,7 +780,7 @@ footer > button:first-of-type { margin-left: auto; }
 .player-tracks h3:not(:first-child) { margin-top: 1rem; }
 .player-tracks label { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: .15rem .6rem; padding: .55rem; border-radius: 8px; cursor: pointer; }
 .player-tracks label:hover { background: #ffffff08; }
-.player-tracks input { grid-row: 1 / 3; accent-color: var(--blue); }
+.player-tracks input { grid-row: 1 / 3; }
 .player-tracks small { color: var(--muted); font-size: .67rem; }
 .player-tracks .primary { width: 100%; min-height: 42px; margin-top: 1rem; }
 .playback-choice-actions { display: grid; grid-template-columns: 1fr; gap: .4rem; margin-top: 1rem; }
@@ -952,7 +1048,7 @@ html.bureau-video, body.bureau-video { background: transparent; }
 .genre-choice { display: inline-flex; align-items: center; gap: .35rem; min-height: 24px;
   padding: .15rem .45rem; border-radius: var(--rayon-pastille); cursor: pointer; font-size: .8rem; }
 .genre-choice:hover { background: #ffffff10; }
-.genre-choice > input { width: 16px; height: 16px; margin: 0; accent-color: var(--blue); }
+.genre-choice > input { width: 16px; height: 16px; margin: 0; }
 .genre-reset { min-height: 24px; padding: .15rem .6rem; border: 1px solid var(--line); border-radius: var(--rayon-pastille);
   background: transparent; color: var(--muted); cursor: pointer; font-size: .76rem; }
 .genre-reset:hover { color: #f7f9ff; border-color: var(--blue-light); }

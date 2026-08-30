@@ -67,7 +67,7 @@ import { journaliserAccesWan } from "./wan-journal.js";
 import { reparerCapacites } from "./capacites-client.js";
 import { definirParametresWan, parametresWan } from "./wan-parametres.js";
 import { diagnostiquerWan } from "./wan-diagnostic.js";
-import { activerLesGeneriques, arreterLaPasse, etatDesGeneriques } from "./marqueurs-passe.js";
+import { activerLesGeneriques, arreterLaPasse, etatDesGeneriques, generiquesActifs } from "./marqueurs-passe.js";
 import { etatDuSchema } from "./migrations.js";
 import {
   compteDuJeton,
@@ -533,6 +533,29 @@ export async function registerRoutes(app: FastifyInstance) {
 
   /** Arrêter la passe en cours sans éteindre le repérage : « pas maintenant », pas « jamais ». */
   app.post("/api/system/generiques/arret", async () => arreterLaPasse());
+
+  /**
+   * Reprendre le repérage **sur ce qui manque, et rien d'autre**.
+   *
+   * Jusqu'ici, il n'y avait que l'interrupteur : pour relancer une passe il fallait éteindre puis
+   * rallumer le repérage, ce qui est un geste de réglage détourné en geste d'action. Et il fallait
+   * sinon attendre la fin d'une analyse de bibliothèque — donc en relancer une, c'est-à-dire
+   * reparcourir des milliers de fichiers pour quelques saisons.
+   *
+   * Ce bouton ne relance **aucune** analyse, ne retouche aucune fiche et n'interroge aucun
+   * fournisseur. Il reprend la liste des saisons sans repère, et s'arrête quand elle est vide.
+   *
+   * Une passe déjà en cours n'est pas doublée : deux passes se disputeraient les mêmes saisons et le
+   * même processeur. On rend l'état tel quel, et l'écran montre qu'elle tourne déjà.
+   */
+  app.post("/api/system/generiques/passe", async (_request, reply) => {
+    if (!generiquesActifs()) {
+      return reply.code(409).send({ message: "Le repérage des génériques est désactivé : activez-le d'abord." });
+    }
+    const avant = etatDesGeneriques();
+    if (!avant.enCours) scanCoordinator.relancerLesGeneriques();
+    return etatDesGeneriques();
+  });
 
   app.post("/api/scans", async (request, reply) => {
     const parsed = scanRequestSchema.safeParse(request.body ?? {});

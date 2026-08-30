@@ -45,6 +45,16 @@ export function useDialogFocus<T extends HTMLElement>(active = true) {
     // Mémorisé avant tout déplacement, sinon on retiendrait la fenêtre elle-même.
     const opener = document.activeElement as HTMLElement | null;
 
+    /*
+     * Une fenêtre s'ouvre à son début, comme un écran.
+     *
+     * React réutilise volontiers un même nœud d'une fenêtre à l'autre — les profils après les
+     * groupes, une fiche après une autre — et le défilement intérieur, lui, ne se remet pas à zéro.
+     * On rouvrait donc au milieu de la précédente. Remis ici plutôt que dans chaque fenêtre : c'est
+     * le seul endroit que toutes traversent.
+     */
+    container.scrollTop = 0;
+
     const first = focusableWithin(container)[0];
     if (first) first.focus();
     else {

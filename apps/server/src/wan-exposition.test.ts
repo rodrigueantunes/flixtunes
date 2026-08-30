@@ -19,9 +19,10 @@ const REFUS_ASSUMES = new Set([
   "GET /api/filesystem/directories",
   // Analyses et corrections de catalogue.
   // Le repérage des génériques se **lit** depuis Internet — c'est de l'avancement, rien de plus —
-  // mais s'allume, s'éteint et s'arrête depuis le réseau local seulement : allumer une passe qui
-  // décode pendant des heures est un geste sur la machine, pas sur la médiathèque.
+  // mais s'allume, s'éteint, se reprend et s'arrête depuis le réseau local seulement : lancer une
+  // passe qui décode pendant des heures est un geste sur la machine, pas sur la médiathèque.
   "POST /api/system/generiques", "POST /api/system/generiques/arret",
+  "POST /api/system/generiques/passe",
   "GET /api/scans", "POST /api/scans", "GET /api/scans/skipped",
   "POST /api/scans/:id/cancel", "POST /api/scans/:id/retry",
   "GET /api/corrections", "POST /api/corrections", "POST /api/corrections/preview",

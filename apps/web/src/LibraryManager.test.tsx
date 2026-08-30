@@ -27,6 +27,8 @@ const { apiMock } = vi.hoisted(() => ({ apiMock: {
     passe: null as { saisonsFaites: number; trouves: number } | null })),
   arreterGeneriques: vi.fn(async () => ({ actif: true, enCours: false, saisonsFaites: 4, saisonsTotal: 12, episodesEcoutes: 12, trouves: 3, saisonCourante: null as string | null, debuteLe: null as string | null,
     passe: null as { saisonsFaites: number; trouves: number } | null })),
+  reprendreGeneriques: vi.fn(async () => ({ actif: true, enCours: true, saisonsFaites: 3, saisonsTotal: 12, episodesEcoutes: 9, trouves: 2, saisonCourante: null as string | null, debuteLe: null as string | null,
+    passe: { saisonsFaites: 0, trouves: 0 } as { saisonsFaites: number; trouves: number } | null })),
   refreshLibraryMetadata: vi.fn(), startScan: vi.fn(), cancelScan: vi.fn(), retryScan: vi.fn(),
   metadataProviders: vi.fn(), configureMetadataProviders: vi.fn(),
   updateLibraryLocalization: vi.fn(),
@@ -170,5 +172,45 @@ describe("centre d'analyse et bibliothèques", () => {
     expect(apiMock.activerGeneriques, "l'arrêt ne touche pas au réglage").not.toHaveBeenCalled();
     expect(await screen.findByRole("button", { name: "♪ Génériques : activé" }),
       "le repérage reste allumé").toBeInTheDocument();
+  });
+
+  /*
+   * Reprendre le repérage sur ce qui manque, sans passer par une analyse de bibliothèque.
+   *
+   * Sans ce bouton, relancer une passe demandait d'éteindre puis rallumer le réglage — un geste de
+   * configuration détourné en geste d'action — ou de réanalyser des milliers de fichiers pour
+   * quelques saisons.
+   */
+  it("reprend les génériques restants, en annonçant leur nombre", async () => {
+    apiMock.generiques.mockResolvedValue({ actif: true, enCours: false, saisonsFaites: 3, saisonsTotal: 12,
+      episodesEcoutes: 9, trouves: 2, saisonCourante: null, debuteLe: null, passe: null });
+    render(<LibraryManager onClose={() => {}} onChanged={() => {}} />);
+
+    // Le chiffre est celui du travail restant, pas du total : neuf saisons sur douze.
+    fireEvent.click(await screen.findByRole("button", { name: "Reprendre (9 saisons)" }));
+
+    await waitFor(() => expect(apiMock.reprendreGeneriques).toHaveBeenCalled());
+    expect(apiMock.activerGeneriques, "reprendre ne touche pas au réglage").not.toHaveBeenCalled();
+    expect(apiMock.startScan, "et ne relance aucune analyse de bibliothèque").not.toHaveBeenCalled();
+  });
+
+  it("n'offre pas de reprise quand tout est traité", async () => {
+    apiMock.generiques.mockResolvedValue({ actif: true, enCours: false, saisonsFaites: 12, saisonsTotal: 12,
+      episodesEcoutes: 40, trouves: 11, saisonCourante: null, debuteLe: null, passe: null });
+    render(<LibraryManager onClose={() => {}} onChanged={() => {}} />);
+
+    expect(await screen.findByText(/Toutes les saisons sont traitées/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Reprendre/ })).not.toBeInTheDocument();
+  });
+
+  /* Une passe déjà lancée s'arrête ; elle ne se relance pas par-dessus elle-même. */
+  it("offre d'arrêter, et non de reprendre, pendant une passe", async () => {
+    apiMock.generiques.mockResolvedValue({ actif: true, enCours: true, saisonsFaites: 3, saisonsTotal: 12,
+      episodesEcoutes: 9, trouves: 2, saisonCourante: "Silo — saison 3", debuteLe: "2026-08-30T10:35:45Z",
+      passe: { saisonsFaites: 1, trouves: 1 } });
+    render(<LibraryManager onClose={() => {}} onChanged={() => {}} />);
+
+    expect(await screen.findByRole("button", { name: "Arrêter" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Reprendre/ })).not.toBeInTheDocument();
   });
 });

@@ -4,7 +4,7 @@ import type { ParsedMedia } from "./media-parser.js";
 import { getProviderConfiguration } from "./provider-settings.js";
 import { rankMetadataMatches, scoreMetadataMatch } from "./match-engine.js";
 import { searchWithRelaxation } from "./query-relaxation.js";
-import { CircuitBreaker, fetchWithTimeout } from "./resilience.js";
+import { Cadence, CircuitBreaker, delaiDemande, fetchWithTimeout, LimiteDeDebit } from "./resilience.js";
 import { applySeasonEvidence, needsSeasonEvidence } from "./season-evidence.js";
 
 interface TmdbImage {
@@ -132,8 +132,28 @@ export interface MetadataBundle {
 
 const apiRoot = "https://api.themoviedb.org/3";
 const imageRoot = "https://image.tmdb.org/t/p";
-const tmdbBreaker = new CircuitBreaker(4, 45_000);
+export const tmdbBreaker = new CircuitBreaker(4, 45_000);
 const responseCache = new Map<string, { expiresAt: number; value: unknown }>();
+
+/**
+ * La cadence des appels à TMDB, et pourquoi elle est là.
+ *
+ * Rien ne bornait le débit : une analyse complète interroge le fournisseur pour chaque fiche, et les
+ * requêtes partaient aussi vite que le réseau les portait. On découvrait la limite en la heurtant,
+ * et la réponse `429` était comptée comme une panne — d'où un TMDB qui « disparaissait » quarante-
+ * cinq secondes en pleine session de correspondance.
+ *
+ * Vingt par seconde est délibérément en dessous de ce que TMDB tolère : le but n'est pas d'aller au
+ * plus près de la limite, c'est de ne jamais la toucher. Une analyse qui dure une minute de plus ne
+ * se remarque pas ; une fiche fausse, si.
+ */
+const cadenceTmdb = new Cadence(20);
+
+/** Combien de fois on réessaie après un « ralentissez », avant de renoncer pour cette fiche. */
+const ESSAIS_APRES_LIMITE = 3;
+
+/** À défaut d'en-tête `Retry-After`, l'attente qu'on s'impose — et qui double à chaque essai. */
+const ATTENTE_PAR_DEFAUT_MS = 2_000;
 
 async function tmdbRequest<T>(pathname: string, params: Record<string, string | undefined> = {}): Promise<T> {
   const token = getProviderConfiguration().tmdbToken;
@@ -143,11 +163,27 @@ async function tmdbRequest<T>(pathname: string, params: Record<string, string | 
   const url = `${apiRoot}${pathname}${search.size ? `?${search}` : ""}`;
   const cached = responseCache.get(url); if (cached && cached.expiresAt > Date.now()) return cached.value as T;
   return tmdbBreaker.run(async () => {
-    const response = await fetchWithTimeout(url, { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
-    if (!response.ok) throw new Error(`TMDB ${response.status}`);
-    const value = await response.json() as T; responseCache.set(url, { expiresAt: Date.now() + 10 * 60_000, value });
-    if (responseCache.size > 1000) responseCache.delete(responseCache.keys().next().value!);
-    return value;
+    for (let essai = 0; ; essai += 1) {
+      await cadenceTmdb.attendreSonTour();
+      const response = await fetchWithTimeout(url, { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
+      if (response.status === 429) {
+        /*
+         * TMDB nous demande d'attendre. On attend ce qu'il dit, puis on recommence — et si le délai
+         * n'est pas tenable, on remonte une `LimiteDeDebit` que le coupe-circuit laissera passer sans
+         * la compter. Le service répond : l'isoler serait le punir d'avoir été poli.
+         */
+        const attente = delaiDemande(response.headers) ?? ATTENTE_PAR_DEFAUT_MS * 2 ** essai;
+        if (essai >= ESSAIS_APRES_LIMITE - 1) throw new LimiteDeDebit("TMDB", attente);
+        await new Promise((resolve) => setTimeout(resolve, attente));
+        continue;
+      }
+      // Le code HTTP voyage dans le message : sans lui, l'écran ne pouvait pas dire si le
+      // fournisseur était tombé, avait refusé la clé, ou ignorait simplement la fiche demandée.
+      if (!response.ok) throw new Error(`TMDB ${response.status}`);
+      const value = await response.json() as T; responseCache.set(url, { expiresAt: Date.now() + 10 * 60_000, value });
+      if (responseCache.size > 1000) responseCache.delete(responseCache.keys().next().value!);
+      return value;
+    }
   });
 }
 

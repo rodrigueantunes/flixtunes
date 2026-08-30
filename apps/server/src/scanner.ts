@@ -481,7 +481,9 @@ async function backfillRating(catalogId: string, filePath: string, library: Libr
   try {
     const parsed = parseMediaPath(filePath, library.resolvedKind);
     const known = knownExternalMatch(catalogId, true);
-    const bundle = await fetchMetadataWithProviders(parsed, library.language, known);
+    // Analyse automatique : personne ne regarde l'ecran, donc on attend le retour de TMDB
+    // plutot que d'enregistrer une fiche pauvre. Voir `tmdbEnPatientant`.
+    const bundle = await fetchMetadataWithProviders(parsed, library.language, known, { patienter: true });
     const metadata = parsed.kind === "episode" ? bundle?.show : bundle?.movie;
     const root = db.prepare(`WITH RECURSIVE ancestors(id, parent_id, depth) AS (
         SELECT id, parent_id, 0 FROM catalog_items WHERE id = ?
@@ -626,7 +628,8 @@ export async function scanLibraryById(libraryId: string, options: ScanOptions = 
       let proposal: PendingMatchProposal | null = null;
       try {
         const locked = knownExternalMatch(previous?.catalog_id);
-        bundle = applyLocalMetadataFallbacks(parsed, await fetchMetadataWithProviders(parsed, library.language, locked));
+        bundle = applyLocalMetadataFallbacks(parsed,
+          await fetchMetadataWithProviders(parsed, library.language, locked, { patienter: true }));
         if (bundle) result.enriched += 1;
         if (!bundle && !locked) {
           const sourceTitle = parsed.kind === "episode" ? parsed.showTitle : parsed.title;
