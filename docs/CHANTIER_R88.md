@@ -21,7 +21,7 @@ Rien n'est engagé tant que le feu vert n'est pas donné, point par point ou en 
 | 7 | Défilement en haut à l'ouverture | **oui** | faible | — |
 | 8 | Boutons restants (thème) | oui | faible | — |
 | 9 | Sous-titres dédoublés | non — trois pistes possibles | moyen | un cas reproductible |
-| 10 | Live TV et fournisseurs | sans objet | **élevé** | beaucoup, voir §10 |
+| 10 | Live TV et fournisseurs | **la porte est la box, pas l'application** | **élevé** | beaucoup, voir §10 |
 
 Les points 2, 3, 7 et 8 sont petits et sûrs : ils peuvent partir tout de suite. Le 10 est un
 sous-système à lui seul et mérite d'être découpé.
@@ -177,40 +177,88 @@ de là.
 C'est le point le plus gros de la liste — un sous-système, pas une fonction. Et il commence par une
 mauvaise nouvelle qu'il vaut mieux dire maintenant qu'après.
 
-### Ce qui est possible, et ce qui ne l'est pas
+### La porte n'est pas l'application, c'est la box
 
-| Fournisseur | Ce qu'il expose | Verdict |
+Première version de ce document : « Bouygues, non — il faudrait déchiffrer. » **C'était faux**, et par
+deux fois. D'abord parce qu'un abonné ne déchiffre rien : il obtient une licence légitime, et c'est le
+fonctionnement normal du DRM. Ensuite et surtout parce que je regardais la mauvaise porte.
+
+Chaque opérateur a deux visages, et ils n'ont rien à voir :
+
+| | L'application (B.TV, SFR TV, Orange TV) | **La box, sur le réseau local** |
 | --- | --- | --- |
-| **M3U personnel** | ce que vous lui donnez | **oui**, sans réserve — c'est le socle |
-| **Free** | une liste de lecture officielle servie par la Freebox, sur le réseau local | **oui**, si le NAS est sur le même réseau |
-| **Orange** | des flux multidiffusés sur leur réseau, aucune liste officielle | **incertain** — dépend de la Livebox, à vérifier chez vous |
-| **Bouygues B.TV** | une application, des flux protégés par DRM | **non** — il faudrait déchiffrer, ce qu'on ne fera pas |
-| **SFR** | idem | **non**, même raison |
+| Transport | DASH sur Internet | multidiffusion sur le réseau de l'opérateur |
+| Protection | Widevine | **aucune** |
+| Interface | privée, non documentée, changeante | une API locale, sur la box |
+| Numéros de chaîne | à reconstituer | **fournis** |
 
-Je peux écrire l'architecture qui accueille tous les fournisseurs de la même façon, et livrer ceux qui
-marchent réellement. Ce que je ne ferai pas, c'est mettre « Bouygues » dans une liste déroulante pour
-qu'elle affiche une erreur : une fonction qui promet ce qu'elle ne tient pas est pire que son absence
-— c'est la même règle qui a fait éteindre les réglages de sous-titres devant une image en r87.
+C'est la seconde qu'il faut prendre, et elle vaut pour tous les opérateurs à la fois : Bouygues, SFR,
+Orange et Free ont chacun une box qui reçoit la télévision et l'expose sur le réseau. Un seul
+mécanisme les couvre tous, au lieu de quatre intégrations distinctes.
+
+### Ce que votre installation dit, relevé
+
+| Constaté | Valeur |
+| --- | --- |
+| Passerelle du réseau | `10.20.30.1` — un routeur **ASUS RT-BE92U**, le vôtre |
+| Derrière lui | `192.168.1.254` — **Bbox F@st5688b**, micrologiciel 25.1.22 |
+| Son API locale | joignable depuis le réseau : `/api/v1/device` répond sans authentification |
+| `/api/v1/iptv` | **existe** — répond `401`, donc il est là et demande l'identification de la Bbox |
+
+Un `401` et non un `404` : le point d'accès de la télévision est présent sur votre Bbox. Je ne l'ai
+**pas ouvert** — il demande le mot de passe d'administration de votre box, que je n'ai pas à manipuler.
+C'est FlixTunes qui le portera, comme un réglage de fournisseur parmi d'autres, saisi par vous.
+
+**Ce que je n'ai donc pas vérifié :** le contenu de la réponse. J'en attends la liste des chaînes avec
+leurs numéros et leurs adresses de diffusion, parce que c'est ce que ce point d'accès sert ailleurs —
+mais je ne l'ai pas vu, et je ne le présenterai pas comme acquis.
+
+### Le vrai obstacle, maintenant qu'il est nommé
+
+Il n'est plus le DRM : il est **le routage**. Les flux sont multidiffusés, et une multidiffusion ne
+traverse pas un routeur toute seule. Votre NAS est en `10.20.30.x`, la Bbox en `192.168.1.x`, avec
+votre ASUS entre les deux. Il faudra que ce dernier relaie les groupes de multidiffusion — c'est un
+réglage de votre routeur (`IPTV` → relais IGMP), pas du code.
+
+Et deux clients sur trois ne savent pas lire une multidiffusion : ni un navigateur, ni Media3 sur
+Android. VLC le sait, donc le client de bureau s'en tirerait seul — mais un chemin unique vaut mieux
+que trois. **Le NAS devient la passerelle** : il reçoit la multidiffusion et la réémet en HLS, en
+recopiant les flux sans les réencoder. Sur le Celeron, une recopie ne coûte presque rien — c'est un
+réencodage qui coûterait, et il n'y en a pas.
+
+L'application B.TV, elle, reste hors sujet — non pour le DRM, mais parce qu'elle n'a pas d'interface
+publique : il faudrait imiter ce que fait leur application, et cela casserait à leur prochaine
+modification. La box donne la même chose, en plus stable et sans rien imiter.
 
 ### Le découpage que je propose
 
 | Étape | Contenu |
 | --- | --- |
+| **0** | **Une mesure avant tout code** : ouvrir `/api/v1/iptv` avec le mot de passe de la Bbox et voir ce qu'il rend ; vérifier qu'un flux traverse l'ASUS jusqu'au NAS. Une heure, et elle décide de tout le reste |
 | **a** | Le modèle : sources, chaînes, numéros ; la lecture d'un M3U ; les réglages en base |
-| **b** | Le chargement au démarrage, après la médiathèque, avec son pourcentage — comme demandé |
-| **c** | L'écran Live TV sur le Web, placé après Séries TV et **seulement si une source est réglée** |
-| **d** | La recherche et le filtrage par liste de lecture, sur le modèle des genres |
-| **e** | Android TV : la grille, et la saisie du numéro de chaîne à la télécommande |
-| **f** | Le guide des programmes (XMLTV), si vous le voulez — c'est un chantier à part entière |
+| **b** | La passerelle du NAS : multidiffusion reçue, réémise en HLS **sans réencodage** |
+| **c** | Le chargement au démarrage, après la médiathèque, avec son pourcentage — comme demandé |
+| **d** | L'écran Live TV sur le Web, placé après Séries TV et **seulement si une source est réglée** |
+| **e** | La recherche et le filtrage par liste de lecture, sur le modèle des genres |
+| **f** | Android TV : la grille, et la saisie du numéro de chaîne à la télécommande |
+| **g** | Le guide des programmes (XMLTV), si vous le voulez — c'est un chantier à part entière |
+
+L'étape 0 n'est pas une formalité. Si la multidiffusion ne traverse pas votre routeur et qu'aucun
+réglage ne l'y autorise, tout ce qui suit change de forme — et il vaut mieux le savoir avant d'avoir
+écrit la passerelle que pendant.
 
 ### Ce qu'il faut décider avant l'étape a
 
 - **Le guide des programmes** en fait-il partie ? Sans lui, une chaîne est un nom et une image ; avec
-  lui, c'est un vrai téléviseur — et c'est au moins autant de travail que tout le reste.
+  lui, c'est un vrai téléviseur — et c'est au moins autant de travail que tout le reste. La Bbox
+  expose peut-être le sien : à voir à l'étape 0.
 - **L'enregistrement**, non demandé : je pars du principe que non.
-- **Les numéros de chaîne** viennent-ils du M3U quand il les porte (`tvg-chno`), ou se règlent-ils à
-  la main ? Les deux se font ; il faut savoir qui gagne.
+- **Les numéros de chaîne** : la box les fournit, un M3U personnel peut les porter (`tvg-chno`), et on
+  peut vouloir les corriger à la main. Trois sources pour un même numéro — il faut dire qui gagne.
 - **Où vivent les fichiers M3U** sur le NAS, et à quelle fréquence les relire.
+- **Le mot de passe de la Bbox** sera un réglage de FlixTunes, saisi par vous dans l'écran des
+  fournisseurs. Rangé comme les autres secrets du serveur — je ne le manipule pas, et il ne passe
+  nulle part ailleurs.
 
 ---
 
