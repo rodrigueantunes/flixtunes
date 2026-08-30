@@ -91,7 +91,8 @@ function ouvrirFenetres(): void {
     height: 860,
     minWidth: 900,
     minHeight: 560,
-    backgroundColor: "#080b12",
+    // Noire : c'est ce fond qu'on voit dans les bandes d'un film plus large que la fenêtre.
+    backgroundColor: "#000000",
     title: "FlixTunes",
     show: false,
   });

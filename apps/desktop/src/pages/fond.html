@@ -5,9 +5,14 @@
 <title>FlixTunes</title>
 <!--
   La fenêtre du dessous. Elle ne montre jamais rien d'elle-même : elle existe pour recevoir la
-  surface vidéo de VLC, et reste à la couleur de fond de l'application le reste du temps.
+  surface vidéo de VLC.
+
+  Noire, et pas au bleu-nuit de l'application. C'est elle qu'on voit dans les bandes qui restent en
+  haut et en bas d'un film plus large que la fenêtre — un 2.35:1 dans du 16:9 — et une bande bleutée
+  y attire l'œil là où il ne doit y avoir que du vide. Android avait le même défaut, corrigé de la
+  même façon.
 -->
-<style>html, body { margin: 0; height: 100%; background: #080b12; overflow: hidden; }</style>
+<style>html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }</style>
 </head>
 <body></body>
 </html>
