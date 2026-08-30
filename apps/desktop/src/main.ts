@@ -94,6 +94,15 @@ function ouvrirFenetres(): void {
     // Noire : c'est ce fond qu'on voit dans les bandes d'un film plus large que la fenêtre.
     backgroundColor: "#000000",
     title: "FlixTunes",
+    /*
+     * L'enseigne dans la barre des tâches et au coin de la fenêtre.
+     *
+     * C'est cette fenêtre-ci qui la porte, et pas celle du dessus : l'autre est effacée de la barre
+     * des tâches — deux entrées pour une seule application n'auraient aucun sens. Une application
+     * empaquetée hériterait de l'icône de son exécutable, mais lancée depuis le dépôt elle
+     * afficherait celle d'Electron ; la désigner ici vaut dans les deux cas.
+     */
+    icon: path.join(PAGES, "marque", "flixtunes-logo.png"),
     show: false,
   });
   // Une page, et non rien du tout : sans contenu chargé, Electron n'émet jamais « prête à montrer ».

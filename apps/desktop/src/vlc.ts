@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { createServer } from "node:net";
+import path from "node:path";
 
 /**
  * VLC, vu depuis la coque.
@@ -144,18 +145,42 @@ function nombre(valeur: unknown): number {
 /**
  * Où trouver VLC.
  *
- * Sous Windows on le cherche là où son installateur le pose ; sous Linux il est dans le chemin, et le
- * paquet `.deb` le déclarera en dépendance plutôt que de l'embarquer — la distribution le tient à
- * jour, et doubler un lecteur multimédia dans son coin est le meilleur moyen de livrer un jour une
- * faille corrigée ailleurs depuis des mois.
+ * **Celui qu'on emporte d'abord.** L'installateur embarque sa propre copie : c'est elle qu'on a
+ * éprouvée, et c'est elle qui doit servir. Une installation trouvée sur la machine peut être d'une
+ * autre version, amputée par un paquet allégé, ou réglée d'une façon qu'on n'a jamais essayée — s'y
+ * fier ferait dépendre le bon fonctionnement du client de ce que la personne a installé par ailleurs.
+ *
+ * L'ordre est donc : ce qu'on impose explicitement, ce qu'on emporte, puis en dernier recours celui
+ * du système. Ce dernier recours n'est pas du zèle : c'est lui qui fait tourner le client depuis le
+ * dépôt, avant tout empaquetage.
  */
 export function trouverVlc(): string | null {
   const impose = process.env.FLIXTUNES_VLC;
   if (impose && existsSync(impose)) return impose;
-  const candidats = process.platform === "win32"
+  return [...vlcEmbarque(), ...vlcDuSysteme()].find((chemin) => existsSync(chemin)) ?? null;
+}
+
+/**
+ * La copie que l'installateur a posée à côté du programme.
+ *
+ * Deux endroits, et ils correspondent aux deux façons dont ce code s'exécute : dans une application
+ * empaquetée, où Electron range les ressources supplémentaires sous `resourcesPath` ; et depuis le
+ * dépôt, où `packaging/bureau/preparer-vlc.mjs` l'a déposée à côté des sources de la coque.
+ */
+function vlcEmbarque(): string[] {
+  const nom = process.platform === "win32" ? "vlc.exe" : "vlc";
+  const endroits: string[] = [];
+  if (process.resourcesPath) endroits.push(path.join(process.resourcesPath, "vlc", nom));
+  // `__dirname` n'existe pas quand ce fichier est chargé comme module ES — ce que fait le lanceur de
+  // tests, qui se contente d'en retirer les types. La coque, elle, est compilée en CommonJS.
+  if (typeof __dirname === "string") endroits.push(path.join(__dirname, "..", "vendor", "vlc", nom));
+  return endroits;
+}
+
+function vlcDuSysteme(): string[] {
+  return process.platform === "win32"
     ? ["C:\\Program Files\\VideoLAN\\VLC\\vlc.exe", "C:\\Program Files (x86)\\VideoLAN\\VLC\\vlc.exe"]
     : ["/usr/bin/vlc", "/usr/local/bin/vlc", "/snap/bin/vlc"];
-  return candidats.find((chemin) => existsSync(chemin)) ?? null;
 }
 
 /** Un port que personne n'occupe, demandé au système plutôt que deviné. */
@@ -339,7 +364,7 @@ export class Lecteur {
     // De quoi voir ce que VLC choisit comme sortie vidéo et ce dont il se plaint. Muet par défaut :
     // en marche normale, personne ne lit ces lignes.
     if (process.env.FLIXTUNES_VLC_VERBEUX === "1") arguments_.push("-vv");
-    const processus = spawn(binaire, arguments_, { stdio: ["ignore", "ignore", "pipe"] });
+    const processus = spawn(binaire, arguments_, { stdio: ["ignore", "ignore", "pipe"], env: this.environnementDe(binaire) });
     // Le tuyau d'erreur est vidé, et pas seulement ouvert : un tuyau qu'on n'écoute pas se remplit,
     // et le processus qui écrit dedans finit par se bloquer. Un lecteur vidéo qui se fige au bout de
     // quelques minutes est exactement le genre de défaut qu'on ne rattache jamais à sa cause.
@@ -353,6 +378,27 @@ export class Lecteur {
     this.processus = processus;
     await this.attendreInterface();
     this.horloge = setInterval(() => void this.interroger(), PERIODE_ETAT_MS);
+  }
+
+  /**
+   * L'environnement d'un VLC déplacé.
+   *
+   * Sous Windows, un exécutable trouve ses bibliothèques et ses greffons dans son propre dossier :
+   * rien à dire. Sous Linux, non — le chargeur cherche les bibliothèques dans les chemins du système,
+   * et VLC cherche ses greffons là où son paquet les a posés. Un VLC qu'on a déménagé à côté de notre
+   * application ne trouverait donc ni `libvlccore`, ni un seul décodeur.
+   *
+   * On le lui dit. Seulement pour la copie qu'on emporte : un VLC du système sait déjà où il habite.
+   */
+  private environnementDe(binaire: string): NodeJS.ProcessEnv | undefined {
+    if (process.platform === "win32") return undefined;
+    const dossier = path.dirname(binaire);
+    if (!vlcEmbarque().includes(binaire)) return undefined;
+    return {
+      ...process.env,
+      VLC_PLUGIN_PATH: path.join(dossier, "plugins"),
+      LD_LIBRARY_PATH: [dossier, process.env.LD_LIBRARY_PATH].filter(Boolean).join(":"),
+    };
   }
 
   /** VLC ouvre son interface un instant après son processus : on frappe jusqu'à ce qu'on réponde. */

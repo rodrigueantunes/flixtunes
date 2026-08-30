@@ -42,3 +42,9 @@ __pycache__/
 
 # Configuration locale de l outillage : votre choix, retiree du depot le 26 aout 2026.
 .claude/
+
+# La copie de VLC que l'installateur emporte, et les paquets qu'il produit. Cent vingt mégaoctets de
+# binaires reconstruits à la demande par `packaging/bureau/preparer-vlc.mjs` : ils n'ont rien à faire
+# dans l'historique.
+apps/desktop/vendor/
+apps/desktop/release/

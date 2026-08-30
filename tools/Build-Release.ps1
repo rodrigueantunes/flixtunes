@@ -110,6 +110,24 @@ try {
   dotnet build "apps/windows/FlixTunes.Windows.csproj" -c Release
   dotnet publish "apps/windows/FlixTunes.Windows.csproj" -p:PublishProfile=Windows-x64 -o (Join-Path $Artifacts "windows-x64")
 
+  # --- 5 bis. Le client de bureau, avec son VLC ------------------------------------------------
+  #
+  # L'installateur emporte tout : le moteur Electron, la coque, et une copie taillee de VLC. Rien
+  # n'est demande a la machine qui le recoit — c'est la seule facon de donner un programme a
+  # quelqu'un sans lui donner aussi une liste de prealables.
+  #
+  # Seule la cible du systeme sur lequel on construit est produite. Le .deb et l'AppImage sont
+  # configures mais s'assemblent sur une machine Linux, avec des binaires VLC Linux : ceux d'ici ne
+  # leur serviraient a rien.
+  Push-Location (Join-Path $root "apps/desktop")
+  try {
+    & node (Join-Path $root "packaging/bureau/construire.mjs")
+    if ($LASTEXITCODE -ne 0) { throw "La construction du client de bureau a echoue." }
+  } finally { Pop-Location }
+  $paquetBureau = Get-ChildItem (Join-Path $root "apps/desktop/release") -Filter "*.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
+  if (-not $paquetBureau) { throw "Aucun installateur de bureau produit." }
+  Copy-Item $paquetBureau.FullName (Join-Path $Artifacts $paquetBureau.Name) -Force
+
   # --- 6. Android : meme revision que le paquet du NAS -----------------------------------------
   $env:FLIXTUNES_PACKAGE_REVISION = $Revision
   & (Join-Path $root "apps/android/build-apk.ps1")

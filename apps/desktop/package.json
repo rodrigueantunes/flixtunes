@@ -8,10 +8,65 @@
     "build": "tsc -p tsconfig.json && node scripts/copier-pages.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test --experimental-strip-types src/*.test.ts",
-    "start": "pnpm build && electron ."
+    "start": "pnpm build && electron .",
+    "vlc": "node ../../packaging/bureau/preparer-vlc.mjs",
+    "paquet": "node ../../packaging/bureau/construire.mjs"
   },
   "devDependencies": {
-    "electron": "^33.0.0",
-    "typescript": "^5.9.2"
-  }
+    "electron": "33.4.11",
+    "typescript": "^5.9.2",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "tv.flixtunes.bureau",
+    "productName": "FlixTunes",
+    "copyright": "FlixTunes — GPL v3",
+    "directories": {
+      "output": "release",
+      "buildResources": "ressources-paquet"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "vendor/vlc",
+        "to": "vlc"
+      },
+      {
+        "from": "../../LICENSE",
+        "to": "LICENSE"
+      }
+    ],
+    "win": {
+      "target": [
+        "msi"
+      ],
+      "icon": "ressources-paquet/icon.png"
+    },
+    "msi": {
+      "oneClick": false,
+      "perMachine": false,
+      "runAfterFinish": true
+    },
+    "linux": {
+      "target": [
+        "deb",
+        "AppImage"
+      ],
+      "icon": "ressources-paquet/icon.png",
+      "category": "AudioVideo",
+      "synopsis": "Votre cinéma local",
+      "description": "Client de bureau FlixTunes : l'interface du client Web, la lecture par VLC embarqué."
+    },
+    "deb": {
+      "depends": []
+    },
+    "artifactName": "FlixTunes-Bureau-${version}-${arch}.${ext}",
+    "electronVersion": "33.4.11",
+    "npmRebuild": false
+  },
+  "author": "Rodrigue Antunes",
+  "license": "GPL-3.0-or-later"
 }
