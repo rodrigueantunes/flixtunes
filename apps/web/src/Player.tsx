@@ -449,9 +449,17 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
   const encodedEnd = session?.mode === "direct" ? timelineDuration : Math.min(mediaDuration || 0, timelineDuration || Infinity);
   const percentOf = (seconds: number) => (timelineDuration > 0 ? Math.max(0, Math.min(100, seconds / timelineDuration * 100)) : 0);
 
-  /** Un sous-titre image, ou texte non convertible, impose une incrustation donc une nouvelle session. */
+  /**
+   * Un sous-titre image, ou texte non convertible, impose une incrustation donc une nouvelle session.
+   *
+   * Sauf quand VLC décode : un sous-titre **du fichier** est alors dessiné par lui, et c'est la
+   * conversion la plus chère de toutes qui disparaît — le NAS réencodait le film entier pour y
+   * incruster des images qui ne peuvent pas devenir du texte. Un sous-titre **externe** reste à
+   * incruster : c'est un fichier à part, que VLC ne trouvera pas dans le flux qu'on lui donne.
+   */
   const requiresBurnIn = useCallback((playbackInfo: PlaybackInfo, streamIndex: number | null, externalId: number | null) => {
     if (streamIndex != null) {
+      if (surfaceVlc) return false;
       const stream = playbackInfo.streams.find((candidate) => candidate.type === "subtitle" && candidate.index === streamIndex);
       return Boolean(stream && !stream.canExtractAsWebVtt);
     }
@@ -494,6 +502,16 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
       const externe = externalChoisi?.canConvertToWebVtt
         ? api.externalSubtitleUrl(media.id, externalChoisi.id, profile.id, decalage, subtitleEncodingRef.current) : null;
       setUrlSousTitreBureau(interne ?? externe);
+      /*
+       * Un sous-titre image du fichier, confié à VLC.
+       *
+       * Il ne peut pas devenir du texte : le lecteur ne saurait pas le dessiner, et le faire
+       * incruster par le serveur coûterait un réencodage du film entier. VLC le dessine à sa façon —
+       * les réglages de taille et de couleur n'y peuvent rien, mais ils n'y pouvaient rien non plus
+       * sur une incrustation.
+       */
+      const image = internalChoisi && !internalChoisi.canExtractAsWebVtt ? internalChoisi.index : -1;
+      surfaceVlc?.choisirPisteSousTitre(image);
       return;
     }
     video.querySelectorAll("track").forEach((track) => track.remove());
@@ -523,7 +541,7 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
     for (const textTrack of Array.from(video.textTracks)) {
       textTrack.mode = video.querySelector("track") ? "showing" : "disabled";
     }
-  }, [media.id]);
+  }, [media.id, surfaceVlc]);
 
   const attachSource = useCallback(async (playback: PlaybackSession, playbackInfo: PlaybackInfo) => {
     const video = videoRef.current;
@@ -550,7 +568,24 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
     if (surface) {
       setQualityLevels([]);
       setQualityLevel(-1);
-      const reponse = await surface.ouvrir(source);
+      /*
+       * Les pistes voulues partent **avec** l'ouverture, et deux défauts constatés l'expliquent.
+       *
+       * En annonçant que le client sait choisir, on a dispensé le serveur d'isoler la piste : il sert
+       * le fichier entier, toutes langues comprises. Ne rien désigner faisait démarrer le film dans
+       * la première langue du fichier — en anglais alors que le profil demande le français. Le
+       * désigner juste après l'ouverture le faisait démarrer **sans son**, VLC n'ayant pas encore lu
+       * le format du flux audio.
+       *
+       * Seulement en lecture directe : un flux converti ne porte que la piste que le serveur a
+       * retenue, et il n'y a rien à choisir.
+       */
+      const direct = playback.mode === "direct";
+      const sousTitreImage = playbackInfo.streams.find((flux) => flux.type === "subtitle"
+        && flux.index === subtitleIndexRef.current && !flux.canExtractAsWebVtt);
+      const reponse = await surface.ouvrir(source, direct
+        ? { audio: audioIndexRef.current, sousTitre: sousTitreImage?.index ?? -1 }
+        : {});
       setMessage(reponse.ok ? null : reponse.message ?? "Lecture impossible");
       applySubtitleTracks(playbackInfo);
       return;
@@ -1142,6 +1177,20 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
     setAudioIndex(streamIndex);
     sessionStorage.setItem(audioPreferenceKey(profile.id, media.id), String(streamIndex));
     registerInteraction();
+    /*
+     * Quand VLC lit le fichier tel quel, changer de langue est immédiat.
+     *
+     * Toutes les pistes sont là : il suffit de lui désigner la bonne. Le chemin d'avant redemandait
+     * une session au serveur, qui recopiait le film pour isoler une piste — quelques secondes
+     * d'attente et un flux de plus à produire, pour un geste qui ne coûte rien.
+     *
+     * Sur un flux converti, en revanche, la piste a été choisie à l'encodage : il n'y en a qu'une, et
+     * il faut bien redemander. Même chose si VLC ne connaît pas ce numéro.
+     */
+    if (surfaceVlc && session?.mode === "direct" && surfaceVlc.choisirPisteAudio(streamIndex)) {
+      setMessage(null);
+      return;
+    }
     setMessage("Changement de piste audio…");
     void start(info, modePreferenceRef.current);
   };
@@ -1411,7 +1460,7 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
         {audioStreams.map((stream) => <label key={stream.index}><input type="radio" name="audio" checked={audioIndex === stream.index} onChange={() => changeAudioTrack(stream.index)} />{languageName(stream)} <small>{streamTechnology(stream)} · {stream.channels ?? "?"} canaux</small></label>)}
         <h3>Sous-titres</h3>
         <label><input type="radio" name="subtitle" checked={subtitleIndex == null && externalSubtitleIndex == null} onChange={() => changeSubtitleSelection(null, null)} />Désactivés</label>
-        {subtitleStreams.map((stream) => <label key={stream.index}><input type="radio" name="subtitle" checked={subtitleIndex === stream.index} onChange={() => changeSubtitleSelection(stream.index, null)} />{languageName(stream)} <small>{stream.canExtractAsWebVtt ? "Texte" : "Incrustation vidéo"}{stream.isForced ? " · forcé" : ""}{stream.hearingImpaired ? " · SME" : ""}</small></label>)}
+        {subtitleStreams.map((stream) => <label key={stream.index}><input type="radio" name="subtitle" checked={subtitleIndex === stream.index} onChange={() => changeSubtitleSelection(stream.index, null)} />{languageName(stream)} <small>{stream.canExtractAsWebVtt ? "Texte" : surfaceVlc ? "Image" : "Incrustation vidéo"}{stream.isForced ? " · forcé" : ""}{stream.hearingImpaired ? " · SME" : ""}</small></label>)}
         {info.externalSubtitles?.map((subtitle) => <label key={`external-${subtitle.id}`}><input type="radio" name="subtitle" checked={externalSubtitleIndex === subtitle.id} onChange={() => changeSubtitleSelection(null, subtitle.id)} />{subtitle.language?.toUpperCase() || "Externe"} <small>{subtitle.name} · {subtitle.kind === "image" ? "incrustation vidéo" : `${subtitle.format.toUpperCase()} · ${subtitle.encoding ?? "encodage auto"}`}{subtitle.forced ? " · forcé" : ""}{subtitle.hearingImpaired ? " · SME" : ""}</small></label>)}
         <div className="subtitle-controls">
           <label>Synchronisation <output>{subtitleOffset > 0 ? "+" : ""}{subtitleOffset.toFixed(1)} s</output><input type="range" min="-30" max="30" step="0.5" value={Math.max(-30, Math.min(30, subtitleOffset))} onChange={(event) => { const value = Number(event.target.value); subtitleOffsetRef.current = value; setSubtitleOffset(value); }} /><input aria-label="Décalage précis en secondes" type="number" min="-600" max="600" step="0.1" value={subtitleOffset} onChange={(event) => { const value = Math.max(-600, Math.min(600, Number(event.target.value))); subtitleOffsetRef.current = value; setSubtitleOffset(value); }} /></label>

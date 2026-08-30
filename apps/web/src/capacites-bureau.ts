@@ -14,10 +14,6 @@ import type { MediaStream, PlaybackCapabilities } from "@flixtunes/contracts";
  * Une capacité annoncée est une promesse : le serveur s'y fie et cesse de convertir. Trois promesses
  * ont été écartées faute de pouvoir les tenir aujourd'hui.
  *
- * - **Le choix d'une piste audio dans un fichier servi entier.** VLC en est capable, mais le pont
- *   entre le lecteur Web et VLC ne sait pas encore lui désigner une piste. L'annoncer ferait servir
- *   le fichier entier en laissant au client le soin de choisir — et le menu « Langue » deviendrait
- *   sans effet. On laisse donc le serveur isoler la piste, comme pour un navigateur.
  * - **Dolby Vision.** VLC ne le restitue pas fidèlement ; l'annoncer donnerait une image délavée.
  * - **Dolby Atmos et DTS:X.** Ils voyagent dans un flux TrueHD ou EAC3 dont VLC décode le tronc
  *   commun. Sans transmission directe vers un amplificateur, la promesse serait creuse.
@@ -25,6 +21,17 @@ import type { MediaStream, PlaybackCapabilities } from "@flixtunes/contracts";
  * La plage dynamique, elle, est mesurée et non supposée : c'est **l'écran** qui décide, et Chromium
  * le sait aussi bien dans la coque que dans un onglet. Annoncer le HDR devant un écran qui ne
  * l'affiche pas donnerait des couleurs ternes, ce qu'aucune conversion ne rattraperait.
+ *
+ * ## Deux annonces qui suppriment une conversion
+ *
+ * **Le choix d'une piste audio dans un fichier servi entier.** Un navigateur ne sait pas activer une
+ * piste secondaire d'un Matroska : le serveur doit l'isoler dans un remux, et un film entier est
+ * recopié pour changer de langue. VLC sait choisir, le pont sait le lui dire, et le fichier part
+ * donc tel quel — le changement de langue devient immédiat au lieu de rouvrir une session.
+ *
+ * **Les sous-titres image.** Un PGS ne peut pas devenir du texte : pour un navigateur, il faut
+ * l'**incruster**, c'est-à-dire réencoder le film. VLC le dessine. C'est la conversion la plus chère
+ * de toutes qui disparaît, et pour une bonne partie des Blu-ray de la médiathèque.
  */
 
 /** Les conteneurs que le démultiplexeur de VLC ouvre. Le contrat n'en connaît pas d'autres. */
@@ -90,11 +97,18 @@ export function capacitesBureau(
     losslessAudio: !forceTranscode,
     maxVideoBitrate: null,
     audioStreamIndex,
-    // Voir l'en-tête : VLC saurait, le pont ne sait pas encore le lui dire.
-    directAudioStreamSelection: false,
+    // VLC choisit sa piste dans le fichier entier : le serveur n'a plus à le recopier pour l'isoler.
+    directAudioStreamSelection: !forceTranscode,
     subtitleStreamIndex: subtitle?.index ?? null,
     externalSubtitleId,
-    burnSubtitles: Boolean((subtitle && !subtitle.canExtractAsWebVtt) || burnExternalSubtitle),
+    /*
+     * Un sous-titre **interne** en image est dessiné par VLC : rien à incruster, donc rien à
+     * réencoder. Un sous-titre **externe** en image reste à incruster — c'est un fichier à part, que
+     * VLC ne trouvera pas tout seul dans le flux qu'on lui donne.
+     */
+    burnSubtitles: forceTranscode
+      ? Boolean((subtitle && !subtitle.canExtractAsWebVtt) || burnExternalSubtitle)
+      : burnExternalSubtitle,
     subtitleOffsetSeconds,
     networkMbps: null,
     hlsSegmentContainer: "fmp4",

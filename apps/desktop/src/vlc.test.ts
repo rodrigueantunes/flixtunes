@@ -84,6 +84,54 @@ test("l'état initial n'annonce ni ouverture ni erreur", () => {
   assert.equal(ETAT_INITIAL.vitesse, 1);
 });
 
+/**
+ * Le relevé réel d'un Matroska à dix pistes, tel que VLC le rend sur une installation française.
+ *
+ * Le serveur décrit le même fichier ainsi : vidéo 0, audio 1 (eng), 2 (fre), 3 (spa), sous-titres 4
+ * (eng), 5 (fre), 6 (spa), 7 (spa), 8 (fre), 9 (spa). Les numéros et les langues se correspondent un
+ * à un — y compris le « fre » isolé en huitième position. C'est cette correspondance qui permet au
+ * client Web de désigner une piste par l'index qu'il connaît déjà.
+ */
+const DIX_PISTES = {
+  state: "playing", time: 62, length: 6535, position: 0.0095, rate: 1,
+  stats: { displayedpictures: 1500, lostpictures: 0 },
+  information: { chapter: 0, title: 0, category: {
+    meta: { filename: "10 000" },
+    "Flux 0": { Type_: "Vidéo", Codec_: "MPEG-H Part2/HEVC (H.265) (hevc)" },
+    "Flux 1": { Type_: "Audio", Langue_: "Anglais" },
+    "Flux 2": { Type_: "Audio", Langue_: "Français" },
+    "Flux 3": { Type_: "Audio", Langue_: "Espagnol" },
+    "Flux 4": { Type_: "Sous-titres ", Langue_: "Anglais" },
+    "Flux 5": { Type_: "Sous-titres ", Langue_: "Français" },
+    "Flux 6": { Type_: "Sous-titres ", Langue_: "Espagnol" },
+    "Flux 7": { Type_: "Sous-titres ", Langue_: "Espagnol" },
+    "Flux 8": { Type_: "Sous-titres ", Langue_: "Français" },
+    "Flux 9": { Type_: "Sous-titres ", Langue_: "Espagnol" },
+  } },
+};
+
+test("relève les numéros des pistes, dans l'ordre", () => {
+  assert.deepEqual(lireStatut(DIX_PISTES)?.pistes, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+});
+
+test("ne lit que le nombre, jamais les libellés de VLC", () => {
+  // « Flux » devient « Stream » sur une installation anglaise, et autre chose ailleurs ; ni
+  // `--language=en` ni rien d'autre ne le fige. S'y fier ferait dépendre le choix des pistes de la
+  // langue du système — un défaut qui n'apparaîtrait que chez quelqu'un d'autre.
+  const anglais = { ...DIX_PISTES, information: { category: {
+    "Stream 0": { Type: "Video" }, "Stream 1": { Type: "Audio" }, "Stream 12": { Type: "Subtitle" },
+  } } };
+  assert.deepEqual(lireStatut(anglais)?.pistes, [0, 1, 12]);
+});
+
+test("aucune piste tant que rien n'est ouvert, et jamais d'exception", () => {
+  assert.deepEqual(lireStatut({ ...DIX_PISTES, information: undefined })?.pistes, []);
+  assert.deepEqual(lireStatut({ ...DIX_PISTES, information: { category: null } })?.pistes, []);
+  // « meta » n'est pas une piste : il ne porte aucun nombre, et se trouve donc écarté sans règle
+  // particulière.
+  assert.deepEqual(lireStatut({ ...DIX_PISTES, information: { category: { meta: {} } } })?.pistes, []);
+});
+
 test("la recherche de VLC rend un chemin ou rien, jamais une devinette", () => {
   // Sur la machine de développement VLC est installé ; sur une machine de construction, non. Les
   // deux réponses sont acceptables — ce qui ne le serait pas, c'est un chemin qui n'existe pas.

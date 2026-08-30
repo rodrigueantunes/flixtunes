@@ -212,12 +212,18 @@ app.whenReady().then(() => {
    * disque. On n'accepte donc que ce qui vient du serveur auquel la coque est connectée. Les autres
    * commandes ne portent qu'un nombre et ne peuvent rien ouvrir.
    */
-  ipcMain.handle("flixtunes:lecteur-ouvrir", async (_evenement, uri: unknown) => {
+  ipcMain.handle("flixtunes:lecteur-ouvrir", async (_evenement, uri: unknown, pistes: unknown) => {
     const serveur = lireReglages(app.getPath("userData")).serveur;
     if (typeof uri !== "string" || !memeServeur(uri, serveur)) {
       return { ok: false, message: "Ce flux ne vient pas du serveur FlixTunes." };
     }
-    return lecteur.ouvrir(uri);
+    // Ce qui traverse le pont est relu ici : la page qui l'emprunte vient du réseau, et un numéro de
+    // piste est la seule chose qu'on accepte d'elle en plus de l'adresse.
+    const lu = (pistes ?? {}) as { audio?: unknown; sousTitre?: unknown };
+    return lecteur.ouvrir(uri, {
+      audio: typeof lu.audio === "number" ? lu.audio : null,
+      sousTitre: typeof lu.sousTitre === "number" ? lu.sousTitre : null,
+    });
   });
   ipcMain.handle("flixtunes:lecteur-lire", () => lecteur.lire());
   ipcMain.handle("flixtunes:lecteur-pause", () => lecteur.pause());
@@ -227,6 +233,10 @@ app.whenReady().then(() => {
     lecteur.vitesse(typeof valeur === "number" ? valeur : 1));
   ipcMain.handle("flixtunes:lecteur-volume", (_evenement, valeur: unknown) =>
     lecteur.volume(typeof valeur === "number" ? valeur : 1));
+  ipcMain.handle("flixtunes:lecteur-piste-audio", (_evenement, numero: unknown) =>
+    lecteur.pisteAudio(typeof numero === "number" ? numero : -1));
+  ipcMain.handle("flixtunes:lecteur-piste-sous-titre", (_evenement, numero: unknown) =>
+    lecteur.pisteSousTitre(typeof numero === "number" ? numero : -1));
   ipcMain.handle("flixtunes:lecteur-fermer", () => lecteur.fermer());
   ipcMain.handle("flixtunes:lecteur-etat-courant", () => (trouverVlc() ? lecteur.etatCourant() : { ...ETAT_INITIAL }));
 

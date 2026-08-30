@@ -21,18 +21,31 @@ export interface EtatLecteurBureau {
   vitesse: number;
   imagesAffichees: number;
   imagesPerdues: number;
+  /** Les numéros des pistes du flux — les mêmes que les index du serveur. */
+  pistes: number[];
   termine: boolean;
   erreur: string | null;
 }
 
+/** Les pistes voulues, désignées par l'index qu'en donne le serveur. */
+export interface PistesVoulues {
+  audio?: number | null;
+  sousTitre?: number | null;
+}
+
 /** Commander VLC. Le vocabulaire est celui d'une balise vidéo, et c'est délibéré. */
 export interface PontLecteur {
-  ouvrir(uri: string): Promise<{ ok: boolean; message?: string }>;
+  /** Les pistes sont désignées à l'ouverture : les changer ensuite se fait pendant que VLC monte
+   *  encore son flux, et le film démarre sans son. */
+  ouvrir(uri: string, pistes?: PistesVoulues): Promise<{ ok: boolean; message?: string }>;
   lire(): Promise<void>;
   pause(): Promise<void>;
   allerA(secondes: number): Promise<void>;
   vitesse(valeur: number): Promise<void>;
   volume(valeur: number): Promise<void>;
+  /** Choisit une piste par son numéro, ou la coupe avec `-1`. */
+  pisteAudio(numero: number): Promise<void>;
+  pisteSousTitre(numero: number): Promise<void>;
   fermer(): Promise<void>;
   etat(): Promise<EtatLecteurBureau>;
   surEtat(rappel: (etat: EtatLecteurBureau) => void): () => void;

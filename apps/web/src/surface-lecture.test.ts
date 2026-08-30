@@ -15,12 +15,17 @@ function pontDouble() {
   const commandes: string[] = [];
   let pousser: (etat: EtatLecteurBureau) => void = () => undefined;
   const pont: PontLecteur = {
-    ouvrir: (uri) => { commandes.push(`ouvrir ${uri}`); return Promise.resolve({ ok: true }); },
+    ouvrir: (uri, pistes) => {
+      commandes.push(`ouvrir ${uri} pistes audio=${pistes?.audio ?? "-"} sous-titre=${pistes?.sousTitre ?? "-"}`);
+      return Promise.resolve({ ok: true });
+    },
     lire: () => { commandes.push("lire"); return Promise.resolve(); },
     pause: () => { commandes.push("pause"); return Promise.resolve(); },
     allerA: (secondes) => { commandes.push(`allerA ${secondes}`); return Promise.resolve(); },
     vitesse: (valeur) => { commandes.push(`vitesse ${valeur}`); return Promise.resolve(); },
     volume: (valeur) => { commandes.push(`volume ${valeur}`); return Promise.resolve(); },
+    pisteAudio: (numero) => { commandes.push(`pisteAudio ${numero}`); return Promise.resolve(); },
+    pisteSousTitre: (numero) => { commandes.push(`pisteSousTitre ${numero}`); return Promise.resolve(); },
     fermer: () => { commandes.push("fermer"); return Promise.resolve(); },
     etat: () => Promise.resolve(REPOS),
     surEtat: (rappel) => { pousser = rappel; return () => { pousser = () => undefined; }; },
@@ -30,7 +35,7 @@ function pontDouble() {
 
 const REPOS: EtatLecteurBureau = {
   ouvert: false, position: 0, duree: 0, enLecture: false, vitesse: 1,
-  imagesAffichees: 0, imagesPerdues: 0, termine: false, erreur: null,
+  imagesAffichees: 0, imagesPerdues: 0, pistes: [], termine: false, erreur: null,
 };
 
 describe("la lecture confiée à VLC, vue par le lecteur Web", () => {
@@ -39,7 +44,7 @@ describe("la lecture confiée à VLC, vue par le lecteur Web", () => {
     // c'est précisément le cas dans la coque. Passé tel quel, VLC n'en ferait rien.
     const { pont, commandes } = pontDouble();
     await new SurfaceVlc(pont).ouvrir("/api/playback/abc/master.m3u8");
-    expect(commandes[0]).toBe(`ouvrir ${new URL("/api/playback/abc/master.m3u8", window.location.href).toString()}`);
+    expect(commandes[0]).toContain(`ouvrir ${new URL("/api/playback/abc/master.m3u8", window.location.href).toString()}`);
   });
 
   it("remet le son à plein à chaque ouverture", () => {
@@ -155,6 +160,87 @@ describe("la lecture confiée à VLC, vue par le lecteur Web", () => {
     expect(commandes).toEqual([]);
     surface.playbackRate = 1.5;
     expect(commandes).toEqual(["vitesse 1.5"]);
+  });
+
+  it("ne désigne à VLC qu'une piste qu'il connaît", () => {
+    /*
+     * Les numéros de VLC et ceux du serveur se correspondent — vérifié flux par flux sur un Matroska
+     * à dix pistes. Mais rien ne le garantit d'un démultiplexeur exotique, et se tromper de numéro
+     * couperait le son en croyant changer de langue. On refuse plutôt, et le lecteur redemande une
+     * session au serveur : le chemin d'hier, plus lent mais juste.
+     */
+    const { pont, pousser, commandes } = pontDouble();
+    const surface = new SurfaceVlc(pont);
+    pousser({ duree: 100, pistes: [0, 1, 2] });
+    expect(surface.choisirPisteAudio(2)).toBe(true);
+    expect(commandes).toContain("pisteAudio 2");
+    expect(surface.choisirPisteAudio(7)).toBe(false);
+    expect(commandes).not.toContain("pisteAudio 7");
+  });
+
+  it("désigne les pistes à l'ouverture, et non après", () => {
+    /*
+     * Deux défauts constatés en service, dans cet ordre.
+     *
+     * Ne rien désigner faisait démarrer le film dans la première langue du fichier — en anglais
+     * alors que le profil demande le français. Le désigner juste **après** l'ouverture le faisait
+     * démarrer sans son : VLC n'avait pas encore lu le format du flux audio, et sa trace disait
+     * « too low audio sample frequency (0) » puis « failed to create audio output ».
+     *
+     * Passées en options de l'entrée, les pistes sont prises au moment où le flux s'ouvre : aucun
+     * décodeur à tuer, aucune sortie audio à refaire.
+     */
+    const { pont, commandes } = pontDouble();
+    const surface = new SurfaceVlc(pont);
+    return surface.ouvrir("/api/x", { audio: 2, sousTitre: 5 }).then(() => {
+      expect(commandes[0]).toContain("pistes audio=2 sous-titre=5");
+      // Et rien de plus : pas de changement de piste dans la foulée.
+      expect(commandes.filter((c) => c.startsWith("pisteAudio"))).toEqual([]);
+    });
+  });
+
+  it("ne redemande pas une piste déjà en place", () => {
+    // Le lecteur réapplique ses sous-titres à chaque réglage — décalage, encodage, position. Chaque
+    // redemande rouvrirait le flux correspondant pour rien.
+    const { pont, commandes } = pontDouble();
+    const surface = new SurfaceVlc(pont);
+    return surface.ouvrir("/api/x", { audio: 2, sousTitre: -1 }).then(() => {
+      commandes.length = 0;
+      expect(surface.choisirPisteAudio(2)).toBe(true);
+      expect(surface.choisirPisteSousTitre(-1)).toBe(true);
+      expect(commandes).toEqual([]);
+    });
+  });
+
+  it("sait toujours éteindre les sous-titres, sans rien attendre", () => {
+    // `-1` n'est pas une piste : c'est l'absence de piste, et elle n'a pas à figurer dans une liste.
+    // L'éteindre tout de suite compte — c'est ce qui empêche VLC de dessiner ses propres répliques
+    // par-dessus celles que le lecteur affiche, quand on passe d'un sous-titre image à un texte.
+    const { pont, pousser, commandes } = pontDouble();
+    const surface = new SurfaceVlc(pont);
+    return surface.ouvrir("/api/x", { sousTitre: 5 }).then(() => {
+      commandes.length = 0;
+      expect(surface.choisirPisteSousTitre(-1)).toBe(true);
+      expect(commandes).toEqual(["pisteSousTitre -1"]);
+      // Et une piste que VLC a bel et bien listée sans l'avoir : refusée.
+      pousser({ duree: 100, pistes: [0, 1] });
+      expect(surface.choisirPisteSousTitre(4)).toBe(false);
+    });
+  });
+
+  it("oublie les pistes du média précédent à chaque ouverture", () => {
+    // Deux épisodes n'ont aucune raison d'avoir la même numérotation. Garder l'ancienne liste ferait
+    // désigner un numéro qui ne veut plus rien dire dans le nouveau fichier.
+    const { pont, pousser, commandes } = pontDouble();
+    const surface = new SurfaceVlc(pont);
+    pousser({ duree: 100, pistes: [0, 1, 2] });
+    return surface.ouvrir("/api/z").then(() => {
+      commandes.length = 0;
+      surface.choisirPisteAudio(2);
+      // Le nouveau flux n'a que deux pistes : le souhait n'est pas exaucé, et il est abandonné.
+      pousser({ duree: 200, pistes: [0, 1] });
+      expect(commandes).not.toContain("pisteAudio 2");
+    });
   });
 
   it("repart de zéro à chaque ouverture", () => {

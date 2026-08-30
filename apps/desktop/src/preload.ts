@@ -23,6 +23,8 @@ export interface EtatLecteurBureau {
   vitesse: number;
   imagesAffichees: number;
   imagesPerdues: number;
+  /** Les numéros des pistes du flux — les mêmes que ceux du serveur. */
+  pistes: number[];
   termine: boolean;
   erreur: string | null;
 }
@@ -34,15 +36,40 @@ export interface EtatLecteurBureau {
  * lecteur du Web sait déjà dire. Lui apprendre une seconde langue aurait été le premier pas vers deux
  * lecteurs à tenir à jour.
  */
+/** Les pistes voulues, désignées par l'index qu'en donne le serveur. */
+export interface PistesVoulues {
+  audio?: number | null;
+  /** `-1` ou absent : aucun sous-titre dessiné par VLC. */
+  sousTitre?: number | null;
+}
+
 export interface PontLecteur {
-  /** Ouvre un flux — l'adresse doit être celle du serveur auquel la coque est connectée. */
-  ouvrir(uri: string): Promise<{ ok: boolean; message?: string }>;
+  /**
+   * Ouvre un flux — l'adresse doit être celle du serveur auquel la coque est connectée.
+   *
+   * Les pistes voulues sont passées **ici** et non après : les changer une fois le flux ouvert
+   * revenait à le faire pendant que VLC en découvrait encore le format, et le film démarrait sans
+   * son.
+   */
+  ouvrir(uri: string, pistes?: PistesVoulues): Promise<{ ok: boolean; message?: string }>;
   lire(): Promise<void>;
   pause(): Promise<void>;
   allerA(secondes: number): Promise<void>;
   vitesse(valeur: number): Promise<void>;
   /** De 0 à 1, comme une balise vidéo. */
   volume(valeur: number): Promise<void>;
+  /**
+   * Choisit une piste par son numéro, ou la coupe avec `-1`.
+   *
+   * C'est ce qui dispense le serveur de recopier le fichier pour en isoler une piste : il le sert
+   * entier, et le choix se fait ici.
+   */
+  pisteAudio(numero: number): Promise<void>;
+  /**
+   * Un sous-titre **image** ne peut pas devenir du texte, et VLC sait le dessiner. Le NAS n'a donc
+   * plus à réencoder le film entier pour l'y incruster.
+   */
+  pisteSousTitre(numero: number): Promise<void>;
   /** Arrête la lecture : la fenêtre redevient noire, VLC reste prêt pour la suivante. */
   fermer(): Promise<void>;
   etat(): Promise<EtatLecteurBureau>;
@@ -88,12 +115,14 @@ const CANAL_ETAT = "flixtunes:etat-lecture";
 const CANAL_PLEIN_ECRAN = "flixtunes:etat-plein-ecran";
 
 const lecteur: PontLecteur = {
-  ouvrir: (uri) => ipcRenderer.invoke("flixtunes:lecteur-ouvrir", uri) as Promise<{ ok: boolean; message?: string }>,
+  ouvrir: (uri, pistes) => ipcRenderer.invoke("flixtunes:lecteur-ouvrir", uri, pistes) as Promise<{ ok: boolean; message?: string }>,
   lire: () => ipcRenderer.invoke("flixtunes:lecteur-lire") as Promise<void>,
   pause: () => ipcRenderer.invoke("flixtunes:lecteur-pause") as Promise<void>,
   allerA: (secondes) => ipcRenderer.invoke("flixtunes:lecteur-aller", secondes) as Promise<void>,
   vitesse: (valeur) => ipcRenderer.invoke("flixtunes:lecteur-vitesse", valeur) as Promise<void>,
   volume: (valeur) => ipcRenderer.invoke("flixtunes:lecteur-volume", valeur) as Promise<void>,
+  pisteAudio: (numero) => ipcRenderer.invoke("flixtunes:lecteur-piste-audio", numero) as Promise<void>,
+  pisteSousTitre: (numero) => ipcRenderer.invoke("flixtunes:lecteur-piste-sous-titre", numero) as Promise<void>,
   fermer: () => ipcRenderer.invoke("flixtunes:lecteur-fermer") as Promise<void>,
   etat: () => ipcRenderer.invoke("flixtunes:lecteur-etat-courant") as Promise<EtatLecteurBureau>,
   surEtat: (rappel) => {
@@ -108,7 +137,7 @@ const lecteur: PontLecteur = {
 const vlcPresent = ipcRenderer.sendSync("flixtunes:vlc-present") === true;
 
 const pont: PontBureau = {
-  version: "2",
+  version: "3",
   serveur: () => ipcRenderer.invoke("flixtunes:serveur") as Promise<string | null>,
   definirServeur: (adresse) =>
     ipcRenderer.invoke("flixtunes:definir-serveur", adresse) as Promise<{ ok: boolean; adresse?: string; message?: string }>,

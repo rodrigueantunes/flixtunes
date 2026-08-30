@@ -1,5 +1,16 @@
 # Journal des versions
 
+## 0.5.6.r87 — VLC choisit ses pistes, et le NAS cesse de recopier des films pour ça
+
+- **Changer de langue est devenu immédiat.** Un navigateur ne sait pas activer une piste secondaire d'un Matroska : le serveur devait l'isoler dans un remux, et recopiait le film entier à chaque changement. VLC choisit dans le fichier tel quel. Constaté à l'écran : l'entrée de VLC ne change pas, l'horloge ne bronche pas, et le serveur ne reçoit aucune nouvelle demande.
+- **Un sous-titre image ne fait plus réencoder le film.** Un PGS ne peut pas devenir du texte : pour un navigateur il faut l'**incruster**, c'est-à-dire tout réencoder — la conversion la plus chère de toutes, sur le processeur d'un boîtier de salon. VLC le dessine, et la session reste en lecture directe.
+- **Les numéros de piste sont ceux du serveur, et on l'a vérifié deux fois** plutôt que de le supposer : les dix flux d'un Matroska comparés un à un — mêmes numéros, mêmes langues des deux côtés, y compris le « fre » isolé en huitième position —, puis un marqueur indépendant de tout libellé, `audio-track-id=3` sélectionnant bien la piste à 2 canaux et 224 kb/s que le serveur annonce à l'index 3.
+- **On ne lit que le nombre, jamais les libellés de VLC.** Ils sont traduits dans la langue de son installation — « Flux » ici, « Stream » ailleurs — et `--language=en` n'y change rien. S'y fier aurait fait dépendre le choix des pistes de la langue du système, un défaut qui n'apparaîtrait que chez quelqu'un d'autre.
+- **Deux défauts vus en regardant l'application tourner, et corrigés.** Le film démarrait dans la mauvaise langue : en dispensant le serveur d'isoler la piste, on avait oublié de dire à VLC laquelle jouer, et il prenait la première du fichier. Puis, une fois cela corrigé, il démarrait **sans son** — la trace de VLC disait « too low audio sample frequency (0) » puis « failed to create audio output » : il annonce ses pistes avant d'avoir lu le format du flux audio, et changer de piste à cet instant lui fait rouvrir un flux dont il ignore encore la fréquence.
+- **La réponse n'était pas d'attendre le bon moment mais de ne pas changer du tout** : les pistes sont passées en options de l'entrée et prises au moment où le flux s'ouvre. Aucun décodeur à tuer, aucune sortie audio à refaire. Relevé après correction : piste française décodée en 6 canaux, sortie audio créée, tampons joués qui montent, et **zéro** changement de piste en cours de route.
+- **Ce qu'on ne mesure pas est dit plutôt que simulé.** Annoncer huit canaux quel que soit le matériel vaut mieux qu'une mesure — le serveur transmet alors le son tel quel et VLC réduit lui-même vers les haut-parleurs présents, sans rien réencoder. La définition décrit ce qu'un décodeur accepte, pas la taille d'un écran. Seule la plage dynamique est réellement mesurée, et elle l'était déjà.
+- 226 tests Web et 20 tests de la coque, tous verts.
+
 ## 0.5.6.r86 — le lecteur du client de bureau est celui du Web, et VLC décode dessous
 
 - **Le film s'affiche dans la fenêtre FlixTunes, sous les commandes du client Web.** Pas une imitation : le même `Player.tsx`, la même barre, la même carte d'enchaînement, les mêmes menus. VLC décode par le matériel — « Format décodé : DX11 » relevé dans sa trace — et l'interface se dessine par-dessus, dans une fenêtre transparente.

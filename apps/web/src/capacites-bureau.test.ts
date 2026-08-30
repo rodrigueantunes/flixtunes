@@ -42,11 +42,14 @@ describe("les capacités du client de bureau", () => {
     }
   });
 
-  it("ne promet pas le choix d'une piste audio, que le pont ne sait pas encore faire", () => {
-    // VLC en est capable ; le pont ne sait pas encore lui désigner une piste. L'annoncer ferait
-    // servir le fichier entier en laissant le choix au client — et le menu « Langue » deviendrait
-    // sans effet, sans que rien ne le signale.
-    expect(capacitesBureau(null, null, false).directAudioStreamSelection).toBe(false);
+  it("promet le choix d'une piste audio, ce qui dispense le serveur d'un remux", () => {
+    // Un navigateur ne sait pas activer une piste secondaire d'un Matroska : le serveur doit
+    // l'isoler, et recopie le film entier pour changer de langue. VLC choisit dans le fichier tel
+    // quel.
+    expect(capacitesBureau(null, null, false).directAudioStreamSelection).toBe(true);
+    // Sauf en compatibilité maximale, où l'on ne promet plus rien : le flux converti ne porte alors
+    // qu'une seule piste, et il n'y a plus rien à choisir.
+    expect(capacitesBureau(null, null, true).directAudioStreamSelection).toBe(false);
   });
 
   it("ne promet ni Dolby Vision ni son immersif", () => {
@@ -82,7 +85,20 @@ describe("les capacités du client de bureau", () => {
     expect(capacites.subtitleStreamIndex).toBe(5);
     expect(capacites.audioStreamIndex).toBe(1);
     expect(capacites.subtitleOffsetSeconds).toBe(-2.5);
-    // Un sous-titre image ne devient pas du WebVTT : il faut l'incruster, ici comme ailleurs.
-    expect(capacites.burnSubtitles).toBe(true);
+    /*
+     * Et la différence qui compte : un sous-titre image du fichier n'est **pas** à incruster ici.
+     *
+     * Pour un navigateur il l'est, et incruster veut dire réencoder le film entier — la conversion
+     * la plus chère de toutes, sur le processeur d'un boîtier de salon. VLC le dessine.
+     */
+    expect(capacites.burnSubtitles).toBe(false);
+    // En compatibilité maximale, on revient au chemin du navigateur : plus rien n'est promis.
+    expect(capacitesBureau(1, image, true).burnSubtitles).toBe(true);
+  });
+
+  it("laisse incruster un sous-titre image **externe**, que VLC ne trouvera pas", () => {
+    // C'est un fichier à part : il n'est pas dans le flux qu'on donne à VLC, et rien ne l'y mettra.
+    expect(capacitesBureau(null, null, false, "auto", 7, true).burnSubtitles).toBe(true);
+    expect(capacitesBureau(null, null, false, "auto", 7, false).burnSubtitles).toBe(false);
   });
 });

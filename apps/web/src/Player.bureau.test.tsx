@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { MediaItem, PlaybackInfo, Profile } from "@flixtunes/contracts";
 import type { EtatLecteurBureau, PontLecteur } from "./bureau";
 
@@ -28,7 +28,7 @@ import { Player } from "./Player";
 
 const REPOS: EtatLecteurBureau = {
   ouvert: false, position: 0, duree: 0, enLecture: false, vitesse: 1,
-  imagesAffichees: 0, imagesPerdues: 0, termine: false, erreur: null,
+  imagesAffichees: 0, imagesPerdues: 0, pistes: [], termine: false, erreur: null,
 };
 
 /** La coque, remplacée par un double, telle que le préchargement l'expose à la page. */
@@ -36,12 +36,18 @@ function poserLaCoque() {
   const commandes: string[] = [];
   let pousser: (etat: EtatLecteurBureau) => void = () => undefined;
   const lecteur: PontLecteur = {
-    ouvrir: (uri) => { commandes.push(`ouvrir ${uri}`); return Promise.resolve({ ok: true }); },
+    ouvrir: (uri, pistes) => {
+      commandes.push(`ouvrir ${uri}`);
+      commandes.push(`pistes audio=${pistes?.audio ?? "-"} sous-titre=${pistes?.sousTitre ?? "-"}`);
+      return Promise.resolve({ ok: true });
+    },
     lire: () => { commandes.push("lire"); return Promise.resolve(); },
     pause: () => { commandes.push("pause"); return Promise.resolve(); },
     allerA: (secondes) => { commandes.push(`allerA ${secondes}`); return Promise.resolve(); },
     vitesse: (valeur) => { commandes.push(`vitesse ${valeur}`); return Promise.resolve(); },
     volume: () => Promise.resolve(),
+    pisteAudio: (numero: number) => { commandes.push(`pisteAudio ${numero}`); return Promise.resolve(); },
+    pisteSousTitre: (numero: number) => { commandes.push(`pisteSousTitre ${numero}`); return Promise.resolve(); },
     fermer: () => { commandes.push("fermer"); return Promise.resolve(); },
     etat: () => Promise.resolve(REPOS),
     surEtat: (rappel) => { pousser = rappel; return () => { pousser = () => undefined; }; },
@@ -85,7 +91,10 @@ const info: PlaybackInfo = {
   streams: [
     stream({ index: 0, type: "video", codec: "hevc", width: 1920, height: 1080, isDefault: true }),
     stream({ index: 1, type: "audio", codec: "truehd", language: "fra", channels: 8, isDefault: true }),
+    stream({ index: 2, type: "audio", codec: "truehd", language: "eng", channels: 8 }),
     stream({ index: 3, type: "subtitle", codec: "subrip", language: "fra", canExtractAsWebVtt: true }),
+    // Un sous-titre image : c'est celui qui coûtait au NAS un réencodage du film entier.
+    stream({ index: 4, type: "subtitle", codec: "hdmv_pgs_subtitle", language: "eng", canExtractAsWebVtt: false }),
   ],
 };
 
@@ -221,6 +230,79 @@ describe("le lecteur quand VLC décode", () => {
     expect(document.fullscreenElement ?? null).toBeNull();
     // Et le bouton sait qu'on y est : la coque le lui a dit, puisque le document ne le dira jamais.
     await waitFor(() => expect(screen.getByLabelText("Quitter le plein écran")).toBeInTheDocument());
+  });
+
+  const ouvrirLesPistes = async () => {
+    monter();
+    await waitFor(() => expect(coque.commandes).toContain("ouvrir http://nas.local/api/media/media-1/stream"));
+    // VLC annonce les pistes qu'il a trouvées : ce sont les mêmes numéros que ceux du serveur.
+    await coque.pousser({ duree: 3600, position: 0, enLecture: true, pistes: [0, 1, 2, 3, 4] });
+    fireEvent.click(screen.getByRole("button", { name: "Pistes" }));
+  };
+  const radiosAudio = () => Array.from(document.querySelectorAll<HTMLInputElement>('input[name="audio"]'));
+  const radiosSousTitre = () => Array.from(document.querySelectorAll<HTMLInputElement>('input[name="subtitle"]'));
+
+  it("désigne à VLC la langue du profil dès l'ouverture", async () => {
+    /*
+     * Défaut constaté au lancement, et introduit par le progrès lui-même : en annonçant que le
+     * client sait choisir sa piste, on a dispensé le serveur de l'isoler. Il sert le fichier entier,
+     * toutes langues comprises — et si personne ne dit laquelle jouer, VLC prend la première. Le
+     * film démarrait en anglais alors que le profil demande le français.
+     */
+    monter();
+    await waitFor(() => expect(coque.commandes).toContain("ouvrir http://nas.local/api/media/media-1/stream"));
+    // 1, la piste française du fichier, et non 2 qui est l'anglaise. Et dans l'ouverture même : la
+    // désigner juste après faisait démarrer le film sans son.
+    expect(coque.commandes).toContain("pistes audio=1 sous-titre=-1");
+    expect(coque.commandes.filter((c) => c.startsWith("pisteAudio"))).toEqual([]);
+  });
+
+  it("change de langue sans redemander une session au serveur", async () => {
+    /*
+     * Le geste qui coûtait le plus cher pour ce qu'il vaut. Toutes les pistes sont dans le fichier
+     * que VLC lit : il suffit de lui désigner la bonne. Le chemin d'avant redemandait une session,
+     * et le serveur recopiait le film entier pour en isoler une piste.
+     */
+    await ouvrirLesPistes();
+    fireEvent.click(radiosAudio()[1]!);
+    await waitFor(() => expect(coque.commandes).toContain("pisteAudio 2"));
+    expect(apiMock.startPlayback).toHaveBeenCalledTimes(1);
+  });
+
+  it("redemande une session quand VLC ne connaît pas cette piste", async () => {
+    // Rien ne garantit qu'un démultiplexeur exotique numérote comme FFmpeg. Mieux vaut le chemin
+    // d'hier — plus lent, mais juste — que couper le son en croyant changer de langue.
+    monter();
+    await waitFor(() => expect(coque.commandes).toContain("ouvrir http://nas.local/api/media/media-1/stream"));
+    await coque.pousser({ duree: 3600, position: 0, enLecture: true, pistes: [0, 1] });
+    fireEvent.click(screen.getByRole("button", { name: "Pistes" }));
+    fireEvent.click(radiosAudio()[1]!);
+    await waitFor(() => expect(apiMock.startPlayback).toHaveBeenCalledTimes(2));
+    expect(coque.commandes).not.toContain("pisteAudio 2");
+  });
+
+  it("confie un sous-titre image à VLC au lieu de le faire incruster par le NAS", async () => {
+    /*
+     * Un PGS ne peut pas devenir du texte. Pour un navigateur, il faut l'incruster — c'est-à-dire
+     * réencoder le film, la conversion la plus chère de toutes. VLC le dessine, et la session ne
+     * bouge pas.
+     */
+    await ouvrirLesPistes();
+    // 0 = Désactivés, 1 = piste texte, 2 = piste image.
+    fireEvent.click(radiosSousTitre()[2]!);
+    await waitFor(() => expect(coque.commandes).toContain("pisteSousTitre 4"));
+    expect(apiMock.startPlayback).toHaveBeenCalledTimes(1);
+  });
+
+  it("éteint le sous-titre de VLC quand on repasse à une piste texte", async () => {
+    // Sans quoi deux jeux de répliques se superposeraient : celles que VLC dessine et celles que le
+    // lecteur affiche lui-même.
+    await ouvrirLesPistes();
+    fireEvent.click(radiosSousTitre()[2]!);
+    await waitFor(() => expect(coque.commandes).toContain("pisteSousTitre 4"));
+    fireEvent.click(radiosSousTitre()[1]!);
+    await waitFor(() => expect(coque.commandes).toContain("pisteSousTitre -1"));
+    expect(apiMock.startPlayback).toHaveBeenCalledTimes(1);
   });
 
   it("n'offre pas l'incrustation, qui est un service rendu à une balise vidéo", async () => {

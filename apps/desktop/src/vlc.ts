@@ -45,6 +45,19 @@ export interface EtatLecteur {
   vitesse: number;
   imagesAffichees: number;
   imagesPerdues: number;
+  /**
+   * Les pistes que VLC a trouvées dans le flux, par leur numéro.
+   *
+   * Ce sont les mêmes numéros que ceux du serveur — vérifié flux par flux sur un Matroska à dix
+   * pistes : vidéo 0, trois audio 1 à 3, six sous-titres 4 à 9, dans le même ordre et avec les mêmes
+   * langues des deux côtés. C'est ce qui permet au client Web de désigner une piste par l'index
+   * qu'il connaît déjà, sans table de correspondance.
+   *
+   * Seul le numéro est lu. Les libellés de VLC — « Flux », « Vidéo », « Français » — sont traduits
+   * dans la langue de son installation, et `--language=en` n'y change rien : s'y fier ferait
+   * dépendre le choix des pistes de la langue du système.
+   */
+  pistes: number[];
   /** Le flux est allé jusqu'au bout de lui-même. */
   termine: boolean;
   /** Ce que VLC n'a pas su faire, le cas échéant. */
@@ -53,8 +66,15 @@ export interface EtatLecteur {
 
 export const ETAT_INITIAL: EtatLecteur = {
   ouvert: false, position: 0, duree: 0, enLecture: false, vitesse: 1,
-  imagesAffichees: 0, imagesPerdues: 0, termine: false, erreur: null,
+  imagesAffichees: 0, imagesPerdues: 0, pistes: [], termine: false, erreur: null,
 };
+
+/** Les pistes que le client Web veut entendre et voir, désignées par l'index qu'en donne le serveur. */
+export interface PistesVoulues {
+  audio?: number | null;
+  /** `-1` ou absent : aucun sous-titre. C'est le lecteur qui dessine ceux qui sont du texte. */
+  sousTitre?: number | null;
+}
 
 /** Ce qu'on retient du JSON de VLC, avant de le rapprocher de ce que la coque a demandé. */
 export interface StatutVlc {
@@ -64,6 +84,7 @@ export interface StatutVlc {
   vitesse: number;
   imagesAffichees: number;
   imagesPerdues: number;
+  pistes: number[];
 }
 
 /**
@@ -92,7 +113,27 @@ export function lireStatut(brut: unknown): StatutVlc | null {
     vitesse: nombre(source.rate) || 1,
     imagesAffichees: nombre(stats.displayedpictures),
     imagesPerdues: nombre(stats.lostpictures),
+    pistes: lirePistes(source.information),
   };
+}
+
+/**
+ * Les numéros de piste, et rien d'autre.
+ *
+ * VLC range ses pistes sous des clés de la forme « Flux 3 » — « Stream 3 » sur une installation
+ * anglaise, et d'autres mots ailleurs. On n'en garde que le nombre, qui lui ne se traduit pas. Le
+ * type et la langue sont volontairement ignorés : le client Web les connaît déjà du serveur, et les
+ * lire ici ferait dépendre le choix des pistes de la langue de VLC.
+ */
+function lirePistes(information: unknown): number[] {
+  if (!information || typeof information !== "object") return [];
+  const categories = (information as { category?: unknown }).category;
+  if (!categories || typeof categories !== "object") return [];
+  const numeros = Object.keys(categories)
+    .map((nom) => /(\d+)\s*$/.exec(nom)?.[1])
+    .filter((trouve): trouve is string => trouve != null)
+    .map(Number);
+  return [...new Set(numeros)].sort((gauche, droite) => gauche - droite);
 }
 
 function nombre(valeur: unknown): number {
@@ -173,7 +214,7 @@ export class Lecteur {
    * VLC finirait la séance avec une pile d'entrées mortes et enchaînerait sur l'une d'elles à la fin
    * du film — ce que le client Web prendrait pour une lecture qui continue.
    */
-  async ouvrir(uri: string): Promise<{ ok: boolean; message?: string }> {
+  async ouvrir(uri: string, pistes: PistesVoulues = {}): Promise<{ ok: boolean; message?: string }> {
     try {
       await this.demarrer();
     } catch (erreur) {
@@ -185,7 +226,22 @@ export class Lecteur {
     this.ouvertureA = Date.now();
     this.etat = { ...ETAT_INITIAL, ouvert: true };
     await this.commander("pl_empty");
-    await this.commander("in_play", { input: uri });
+    /*
+     * Les pistes sont désignées **à l'ouverture**, et c'est tout le sujet.
+     *
+     * On les changeait juste après, dès que VLC annonçait sa liste — et VLC ne connaissait pas
+     * encore le format du flux audio. Sa trace le disait sans ambiguïté : « too low audio sample
+     * frequency (0) », puis « failed to create audio output ». Le film démarrait sans son.
+     *
+     * Passées en options de l'entrée, elles sont prises en compte au moment où VLC ouvre le flux :
+     * aucun décodeur à tuer, aucune sortie audio à refaire. La numérotation est celle du serveur —
+     * vérifié avec un marqueur indépendant, `audio-track-id=3` sélectionnant bien la piste à deux
+     * canaux et 224 kb/s que le serveur annonce à l'index 3.
+     */
+    const options: Array<[string, string]> = [["input", uri]];
+    if (pistes.audio != null) options.push(["option", `:audio-track-id=${Math.trunc(pistes.audio)}`]);
+    options.push(["option", `:sub-track-id=${Math.trunc(pistes.sousTitre ?? -1)}`]);
+    await this.commander("in_play", options);
     this.publier(this.etat);
     return { ok: true };
   }
@@ -197,18 +253,32 @@ export class Lecteur {
   async allerA(secondes: number): Promise<void> {
     const cible = Math.max(0, Math.floor(secondes));
     this.publier({ ...this.etat, position: cible });
-    await this.commander("seek", { val: String(cible) });
+    await this.commander("seek", [["val", String(cible)]]);
+  }
+
+  /**
+   * Choisit une piste par son numéro, ou la coupe avec `-1`.
+   *
+   * Éprouvé : `audio_track=-1` fige le compteur d'audio décodé — 4 265 inchangé pendant que le film
+   * continue — et un numéro valide le fait repartir. La commande atteint donc bien le moteur.
+   */
+  async pisteAudio(numero: number): Promise<void> {
+    await this.commander("audio_track", [["val", String(Math.trunc(numero))]]);
+  }
+
+  async pisteSousTitre(numero: number): Promise<void> {
+    await this.commander("subtitle_track", [["val", String(Math.trunc(numero))]]);
   }
 
   async vitesse(valeur: number): Promise<void> {
     if (!Number.isFinite(valeur) || valeur <= 0) return;
-    await this.commander("rate", { val: String(valeur) });
+    await this.commander("rate", [["val", String(valeur)]]);
   }
 
   /** Le volume de VLC va de 0 à 256, celui d'une balise vidéo de 0 à 1. */
   async volume(valeur: number): Promise<void> {
     const cible = Math.round(Math.min(1, Math.max(0, valeur)) * 256);
-    await this.commander("volume", { val: String(cible) });
+    await this.commander("volume", [["val", String(cible)]]);
   }
 
   /** Arrête la lecture sans tuer VLC : la fenêtre redevient noire, le processus reste prêt. */
@@ -244,13 +314,23 @@ export class Lecteur {
       "--http-host", "127.0.0.1",
       "--http-port", String(this.port),
       "--http-password", this.motDePasse,
-      // Le titre, l'affichage à l'écran et les sous-titres appartiennent à l'interface Web : VLC ne
-      // dessine que l'image. Deux jeux de sous-titres superposés — les siens et les nôtres — seraient
-      // le premier défaut visible de ce client.
+      // Le titre et l'affichage à l'écran appartiennent à l'interface Web.
       "--no-video-title-show",
       "--no-osd",
-      "--no-spu",
       "--no-embedded-video",
+      /*
+       * Aucun sous-titre tant qu'on n'en demande pas.
+       *
+       * VLC en choisit un tout seul quand une piste est marquée « par défaut » dans le fichier, et
+       * on se retrouverait avec deux jeux superposés : les siens et ceux que le lecteur dessine.
+       * C'est le client Web qui décide, et lui seul.
+       *
+       * `--no-spu` couperait le décodeur de sous-titres pour de bon ; ici on veut pouvoir le
+       * rallumer, parce qu'un sous-titre **image** ne peut pas devenir du texte et que VLC sait le
+       * dessiner — ce qui évite au NAS de réencoder le film entier pour l'y incruster.
+       */
+      "--sub-track=-1",
+      "--no-sub-autodetect-file",
       // Le décodage matériel est la raison d'être de ce client : c'est lui qui permet au NAS de ne
       // rien convertir. Relevé à l'essai sur un HEVC 1080p : « Format décodé : DX11 ».
       "--avcodec-hw=any",
@@ -285,8 +365,10 @@ export class Lecteur {
     throw new Error("VLC n'a pas ouvert son interface de commande");
   }
 
-  private async commander(commande: string, parametres: Record<string, string> = {}): Promise<void> {
-    const requete = new URLSearchParams({ command: commande, ...parametres });
+  // Une liste de paires plutôt qu'un objet : VLC accepte plusieurs `option` pour une même ouverture,
+  // et un objet ne sait porter qu'une valeur par clé.
+  private async commander(commande: string, parametres: Array<[string, string]> = []): Promise<void> {
+    const requete = new URLSearchParams([["command", commande], ...parametres]);
     const statut = await this.appeler(requete.toString());
     if (statut) this.appliquer(statut);
   }
@@ -338,6 +420,7 @@ export class Lecteur {
       vitesse: statut.vitesse,
       imagesAffichees: statut.imagesAffichees,
       imagesPerdues: statut.imagesPerdues,
+      pistes: statut.pistes.length ? statut.pistes : this.etat.pistes,
       termine,
       erreur: jamaisOuvert ? "VLC n'a pas pu ouvrir ce flux." : null,
     });

@@ -1,4 +1,4 @@
-import { lectureParVlc, type EtatLecteurBureau, type PontLecteur } from "./bureau";
+import { lectureParVlc, type EtatLecteurBureau, type PistesVoulues, type PontLecteur } from "./bureau";
 
 /**
  * La surface où la lecture a lieu — une balise vidéo, ou VLC.
@@ -70,6 +70,19 @@ export class SurfaceVlc implements SurfaceLecture {
   private vitesse = 1;
   private imagesAffichees = 0;
   private imagesPerdues = 0;
+  private pistes: number[] = [];
+  /**
+   * Les pistes en vigueur, pour ne pas redemander ce qui est déjà en place.
+   *
+   * Elles sont fixées **à l'ouverture** du flux, en options de l'entrée. Deux tentatives ont échoué
+   * avant celle-là, et elles valent d'être rappelées : ne rien désigner du tout faisait démarrer le
+   * film dans la première langue du fichier plutôt que dans celle du profil ; le désigner juste
+   * après l'ouverture le faisait démarrer **sans son**, VLC ne connaissant pas encore le format du
+   * flux audio — « too low audio sample frequency (0) », disait sa trace, puis « failed to create
+   * audio output ».
+   */
+  private audioEnCours: number | null = null;
+  private sousTitreEnCours = -1;
   /** Les événements qui ne se produisent qu'une fois par média ouvert. */
   private metadonneesDites = false;
   private premiereImageDite = false;
@@ -141,21 +154,59 @@ export class SurfaceVlc implements SurfaceLecture {
    * une application qui démarre muette parce qu'on avait baissé le son la veille dans un tout autre
    * programme serait un défaut impossible à comprendre.
    */
-  async ouvrir(source: string): Promise<{ ok: boolean; message?: string }> {
+  async ouvrir(source: string, pistes: PistesVoulues = {}): Promise<{ ok: boolean; message?: string }> {
     this.position = 0;
     this.duree = 0;
     this.enLecture = false;
     this.imagesAffichees = 0;
     this.imagesPerdues = 0;
+    this.pistes = [];
+    this.audioEnCours = pistes.audio ?? null;
+    this.sousTitreEnCours = pistes.sousTitre ?? -1;
     this.metadonneesDites = false;
     this.premiereImageDite = false;
     this.finDite = false;
     this.erreurDite = false;
     const absolue = new URL(source, window.location.href).toString();
-    const reponse = await this.pont.ouvrir(absolue);
+    const reponse = await this.pont.ouvrir(absolue, pistes);
     if (!reponse.ok) this.emettre("error");
     else void this.pont.volume(1);
     return reponse;
+  }
+
+  /**
+   * Choisit une piste audio par l'index que le serveur en donne.
+   *
+   * Les numéros de VLC et ceux du serveur sont les mêmes — vérifié flux par flux sur un Matroska à
+   * dix pistes, langues comprises. On vérifie tout de même que VLC connaît celui qu'on lui désigne :
+   * rien ne garantit qu'un démultiplexeur exotique numérote comme FFmpeg, et il vaut mieux ne rien
+   * changer que couper le son en croyant changer de langue.
+   *
+   * Rend `false` quand la piste n'existe pas de son côté. Le lecteur redemande alors une session au
+   * serveur, comme il le faisait avant — le repli est le comportement d'hier, pas un échec.
+   */
+  choisirPisteAudio(index: number): boolean {
+    // Déjà en place — demandée à l'ouverture, ou choisie il y a un instant. Redemander ferait rouvrir
+    // le flux audio pour rien.
+    if (index === this.audioEnCours) return true;
+    if (!this.pistes.includes(index)) return false;
+    this.audioEnCours = index;
+    void this.pont.pisteAudio(index);
+    return true;
+  }
+
+  /**
+   * Un sous-titre image, dessiné par VLC. `-1` n'en affiche aucun.
+   *
+   * C'est ce qui évite au NAS de réencoder un film entier pour y incruster des sous-titres qui ne
+   * peuvent pas devenir du texte.
+   */
+  choisirPisteSousTitre(index: number): boolean {
+    if (index === this.sousTitreEnCours) return true;
+    if (index >= 0 && !this.pistes.includes(index)) return false;
+    this.sousTitreEnCours = index;
+    void this.pont.pisteSousTitre(index);
+    return true;
   }
 
   /** On quitte le lecteur : VLC s'arrête, la fenêtre du dessous redevient noire. */
@@ -176,6 +227,7 @@ export class SurfaceVlc implements SurfaceLecture {
     this.vitesse = etat.vitesse;
     this.imagesAffichees = etat.imagesAffichees;
     this.imagesPerdues = etat.imagesPerdues;
+    this.pistes = etat.pistes;
 
     // La durée connue vaut « métadonnées lues » : c'est à cet instant que le lecteur place la reprise,
     // pose la question « reprendre ou recommencer », et applique la vitesse du profil.
