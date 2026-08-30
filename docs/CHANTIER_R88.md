@@ -165,6 +165,30 @@ Les fichiers sont servis en clair sur `datasets.imdbws.com`, rafraîchis quotidi
 Écarter les deux derniers économise un gigaoctet, et ne retire rien à un **repli** : ce qu'on lui
 demande, c'est d'identifier une œuvre quand TMDB ne répond pas, pas de refaire un second catalogue.
 
+### Et en français ?
+
+Relevé sur les premières lignes des fichiers, le 30 août 2026, plutôt que supposé.
+
+**Les titres, oui.** `title.akas` porte 9 795 lignes de région `FR` sur les 251 278 premières, soit
+près de 4 %. Et **plusieurs variantes par œuvre** — *La sortie de l'usine*, *La sortie de l'usine
+Lumière*, *La sortie des ouvriers de l'usine Lumière* pour un seul titre. C'est exactement ce qui
+permet de reconnaître un nom de fichier, et c'est ce qui sert aussi au point 4.
+
+Attention toutefois : dans `title.basics`, `primaryTitle` est le titre **le plus connu**, souvent
+l'anglais — `Poor Pierrot` là où `originalTitle` dit `Pauvre Pierrot`. C'est `title.akas` qui porte le
+français, pas `title.basics`.
+
+**Les genres, en anglais.** `Animation,Comedy,Romance`. Une liste fixe d'environ vingt-huit valeurs,
+traduite une fois chez nous — ce n'est pas un obstacle, c'est une table de correspondance.
+
+**Le résumé, non — et dans aucune langue.** Aucun des sept fichiers ne porte de synopsis, ni
+d'affiche. Un repli IMDb donnerait donc le bon titre français, l'année, la note et les genres, mais
+une fiche **sans résumé et sans jaquette**.
+
+C'est acceptable pour ce qu'on lui demande, et deux choses l'atténuent déjà : Fanart.tv est branché
+pour les images, et depuis la r88 une fiche de repli est marquée « à revoir » — elle sera remplacée
+par celle de TMDB dès qu'il répondra. Le repli n'est pas un état final.
+
 ### Ce qui coûtera vraiment, et qu'il faudra mesurer sur le NAS
 
 Pas le téléchargement — trois quarts de gigaoctet une fois par mois. C'est l'**import**.
