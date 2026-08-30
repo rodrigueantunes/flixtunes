@@ -626,13 +626,57 @@ footer > button:first-of-type { margin-left: auto; }
 .player-page video { width: 100%; height: 100%; object-fit: contain; }
 .player-top { position: absolute; inset: 0 0 auto; display: flex; align-items: center; gap: 1rem; padding: 1.4rem 2rem 4rem; background: linear-gradient(#000c, transparent); opacity: 0; transition: opacity .2s; }
 .player-page:hover .player-top, .player-page:focus-within .player-top { opacity: 1; }
-.player-top button { width: 44px; height: 44px; border: 0; border-radius: 50%; background: #ffffff20; font-size: 1.5rem; cursor: pointer; }
 .player-top div { display: grid; gap: .15rem; }
 .player-top span { color: var(--muted); font-size: .85rem; }
-.player-top .player-tracks-button { width: auto; height: 38px; margin-left: auto; padding: 0 .9rem; border-radius: 9px; color: white; font-size: .78rem; }
-.player-top .player-compact-button { width: auto; height: 38px; padding: 0 .75rem; border-radius: 9px; color: white; font-size: .75rem; }
+.player-top .player-tracks-button { margin-left: auto; }
 .player-top .player-compact-button:first-of-type { margin-left: auto; }
 .player-top .player-compact-button + .player-tracks-button { margin-left: 0; }
+
+/*
+ * Les commandes du lecteur — une seule forme, deux silhouettes.
+ *
+ * Elles avaient échappé à la mise en ordre des boutons : trois traitements pour un même rôle, avec
+ * des hauteurs de 44, 38 et 34 px, des arrondis de 50 %, 9 et 8 px, un fond tantôt à 12 % tantôt à
+ * 20 % de blanc, et une bordure sur les uns seulement. Le bouton de retour n'avait même pas de
+ * couleur de texte : sa flèche sortait en sombre sur une pastille claire, illisible dès que l'image
+ * derrière était lumineuse.
+ *
+ * La forme est celle du reste de l'application — bordure fine, rayon de commande, fond translucide
+ * qui s'éclaircit au survol —, mais posée sur une **image** et non sur un panneau. D'où deux écarts
+ * assumés : un fond nettement plus opaque, et un flou d'arrière-plan. Un bouton de lecteur doit
+ * rester lisible sur une plage de sable comme sur un plan de nuit ; celui d'un panneau n'a jamais ce
+ * problème.
+ *
+ * Deux silhouettes, et la règle est simple : **une icône seule est ronde, un libellé est un
+ * rectangle arrondi.** C'est ce que fait déjà tout lecteur, et cela distingue d'un coup d'œil ce
+ * qu'on actionne de ce qu'on ouvre.
+ */
+.player-top button,
+.player-command-row button,
+.player-command-row select {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 0 .8rem;
+  border: 1px solid #ffffff38;
+  border-radius: var(--rayon-commande);
+  background: #101722cc;
+  color: #e8eefc;
+  font-size: .78rem;
+  font-weight: 600;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  transition: background var(--duree-reponse), border-color var(--duree-reponse);
+}
+.player-top button:hover,
+.player-command-row button:hover,
+.player-command-row select:hover { background: #17223ae8; border-color: #ffffff66; }
+
+/* Une icône seule : ronde, et sans le rembourrage qui déformerait le cercle. */
+.player-icon-button { width: 38px; min-width: 38px; padding: 0; border-radius: var(--rayon-pastille); font-size: 1.1rem; }
+/* Lire et mettre en pause est le geste principal : il se distingue par la taille, pas par la couleur. */
+.player-command-row .player-icon-button:first-child { width: 46px; min-width: 46px; min-height: 46px; font-size: 1.25rem; }
 .player-top .playback-mode { padding: .35rem .55rem; border-radius: 7px; background: #102957dd; color: #a9c5ff; font-size: .68rem; font-weight: 800; text-transform: uppercase; }
 .player-top .playback-mode.transcode { background: #493315dd; color: #ffd394; }
 .player-tracks { position: absolute; z-index: 4; top: 78px; right: 1.5rem; width: min(340px, calc(100vw - 2rem)); max-height: calc(100vh - 110px); overflow: auto; padding: 1rem; border: 1px solid var(--line); border-radius: var(--rayon-panneau); background: #101722f2; box-shadow: 0 18px 60px #000b; backdrop-filter: blur(14px); }
@@ -652,6 +696,9 @@ footer > button:first-of-type { margin-left: auto; }
 .player-tracks .subtitle-controls input[type="range"] { grid-column: 1 / 3; grid-row: auto; width: 100%; }
 .player-tracks .subtitle-controls input[type="checkbox"] { grid-row: auto; }
 .subtitle-controls output { color: #9dbbfa; font-variant-numeric: tabular-nums; }
+/* Un sous-titre image ne se remet pas en forme : les réglages restent visibles, mais éteints. */
+.subtitle-controls-note { grid-column: 1 / -1; color: var(--muted); font-size: .68rem; line-height: 1.45; }
+.subtitle-controls :disabled { opacity: .45; cursor: not-allowed; }
 .subtitle-controls select { min-height: 32px; border: 1px solid var(--line); border-radius: 7px; background: #0b111b; color: white; }
 video.subtitles-small::cue { font-size: 80%; }
 video.subtitles-normal::cue { font-size: 100%; }
@@ -713,7 +760,7 @@ html.bureau-video, body.bureau-video { background: transparent; }
 .sous-titres-bureau.subtitles-color-cyan { color: #67e8f9; }
 .sous-titres-bureau.subtitles-color-green { color: #86efac; }
 .player-message { position: absolute; padding: 1.5rem; display: grid; gap: 1rem; max-width: 440px; border: 1px solid var(--line); border-radius: 16px; background: #111722ee; text-align: center; }
-.player-message button { border: 0; border-radius: 9px; padding: .7rem; background: var(--blue); cursor: pointer; }
+.player-message button { border: 0; border-radius: var(--rayon-commande); padding: .7rem; background: var(--blue); color: #fff; font-weight: 600; cursor: pointer; }
 .player-message ul { margin: 0; padding-left: 1.2rem; color: var(--muted); text-align: left; font-size: .75rem; }
 .player-message-actions { display: flex; justify-content: center; gap: .5rem; }
 .player-spinner { justify-self: center; width: 30px; height: 30px; border: 3px solid #ffffff24; border-top-color: var(--blue-light); border-radius: 50%; animation: spin .8s linear infinite; }
@@ -738,10 +785,10 @@ html.bureau-video, body.bureau-video { background: transparent; }
 .chapter-mark { position: absolute; z-index: 3; top: 7px; width: 3px; height: 8px; padding: 0; border: 0; background: #fff; transform: translateX(-50%); cursor: pointer; }
 .timeline-preview { position: absolute; z-index: 5; bottom: 27px; display: grid; width: 180px; overflow: hidden; border: 1px solid #ffffff55; border-radius: 9px; background: #080b12; transform: translateX(-50%); pointer-events: none; box-shadow: 0 10px 35px #000d; }
 .timeline-preview img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; }.timeline-preview span { padding: .3rem; text-align: center; font-size: .72rem; }
-.player-command-row { display: flex; align-items: center; gap: .55rem; min-height: 42px; }
-.player-command-row button, .player-command-row select { min-height: 34px; border: 1px solid #ffffff24; border-radius: 8px; background: #ffffff12; color: white; cursor: pointer; }
-.player-command-row button { min-width: 38px; padding: 0 .55rem; }.player-command-row > span { margin-right: auto; font-variant-numeric: tabular-nums; font-size: .78rem; }
-.player-command-row label { display: flex; align-items: center; gap: .35rem; color: #c4ccda; font-size: .7rem; }.player-command-row select { padding: 0 .35rem; }
+.player-command-row { display: flex; align-items: center; gap: .55rem; min-height: 46px; }
+.player-command-row > span { margin-right: auto; font-variant-numeric: tabular-nums; font-size: .78rem; }
+.player-command-row label { display: flex; align-items: center; gap: .35rem; color: #c4ccda; font-size: .7rem; }
+.player-command-row select { padding: 0 .5rem; font-weight: 500; }
 .playback-info { position: absolute; z-index: 5; top: 78px; left: 1.5rem; width: min(390px, calc(100vw - 3rem)); padding: 1rem; border: 1px solid var(--line); border-radius: var(--rayon-panneau); background: #101722f2; box-shadow: 0 18px 60px #000b; backdrop-filter: blur(14px); }
 .playback-info header { display: flex; align-items: center; justify-content: space-between; }.playback-info header button { border: 0; background: transparent; color: white; font-size: 1.4rem; cursor: pointer; }
 .playback-info dl { display: grid; grid-template-columns: 1fr 1.6fr; gap: .4rem .8rem; margin: .8rem 0; font-size: .75rem; }.playback-info dt { color: var(--muted); }.playback-info dd { margin: 0; text-align: right; }
@@ -752,7 +799,7 @@ html.bureau-video, body.bureau-video { background: transparent; }
 .color-notice { position: absolute; z-index: 6; left: 50%; bottom: 8.5rem; transform: translateX(-50%); width: min(520px, calc(100vw - 2rem)); display: grid; gap: .45rem; padding: .9rem 1.1rem; border: 1px solid #4d7bd8; border-radius: var(--rayon-panneau); background: #101a2df2; box-shadow: 0 18px 60px #000b; backdrop-filter: blur(14px); animation: rise .4s ease-out both; }
 .color-notice span { color: #c5d2e8; font-size: .8rem; line-height: 1.5; }
 .color-notice > div { display: flex; justify-content: flex-end; gap: .5rem; }
-.color-notice button { border: 1px solid var(--line); border-radius: 9px; padding: .45rem .8rem; background: transparent; color: white; font-size: .78rem; cursor: pointer; }
+.color-notice button { border: 1px solid var(--line); border-radius: var(--rayon-commande); padding: .45rem .8rem; background: transparent; color: white; font-size: .78rem; cursor: pointer; }
 .color-notice button:last-child { border-color: transparent; background: var(--blue); }
 /*
  * La carte d'enchaînement : hors du champ de l'image, et le temps qui reste se voit.
@@ -769,7 +816,7 @@ html.bureau-video, body.bureau-video { background: transparent; }
 .player-next-jauge i { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--blue), #79a8ff); transform-origin: left; transition: transform 1s linear; }
 /* Nommée, et non « le div de la carte » : le sélecteur générique attrapait aussi la jauge, dont la barre tombait alors à zéro de large. */
 .player-next-actions { display: flex; gap: .5rem; margin-top: .55rem; }
-.player-next-actions button { flex: 1; border: 1px solid transparent; border-radius: 9px; padding: .55rem .7rem; font-weight: 600; cursor: pointer; transition: background .15s, border-color .15s; }
+.player-next-actions button { flex: 1; border: 1px solid transparent; border-radius: var(--rayon-commande); padding: .55rem .7rem; font-weight: 600; cursor: pointer; transition: background var(--duree-reponse), border-color var(--duree-reponse); }
 .player-next-lancer { background: var(--blue); color: #fff; }
 .player-next-lancer:hover { background: #4d84ff; }
 .player-next-annuler { background: transparent; border-color: #ffffff2e; color: var(--muted, #8fa3c4); }
@@ -777,7 +824,7 @@ html.bureau-video, body.bureau-video { background: transparent; }
 @media (prefers-reduced-motion: reduce) { .player-next { animation: none; } .player-next-jauge i { transition: none; } }
 
 /* Passer le générique : même coin que la carte d'enchaînement, jamais en même temps qu'elle. */
-.player-skip { position: absolute; z-index: 7; right: 2rem; bottom: 7rem; padding: .7rem 1.15rem; border: 1px solid #ffffff38; border-radius: 10px; background: #101722e8; color: #e8eefc; font-weight: 600; font-size: .88rem; cursor: pointer; backdrop-filter: blur(6px); box-shadow: 0 14px 40px #000a; animation: rise .3s ease-out both; transition: background .15s, border-color .15s; }
+.player-skip { position: absolute; z-index: 7; right: 2rem; bottom: 7rem; padding: .7rem 1.15rem; border: 1px solid #ffffff38; border-radius: var(--rayon-commande); background: #101722e8; color: #e8eefc; font-weight: 600; font-size: .88rem; cursor: pointer; backdrop-filter: blur(6px); box-shadow: 0 14px 40px #000a; animation: rise .3s ease-out both; transition: background .15s, border-color .15s; }
 .player-skip:hover { background: #17223aF2; border-color: #ffffff66; }
 @media (prefers-reduced-motion: reduce) { .player-skip { animation: none; } }
 

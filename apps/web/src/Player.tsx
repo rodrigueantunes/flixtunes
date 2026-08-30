@@ -1312,6 +1312,18 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
 
   const audioStreams = info?.streams.filter((stream) => stream.type === "audio") ?? [];
   const subtitleStreams = info?.streams.filter((stream) => stream.type === "subtitle") ?? [];
+  /**
+   * Le sous-titre retenu est-il une **image** ?
+   *
+   * Un PGS de Blu-ray n'est pas du texte : c'est une suite d'images, déjà composées avec leur police
+   * et leur couleur. Aucun des six réglages d'apparence ne peut s'y appliquer — ni ici, où VLC les
+   * dessine, ni sur le Web, où le serveur les incruste. Les proposer quand même faisait promettre à
+   * l'interface ce qu'elle ne pouvait pas tenir : on tourne le bouton « Taille » et rien ne bouge.
+   */
+  const sousTitreEstImage = Boolean(
+    (subtitleIndex != null && subtitleStreams.some((flux) => flux.index === subtitleIndex && !flux.canExtractAsWebVtt))
+    || (externalSubtitleIndex != null
+      && info?.externalSubtitles?.some((externe) => externe.id === externalSubtitleIndex && !externe.canConvertToWebVtt)));
   // Les répliques du moment, calculées sur la position **dans le flux** : c'est l'échelle du fichier
   // WebVTT, que le serveur a déjà décalé du début de session.
   const repliquesVisibles = surfaceVlc ? repliquesA(repliquesBureau, currentTime - startOffsetRef.current) : [];
@@ -1332,10 +1344,10 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
         </div>
       )}
       <div className="player-top">
-        <button onClick={onClose} aria-label="Fermer le lecteur">←</button>
+        <button className="player-icon-button" onClick={onClose} aria-label="Fermer le lecteur">←</button>
         <div><b>{media.showTitle ?? media.title}</b>{media.showTitle && <span>S{media.seasonNumber} E{media.episodeNumber} · {media.title}</span>}</div>
-        {neighbors.previous && <button className="player-compact-button" onClick={() => onPlayMedia(neighbors.previous!.id)} aria-label="Épisode précédent">|◀</button>}
-        {neighbors.next && <button className="player-compact-button" onClick={() => onPlayMedia(neighbors.next!.id)} aria-label="Épisode suivant">▶|</button>}
+        {neighbors.previous && <button className="player-compact-button player-icon-button" onClick={() => onPlayMedia(neighbors.previous!.id)} aria-label="Épisode précédent">|◀</button>}
+        {neighbors.next && <button className="player-compact-button player-icon-button" onClick={() => onPlayMedia(neighbors.next!.id)} aria-label="Épisode suivant">▶|</button>}
         <button className="player-compact-button" onClick={() => setInfoOpen((open) => !open)} aria-expanded={infoOpen}>Infos</button>
         <button className="player-tracks-button" onClick={() => setSettingsOpen((open) => !open)} aria-expanded={settingsOpen}>Pistes</button>
         {session && <span className={`playback-mode ${session.mode}`}>{session.mode === "direct" ? "Direct Play" : session.mode === "remux" ? "Remux HLS" : "Transcodage HLS"}</span>}
@@ -1374,7 +1386,7 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
             onClick={() => seekTo(chapter.startSeconds)} />)}
         </div>
         <div className="player-command-row">
-          <button onClick={togglePlayback} aria-label={paused ? "Lire" : "Pause"}>{paused ? "▶" : "Ⅱ"}</button>
+          <button className="player-icon-button" onClick={togglePlayback} aria-label={paused ? "Lire" : "Pause"}>{paused ? "▶" : "Ⅱ"}</button>
           <button onClick={() => seekTo(currentTime - 10)} aria-label="Reculer de 10 secondes">−10</button>
           <button onClick={() => seekTo(currentTime + 10)} aria-label="Avancer de 10 secondes">+10</button>
           <span className="player-clock">{formatPlaybackTime(currentTime)} / {formatPlaybackTime(timelineDuration)}
@@ -1387,7 +1399,7 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
             {dynamicRanges.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
           </select></label>}
           <label>Minuteur <select aria-label="Minuteur de lecture" value={sleepMinutes} onChange={(event) => startSleepTimer(Number(event.target.value))}><option value="0">Désactivé</option><option value="15">15 min</option><option value="30">30 min</option><option value="45">45 min</option><option value="60">60 min</option></select></label>
-          <button onClick={() => void toggleFullScreen()} aria-label={fullScreen ? "Quitter le plein écran" : "Plein écran"}>
+          <button className="player-icon-button" onClick={() => void toggleFullScreen()} aria-label={fullScreen ? "Quitter le plein écran" : "Plein écran"}>
             {fullScreen ? "⤡" : "⤢"}</button>
           {incrustationOfferte && <button onClick={() => void togglePiP()} aria-label="Image dans l’image">PiP</button>}
         </div>
@@ -1463,13 +1475,14 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
         {subtitleStreams.map((stream) => <label key={stream.index}><input type="radio" name="subtitle" checked={subtitleIndex === stream.index} onChange={() => changeSubtitleSelection(stream.index, null)} />{languageName(stream)} <small>{stream.canExtractAsWebVtt ? "Texte" : surfaceVlc ? "Image" : "Incrustation vidéo"}{stream.isForced ? " · forcé" : ""}{stream.hearingImpaired ? " · SME" : ""}</small></label>)}
         {info.externalSubtitles?.map((subtitle) => <label key={`external-${subtitle.id}`}><input type="radio" name="subtitle" checked={externalSubtitleIndex === subtitle.id} onChange={() => changeSubtitleSelection(null, subtitle.id)} />{subtitle.language?.toUpperCase() || "Externe"} <small>{subtitle.name} · {subtitle.kind === "image" ? "incrustation vidéo" : `${subtitle.format.toUpperCase()} · ${subtitle.encoding ?? "encodage auto"}`}{subtitle.forced ? " · forcé" : ""}{subtitle.hearingImpaired ? " · SME" : ""}</small></label>)}
         <div className="subtitle-controls">
-          <label>Synchronisation <output>{subtitleOffset > 0 ? "+" : ""}{subtitleOffset.toFixed(1)} s</output><input type="range" min="-30" max="30" step="0.5" value={Math.max(-30, Math.min(30, subtitleOffset))} onChange={(event) => { const value = Number(event.target.value); subtitleOffsetRef.current = value; setSubtitleOffset(value); }} /><input aria-label="Décalage précis en secondes" type="number" min="-600" max="600" step="0.1" value={subtitleOffset} onChange={(event) => { const value = Math.max(-600, Math.min(600, Number(event.target.value))); subtitleOffsetRef.current = value; setSubtitleOffset(value); }} /></label>
-          <label>Taille <select value={subtitleSize} onChange={(event) => setSubtitleSize(event.target.value as typeof subtitleSize)}><option value="small">Petite</option><option value="normal">Normale</option><option value="large">Grande</option></select></label>
-          <label>Couleur <select value={subtitleColor} onChange={(event) => setSubtitleColor(event.target.value as SubtitlePreference["color"])}><option value="white">Blanc</option><option value="yellow">Jaune</option><option value="cyan">Cyan</option><option value="green">Vert</option></select></label>
-          <label>Position <select value={subtitlePosition} onChange={(event) => { const value = event.target.value as SubtitlePreference["position"]; subtitlePositionRef.current = value; setSubtitlePosition(value); }}><option value="bottom">Bas</option><option value="middle">Milieu</option><option value="top">Haut</option></select></label>
-          <label>Police <select value={subtitleFont} onChange={(event) => setSubtitleFont(event.target.value as SubtitlePreference["fontFamily"])}><option value="sans">Sans sérif</option><option value="serif">Sérif</option><option value="mono">Monospace</option></select></label>
-          <label>Encodage <select value={subtitleEncoding} onChange={(event) => { const value = event.target.value as SubtitlePreference["encodingOverride"]; subtitleEncodingRef.current = value; setSubtitleEncoding(value); }}><option value="auto">Automatique</option><option value="utf-8">UTF-8</option><option value="utf-16le">UTF-16 LE</option><option value="utf-16be">UTF-16 BE</option><option value="windows-1252">Windows-1252</option></select></label>
-          <label><input type="checkbox" checked={subtitleBackground} onChange={(event) => setSubtitleBackground(event.target.checked)} />Fond sombre (transparent par défaut)</label>
+          {sousTitreEstImage && <small className="subtitle-controls-note">Ce sous-titre est une image, déjà composée dans le fichier : ni taille, ni couleur, ni police ne s'y appliquent.</small>}
+          <label>Synchronisation <output>{subtitleOffset > 0 ? "+" : ""}{subtitleOffset.toFixed(1)} s</output><input disabled={sousTitreEstImage} type="range" min="-30" max="30" step="0.5" value={Math.max(-30, Math.min(30, subtitleOffset))} onChange={(event) => { const value = Number(event.target.value); subtitleOffsetRef.current = value; setSubtitleOffset(value); }} /><input disabled={sousTitreEstImage} aria-label="Décalage précis en secondes" type="number" min="-600" max="600" step="0.1" value={subtitleOffset} onChange={(event) => { const value = Math.max(-600, Math.min(600, Number(event.target.value))); subtitleOffsetRef.current = value; setSubtitleOffset(value); }} /></label>
+          <label>Taille <select disabled={sousTitreEstImage} value={subtitleSize} onChange={(event) => setSubtitleSize(event.target.value as typeof subtitleSize)}><option value="small">Petite</option><option value="normal">Normale</option><option value="large">Grande</option></select></label>
+          <label>Couleur <select disabled={sousTitreEstImage} value={subtitleColor} onChange={(event) => setSubtitleColor(event.target.value as SubtitlePreference["color"])}><option value="white">Blanc</option><option value="yellow">Jaune</option><option value="cyan">Cyan</option><option value="green">Vert</option></select></label>
+          <label>Position <select disabled={sousTitreEstImage} value={subtitlePosition} onChange={(event) => { const value = event.target.value as SubtitlePreference["position"]; subtitlePositionRef.current = value; setSubtitlePosition(value); }}><option value="bottom">Bas</option><option value="middle">Milieu</option><option value="top">Haut</option></select></label>
+          <label>Police <select disabled={sousTitreEstImage} value={subtitleFont} onChange={(event) => setSubtitleFont(event.target.value as SubtitlePreference["fontFamily"])}><option value="sans">Sans sérif</option><option value="serif">Sérif</option><option value="mono">Monospace</option></select></label>
+          <label>Encodage <select disabled={sousTitreEstImage} value={subtitleEncoding} onChange={(event) => { const value = event.target.value as SubtitlePreference["encodingOverride"]; subtitleEncodingRef.current = value; setSubtitleEncoding(value); }}><option value="auto">Automatique</option><option value="utf-8">UTF-8</option><option value="utf-16le">UTF-16 LE</option><option value="utf-16be">UTF-16 BE</option><option value="windows-1252">Windows-1252</option></select></label>
+          <label><input disabled={sousTitreEstImage} type="checkbox" checked={subtitleBackground} onChange={(event) => setSubtitleBackground(event.target.checked)} />Fond sombre (transparent par défaut)</label>
         </div>
         <div className="playback-choice-actions">
           <button className="primary" onClick={() => { persistSubtitlePreference(info); setSettingsOpen(false); void start(info, "auto"); }}>Lecture automatique</button>

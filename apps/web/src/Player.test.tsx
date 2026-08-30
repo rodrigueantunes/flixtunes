@@ -225,6 +225,24 @@ describe("changement de piste en cours de lecture", () => {
     ));
   });
 
+  it("éteint les réglages d'apparence devant un sous-titre image", async () => {
+    /*
+     * Un PGS de Blu-ray n'est pas du texte : c'est une suite d'images déjà composées avec leur police
+     * et leur couleur. Aucun des six réglages ne peut s'y appliquer — ni quand VLC les dessine, ni
+     * quand le serveur les incruste. Les laisser actifs faisait promettre à l'interface ce qu'elle ne
+     * pouvait pas tenir : on tourne le bouton « Taille » et rien ne bouge.
+     */
+    await openTracks();
+    expect(screen.getByLabelText("Taille")).not.toBeDisabled();
+    // 2 = la piste image PGS.
+    fireEvent.click(subtitleRadios()[2]!);
+    await waitFor(() => expect(screen.getByLabelText("Taille")).toBeDisabled());
+    for (const nom of ["Couleur", "Position", "Police", "Encodage"]) {
+      expect(screen.getByLabelText(nom)).toBeDisabled();
+    }
+    expect(screen.getByText(/Ce sous-titre est une image/)).toBeInTheDocument();
+  });
+
   it("renégocie la session pour un sous-titre à incruster", async () => {
     await openTracks();
     fireEvent.click(subtitleRadios()[2]!);
