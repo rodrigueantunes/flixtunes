@@ -57,8 +57,8 @@
       ],
       "icon": "ressources-paquet/icon.png",
       "category": "AudioVideo",
-      "synopsis": "Votre cinéma local",
-      "description": "Client de bureau FlixTunes : l'interface du client Web, la lecture par VLC embarqué."
+      "description": "Client de bureau FlixTunes : l'interface du client Web, la lecture par VLC embarqué.",
+      "synopsis": "Votre cinéma local"
     },
     "deb": {
       "depends": [

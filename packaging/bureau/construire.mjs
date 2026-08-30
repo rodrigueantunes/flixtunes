@@ -16,12 +16,22 @@
  * Ubuntu, et le `tar` de Windows sait les ouvrir. C'était l'inconnue, et elle est levée — la machine
  * qui construit n'a même pas besoin d'avoir VLC installé.
  *
- * L'assemblage des paquets, non. Le `.deb` passe par **fpm**, un outil que le monde Debian fournit
- * et que Windows n'a pas ; l'**AppImage** pose un lien symbolique que Windows refuse de créer sans
- * un privilège qu'une session ordinaire n'a pas. Les deux sortent donc d'une machine Linux — ou
- * d'un Windows en mode développeur, pour l'AppImage seule.
+ * L'assemblage des paquets, non — et les deux raisons ont été mesurées, pas supposées.
  *
- * Le script le dit avant de commencer, plutôt que d'échouer après avoir téléchargé cent mégaoctets.
+ * Le **`.deb`** passe par `fpm`. On peut l'installer sous Windows, Ruby compris, et il s'y lance :
+ * ce n'est donc pas l'outil qui manque. Mais electron-builder construit sa description ainsi —
+ * `` `${synopsis || ""}
+ ${description}` ``, le saut de ligne est en dur — et un fichier de
+ * commandes Windows ne peut pas porter un argument qui en contient. La ligne de commande se coupe
+ * là, fpm ne reçoit jamais les chemins à empaqueter, et se plaint de n'avoir aucun paramètre.
+ * Aucun réglage n'y échappe : retirer le synopsis laisse le saut de ligne en tête.
+ *
+ * L'**AppImage** pose un lien symbolique, que Windows refuse de créer sans un privilège qu'une
+ * session ordinaire n'a pas. Celle-là sortirait peut-être d'un Windows en mode développeur — non
+ * vérifié, c'est seulement l'erreur qu'elle rapporte.
+ *
+ * Les deux sortent donc d'une machine Linux, où rien de tout cela ne se pose. Le script le dit avant
+ * de commencer, plutôt que d'échouer après avoir téléchargé cent mégaoctets.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -105,8 +115,10 @@ lancer("node scripts/copier-pages.mjs");
 
 const cible = process.argv.includes("--linux") ? "linux" : process.platform;
 if (cible === "linux" && process.platform !== "linux") {
-  console.error("Les paquets Linux s'assemblent sur une machine Linux : le .deb passe par fpm, que");
-  console.error("Windows n'a pas, et l'AppImage pose un lien symbolique qu'il refuse de creer.");
+  console.error("Les paquets Linux s'assemblent sur une machine Linux. Le .deb echoue ici meme avec fpm");
+  console.error("installe : electron-builder met un saut de ligne dans sa description, et un fichier de");
+  console.error("commandes Windows ne peut pas porter un argument qui en contient. L'AppImage, elle, pose");
+  console.error("un lien symbolique que Windows refuse de creer.");
   console.error("Le VLC Linux, lui, s'assemble d'ici : « node packaging/bureau/preparer-vlc.mjs --linux ».");
   process.exit(2);
 }
