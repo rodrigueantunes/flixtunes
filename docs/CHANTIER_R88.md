@@ -21,10 +21,10 @@ Rien n'est engagé tant que le feu vert n'est pas donné, point par point ou en 
 | 7 | Défilement en haut à l'ouverture | **oui** | faible | — |
 | 8 | Boutons restants (thème) | oui | faible | — |
 | 9 | Sous-titres dédoublés | non — trois pistes possibles | moyen | un cas reproductible |
-| 10 | Live TV et fournisseurs | **la porte est la box, pas l'application** | **élevé** | beaucoup, voir §10 |
+| 10 | Live TV et fournisseurs | **reporté** — voir §10 | — | la question des sources |
 
-Les points 2, 3, 7 et 8 sont petits et sûrs : ils peuvent partir tout de suite. Le 10 est un
-sous-système à lui seul et mérite d'être découpé.
+Les points 2, 3, 7 et 8 sont petits et sûrs : ils peuvent partir tout de suite. **Le 10 est reporté**
+— la décision est prise et sa raison est en tête de sa section. La r88 porte donc les neuf autres.
 
 ---
 
@@ -172,7 +172,19 @@ Que ce soit visible sur Android **comme** sur le Web désigne plutôt le serveur
 l'affichage. Pour trancher sans deviner : **un titre où vous l'avez vu**, et une capture. Je remonte
 de là.
 
-## 10. La télévision en direct
+## 10. La télévision en direct — **reportée**
+
+> **Décision du 30 août 2026 : le point 10 ne fait pas partie de la r88.**
+>
+> La raison n'est pas technique, elle est factuelle : la connexion se fait avec les identifiants de
+> ligne mobile, c'est-à-dire par **l'application B.TV** et non par la Bbox. Or c'est la Bbox qui
+> ouvrait la porte intéressante. Sans elle il reste l'application, et l'application demanderait
+> d'imiter son authentification et ses appels privés — un code qui marche trois mois puis devient une
+> dette. La présence de la télévision sur la ligne Bbox n'est pas confirmée ; elle se lit dans l'espace
+> client, pas dans l'interface de la box, où le menu TV n'apparaît que si le service y est rattaché.
+>
+> Ce qui suit reste écrit pour le jour où la question des sources sera tranchée. Rien n'y est perdu :
+> l'analyse tient, et le socle M3U reste la première brique quel que soit le fournisseur.
 
 C'est le point le plus gros de la liste — un sous-système, pas une fonction. Et il commence par une
 mauvaise nouvelle qu'il vaut mieux dire maintenant qu'après.
@@ -264,14 +276,24 @@ réglage ne l'y autorise, tout ce qui suit change de forme — et il vaut mieux 
 
 ## Ordre proposé
 
+**Ce qui peut partir sans rien attendre :**
+
 1. **7 et 8** ensemble — mêmes écrans, correction visible tout de suite.
 2. **2** — un bouton, une route, rien de risqué.
 3. **5** — la cause est connue, et c'est celle qui gêne le plus au quotidien.
-4. **3** — dès que le plafond voulu est fixé.
-5. **1 et 9** — quand j'aurai le symptôme et un cas reproductible.
-6. **4** — quand j'aurai la liste des titres.
-7. **6** — quand on aura dit ce qu'on attend d'IMDb.
-8. **10** — par étapes, et pas avant que le reste soit livré.
 
-Le tout ne tient pas dans une révision. Je propose que la r88 porte les points 1 à 5 et 7 à 9, et que
-la télévision en direct ouvre son propre chantier.
+**Ce qui attend une décision de votre part :**
+
+4. **3** — dès que le plafond voulu est fixé.
+5. **6** — quand on aura dit ce qu'on attend d'IMDb.
+
+**Ce qui attend une mesure chez vous :**
+
+6. **1** — le symptôme exact.
+7. **9** — un titre où le dédoublement se voit.
+8. **4** — la liste des vingt films, ou l'accès pour la produire.
+
+**Reporté :** le 10.
+
+Rien ne commence sans un feu vert. Les trois premiers n'ont besoin d'aucune réponse : un mot suffit à
+les lancer, et les autres suivront à mesure que les décisions et les mesures arriveront.
