@@ -23,12 +23,16 @@
     .\tools\Build-Release.ps1 -Sortie D:\paquets
         Écrit ailleurs que dans le dossier par défaut.
 
-  ## Le dossier de sortie
+  ## Les deux valeurs en dur
 
   `$SORTIE_PAR_DEFAUT`, juste en dessous, vaut `N:\Application\Web-Android\FlixTunes\artifacts`.
   C'est une valeur en dur, et volontairement : c'est là que les paquets de ce projet sont rangés
   depuis le début. Une seule ligne à changer pour la déplacer, ou le paramètre `-Sortie` pour un
   écart ponctuel.
+
+  `$TRAVAIL_LOCAL` vaut `C:\src\flixtunes` : le disque local où le dépôt est recopié quand on lance
+  le script depuis le partage réseau, parce que pnpm n'y sait pas travailler. Même principe — une
+  ligne, et le script se déplace.
 
   ## Ce que la version et la révision décident
 
@@ -85,6 +89,12 @@ $env:CI = "true"
 # Le dossier de sortie du projet. Une ligne, et c'est la seule à changer pour tout déplacer.
 $SORTIE_PAR_DEFAUT = "N:\Application\Web-Android\FlixTunes\artifacts"
 if (-not $Sortie) { $Sortie = $SORTIE_PAR_DEFAUT }
+
+# Où le dépôt est recopié quand il vit sur un partage réseau — voir l'étape 3.
+#
+# Sur un disque local, donc : c'est tout l'objet du trajet. Le dossier est réutilisé d'une livraison
+# à l'autre, et la recopie n'y écrase que ce qui a changé.
+$TRAVAIL_LOCAL = "C:\src\flixtunes"
 
 # PowerShell 5.1 ne definit pas $IsWindows : son absence vaut Windows.
 $surWindows = $IsWindows -or ($null -eq $IsWindows)
@@ -146,6 +156,14 @@ if ($surWindows) {
   $surPartage = $root.StartsWith("\\") -or $lecteur.DriveType -eq "Network"
 }
 if ($surPartage -and -not $AutoriserPartageReseau) {
+  # Le dossier de travail est une variable en tete de script ; vide, il ferait echouer la recopie sur
+  # une exception illisible. C'est arrive : la declaration avait disparu en r87, et la generation
+  # s'arretait sur « le chemin ne peut pas etre une chaine vide » sans dire de quel chemin il
+  # s'agissait. On le nomme ici plutot que de le laisser deviner.
+  if ([string]::IsNullOrWhiteSpace($TRAVAIL_LOCAL)) {
+    Write-Error "TRAVAIL_LOCAL est vide : renseignez-le en tete de ce script (dossier de travail sur un disque local)."
+    exit 1
+  }
   Write-Output "  depot sur un partage reseau : recopie vers $TRAVAIL_LOCAL"
   [System.IO.Directory]::CreateDirectory($TRAVAIL_LOCAL) | Out-Null
   # Les dossiers ecartes ne sont ni copies ni effaces : ce sont ceux que la construction fabrique sur
@@ -204,10 +222,18 @@ try {
       if ($LASTEXITCODE -ne 0) { throw "La construction du client de bureau ($cibleBureau) a echoue." }
     }
   } finally { Pop-Location }
+  # Le motif porte l'estampille, et pas seulement l'extension.
+  #
+  # Sans elle, on ramassait tout ce qui traînait dans `release` — les paquets des revisions
+  # precedentes compris. La livraison r88 annoncait ainsi avoir produit un `.msi` et un `.deb` en
+  # r87, restes d'essais anterieurs : les fichiers etaient justes, le compte rendu mentait. Un
+  # script qui rapporte faux est un script qu'on cesse de croire.
+  #
+  # `SHA256SUMS` filtrait deja de la sorte, et l'APK Android aussi ; c'est ici seul qu'il manquait.
   $motifs = if ($surWindows) { @("*.msi", "*.deb") } else { @("*.deb", "*.AppImage") }
   foreach ($motif in $motifs) {
-    $paquets = Get-ChildItem (Join-Path $root "apps/desktop/release") -Filter $motif -ErrorAction SilentlyContinue
-    if (-not $paquets) { throw "Aucun paquet de bureau en $motif." }
+    $paquets = Get-ChildItem (Join-Path $root "apps/desktop/release") -Filter "*$estampille$motif" -ErrorAction SilentlyContinue
+    if (-not $paquets) { throw "Aucun paquet de bureau en $motif pour $estampille." }
     foreach ($paquet in $paquets) {
       Copy-Item $paquet.FullName (Join-Path $Sortie $paquet.Name) -Force
       $produits += $paquet.Name
