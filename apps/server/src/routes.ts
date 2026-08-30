@@ -34,6 +34,7 @@ import { scanLibraryById } from "./scanner.js";
 import { getArtworkAsset } from "./artwork.js";
 import { fetchTmdbPreview } from "./tmdb.js";
 import { fetchMetadataWithProviders, metadataProviderStatuses, resetProviderRuntimeCaches, searchAllMetadata } from "./metadata-providers.js";
+import { resoudreIdentifiantExterne } from "./tmdb.js";
 import { saveProviderConfiguration } from "./provider-settings.js";
 import { listMetadataProvenance, recordMetadataField } from "./metadata-fields.js";
 import {
@@ -832,6 +833,41 @@ export async function registerRoutes(app: FastifyInstance) {
       .get(request.params.id) as { id: string; library_id: string; kind: "movie" | "show"; title: string;
         year: number | null; language: string } | undefined;
     if (!item) return reply.code(404).send({ message: "Film ou série introuvable" });
+
+    /*
+     * Un identifiant IMDb collé à la main désigne une **œuvre**, pas un fournisseur.
+     *
+     * TMDB tient la correspondance et la rend en une requête. On la résout donc ici, et tout ce qui
+     * suit travaille sur la fiche TMDB — résumé français, jaquette, distribution avec portraits. Sans
+     * cette résolution, un `tt…` partait vers le connecteur IMDb licencié, que personne n'a configuré,
+     * et l'écran répondait « fournisseur indisponible » pour un identifiant pourtant parfaitement
+     * valide.
+     *
+     * Rien n'est deviné : si TMDB ne connaît pas l'identifiant, on le dit et on n'enregistre rien.
+     * Proposer à la place un titre approchant serait exactement ce qu'une correction manuelle vient
+     * corriger.
+     */
+    let fournisseur: typeof parsed.data.provider = parsed.data.provider;
+    let identifiant = parsed.data.externalId;
+    if (fournisseur === "imdb" && /^tt\d+$/i.test(identifiant)) {
+      let resolu: string | null;
+      try {
+        resolu = await resoudreIdentifiantExterne(identifiant.toLowerCase(), "imdb_id",
+          item.kind === "movie" ? "movie" : "tv");
+      } catch (error) {
+        return reply.code(502).send({
+          message: `TMDB n'a pas pu être interrogé pour ${identifiant} : ${error instanceof Error ? error.message : String(error)}`,
+        });
+      }
+      if (!resolu) {
+        return reply.code(404).send({
+          message: `TMDB ne connaît aucun${item.kind === "movie" ? " film" : "e série"} portant l'identifiant IMDb ${identifiant}.`,
+        });
+      }
+      fournisseur = "tmdb";
+      identifiant = resolu;
+    }
+
     const titre = parsed.data.title ?? item.title;
     const annee = parsed.data.year === undefined ? item.year : parsed.data.year;
     const base = item.kind === "movie"
@@ -839,16 +875,16 @@ export async function registerRoutes(app: FastifyInstance) {
       : { kind: "episode" as const, title: titre, year: annee, showTitle: titre, seasonNumber: null, episodeNumber: null };
     let validated;
     try {
-      validated = await fetchMetadataWithProviders(base, item.language, { provider: parsed.data.provider, id: parsed.data.externalId });
+      validated = await fetchMetadataWithProviders(base, item.language, { provider: fournisseur, id: identifiant });
     } catch (error) {
       return reply.code(502).send({ message: `La fiche choisie n'a pas pu être validée : ${error instanceof Error ? error.message : String(error)}` });
     }
     const entity = item.kind === "movie" ? validated?.movie : validated?.show;
-    if (!entity || entity.provider !== parsed.data.provider || entity.externalId !== parsed.data.externalId) {
+    if (!entity || entity.provider !== fournisseur || entity.externalId !== identifiant) {
       return reply.code(422).send({ message: "Le fournisseur ne confirme pas cette fiche ; aucune modification n'a été enregistrée." });
     }
-    applyCorrection({ type: "rematch", catalogId: item.id, provider: parsed.data.provider,
-      externalId: parsed.data.externalId, title: entity.title, year: entity.year });
+    applyCorrection({ type: "rematch", catalogId: item.id, provider: fournisseur,
+      externalId: identifiant, title: entity.title, year: entity.year });
     db.prepare("DELETE FROM metadata_match_proposals WHERE catalog_id = ?").run(item.id);
 
     // La correction s'applique ici même, sur cette seule fiche, et la réponse porte son nouvel état.

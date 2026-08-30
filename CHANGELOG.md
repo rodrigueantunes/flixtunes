@@ -11,7 +11,8 @@
 - **Les cases à cocher portent enfin le thème.** `accent-color` ne teinte que l'état coché ; décochée, la case restait le carré gris du système — « Compte enfant », « Fond sombre ». Elles prennent la silhouette des commandes, et la teinte était par ailleurs répétée à quatre endroits : une seule déclaration les remplace.
 - **Un réglage éteint se voit.** Les six réglages d'apparence des sous-titres, désactivés devant une image depuis la r87, gardaient la couleur d'un réglage actif et paraissaient seulement inertes.
 - **La télévision en direct est reportée**, et la raison est écrite dans `docs/CHANTIER_R88.md` plutôt que tue : la connexion Bouygues passe par les identifiants de ligne mobile, donc par l'application et non par la Bbox — et c'était la Bbox qui ouvrait la porte intéressante.
-- 773 tests serveur, 230 tests Web et 20 tests de la coque, tous verts.
+- **Un identifiant IMDb corrige une fiche, depuis l'écran.** C'est la voie la plus sûre quand un titre ne suffit pas à trancher — *A Star Is Born* compte quatre versions : un identifiant **désigne** l'œuvre au lieu de la décrire. Le chemin existait déjà pour les identifiants trouvés dans un NFO ou un suffixe de nom de fichier, mais aucun bouton n'y menait ; collé dans l'écran de correspondance, un `tt…` partait vers le connecteur IMDb licencié, que personne n'a configuré. Il est désormais résolu chez TMDB, si bien que la fiche obtenue est **complète** — résumé français, jaquette, distribution avec portraits —, là où les fichiers publics d'IMDb n'auraient donné ni résumé ni image. L'adresse de la page est acceptée telle quelle, puisque c'est elle qu'on copie. Et rien n'est deviné : si TMDB ne connaît pas l'identifiant, on le dit et on n'enregistre rien.
+- 777 tests serveur, 235 tests Web et 20 tests de la coque, tous verts.
 
 ## 0.5.6.r87 — VLC choisit ses pistes, et le NAS cesse de recopier des films pour ça
 

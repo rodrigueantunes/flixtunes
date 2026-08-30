@@ -76,6 +76,8 @@ export function MetadataManager({
     finally { setApplying(null); }
   }
 
+  const [imdb, setImdb] = useState("");
+
   async function search(event: FormEvent) {
     event.preventDefault();
     if (!selected || !query.trim()) return;
@@ -99,7 +101,36 @@ export function MetadataManager({
     }
   }
 
+  /**
+   * Coller un identifiant IMDb, plutôt que chercher un titre.
+   *
+   * C'est la voie la plus sûre quand un titre a des homonymes ou des rééditions — *A Star Is Born*
+   * en compte quatre. On ne compare alors plus rien : l'identifiant **désigne** l'œuvre.
+   *
+   * Le serveur le résout chez TMDB, si bien que la fiche obtenue est complète — résumé français,
+   * jaquette, distribution. Ce que le presse-papier contient est accepté tel quel : l'adresse d'une
+   * page IMDb comme l'identifiant nu, puisque c'est l'adresse qu'on copie en pratique.
+   */
+  function identifiantImdb(saisie: string): string | null {
+    return /(tt\d{6,})/i.exec(saisie.trim())?.[1]?.toLowerCase() ?? null;
+  }
+
+  async function appliquerImdb(event: FormEvent) {
+    event.preventDefault();
+    if (!selected) return;
+    const identifiant = identifiantImdb(imdb);
+    if (!identifiant) {
+      setMessage("Identifiant IMDb attendu : « tt0075029 », ou l'adresse de la page.");
+      return;
+    }
+    await appliquer({ provider: "imdb", externalId: identifiant, title: selected.title, year: selected.year });
+  }
+
   async function apply(candidate: MetadataSearchCandidate) {
+    await appliquer(candidate);
+  }
+
+  async function appliquer(candidate: Pick<MetadataSearchCandidate, "provider" | "externalId" | "title" | "year">) {
     if (!selected) return;
     const candidateKey = `${candidate.provider}:${candidate.externalId}`;
     setApplying(candidateKey);
@@ -180,6 +211,19 @@ export function MetadataManager({
                 onChange={(event) => setMinYear(event.target.value.replace(/\D/g, "").slice(0, 4))}
                 aria-label="Année minimale des résultats" title="Ne proposer que les titres parus à partir de cette année" />
               <button className="primary" disabled={searching}>{searching ? "Recherche…" : "Rechercher"}</button>
+            </form>
+            {/*
+              * Une seconde voie, à côté de la recherche par titre : l'identifiant désigne l'œuvre au
+              * lieu de la décrire. C'est ce qu'il faut quand le titre ne suffit pas à trancher —
+              * quatre versions d'« A Star Is Born », par exemple.
+              */}
+            <form className="metadata-search metadata-imdb" onSubmit={(event) => void appliquerImdb(event)}>
+              <input value={imdb} onChange={(event) => setImdb(event.target.value)}
+                placeholder="tt0075029 ou l'adresse de la page IMDb" aria-label="Identifiant IMDb"
+                title="La fiche est résolue chez TMDB : vous obtenez le résumé français, la jaquette et la distribution." />
+              <button disabled={applying != null || !identifiantImdb(imdb)}>
+                {applying === `imdb:${identifiantImdb(imdb) ?? ""}` ? "Application…" : "Appliquer l'identifiant"}
+              </button>
             </form>
             <button className="provider-advanced-toggle" type="button" aria-expanded={manualOpen} onClick={() => setManualOpen(!manualOpen)}>✎ {manualOpen ? "Masquer la correction manuelle" : "Corriger les informations manuellement"}</button>
             {manualOpen && <form className="manual-metadata-form" onSubmit={saveManual}>

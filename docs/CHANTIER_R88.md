@@ -17,7 +17,7 @@ Rien n'est engagé tant que le feu vert n'est pas donné, point par point ou en 
 | 3 | Talent limité | — | — | **abandonné** à sa demande |
 | 4 | ~20 films manquants | non — demande une mesure | moyen | l'accès aux fichiers |
 | 5 | TMDB qui disparaît | **oui, mesurée** | ~~moyen~~ | **fait** |
-| 6 | Ajouter IMDb | sans objet | **faible** pour le manuel | son rôle est tranché — voir §6 |
+| 6 | Ajouter IMDb | sans objet | ~~faible~~ | **moitié manuelle faite** — voir §6 |
 | 7 | Défilement en haut à l'ouverture | **oui** | ~~faible~~ | **fait** |
 | 8 | Boutons restants (thème) | oui | ~~faible~~ | **fait** |
 | 9 | Sous-titres dédoublés | non | — | **mis de côté** à sa demande |
@@ -400,11 +400,10 @@ réglage ne l'y autorise, tout ce qui suit change de forme — et il vaut mieux 
 désignait une ligne de requête, et le test le prouve — sur l'ancienne version, la saison était visitée
 zéro fois.
 
-**Prêt à partir, et petit :**
-
-1. **6, la moitié manuelle** — accepter un identifiant `tt…` dans l'écran de correspondance et le
-   faire passer par le `/find` de TMDB, qui existe déjà. Rend une fiche **complète**, résumé français
-   et jaquette compris. Aucun jeu de données, aucune clé.
+**Fait :** la moitié manuelle du point 6. Un `tt…` — ou l'adresse de la page — collé dans l'écran de
+correspondance est résolu chez TMDB et rend la fiche complète. Aucun jeu de données, aucune clé.
+Vérifié par les tests contre un TMDB simulé ; le passage sur le vrai service se fera sur votre
+instance, avec votre clé.
 
 **Ce qui attend une mesure chez vous :**
 

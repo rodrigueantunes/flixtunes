@@ -557,6 +557,33 @@ function toEntity(details: TmdbDetails, language: string, confidence: number, fa
   };
 }
 
+/**
+ * L'identifiant TMDB qui correspond à un identifiant IMDb ou TheTVDB, ou `null`.
+ *
+ * TMDB tient cette table lui-même : `/find` répond en une requête, sans comparaison de titres et
+ * sans score — c'est une résolution, pas une recherche. D'où la confiance de 1 chez l'appelant.
+ *
+ * Extrait de `fetchMetadataBundle`, où il ne servait qu'aux identifiants trouvés dans un NFO ou un
+ * suffixe de nom de fichier. Il sert désormais aussi à un **choix manuel** : coller un `tt…` dans
+ * l'écran de correspondance rend ainsi la fiche TMDB complète — résumé, jaquette, distribution —,
+ * là où l'identifiant seul n'aurait donné qu'un numéro.
+ *
+ * Rend `null` quand TMDB ne connaît pas l'identifiant. L'appelant décide alors quoi en faire ; ici,
+ * on ne devine jamais un titre approchant pour compenser.
+ */
+export async function resoudreIdentifiantExterne(
+  identifiant: string,
+  source: "imdb_id" | "tvdb_id",
+  kind: "movie" | "tv",
+): Promise<string | null> {
+  if (!getProviderConfiguration().tmdbToken) return null;
+  const trouve = await tmdbRequest<{ movie_results?: TmdbSearchResult[]; tv_results?: TmdbSearchResult[] }>(
+    `/find/${encodeURIComponent(identifiant)}`, { external_source: source },
+  );
+  const exact = (kind === "movie" ? trouve.movie_results : trouve.tv_results)?.[0];
+  return exact ? String(exact.id) : null;
+}
+
 export async function fetchMetadataBundle(
   parsed: ParsedMedia,
   language = config.tmdbLanguage,
@@ -574,11 +601,8 @@ export async function fetchMetadataBundle(
   if (!externalId && (parsed.externalIds?.imdb || parsed.externalIds?.tvdb)) {
     const source = parsed.externalIds.imdb ? "imdb_id" : "tvdb_id";
     const id = parsed.externalIds.imdb ?? parsed.externalIds.tvdb!;
-    const found = await tmdbRequest<{ movie_results?: TmdbSearchResult[]; tv_results?: TmdbSearchResult[] }>(
-      `/find/${encodeURIComponent(id)}`, { external_source: source },
-    );
-    const exact = (kind === "movie" ? found.movie_results : found.tv_results)?.[0];
-    if (exact) { externalId = String(exact.id); confidence = 1; }
+    const resolu = await resoudreIdentifiantExterne(id, source, kind);
+    if (resolu) { externalId = resolu; confidence = 1; }
   }
   if (!externalId) {
     // Recherche élargie par paliers. Une requête unique laissait sans correspondance toute fiche dont

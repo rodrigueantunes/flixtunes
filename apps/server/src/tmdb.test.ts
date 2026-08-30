@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { config } from "./config.js";
-import { classificationAge, fetchMetadataBundle, numeroRelatif, resetTmdbRuntimeCaches, titleMatchScore, tmdbBreaker } from "./tmdb.js";
+import { classificationAge, fetchMetadataBundle, numeroRelatif, resetTmdbRuntimeCaches, resoudreIdentifiantExterne, titleMatchScore, tmdbBreaker } from "./tmdb.js";
 import { LimiteDeDebit } from "./resilience.js";
 
 const originalToken = config.tmdbToken;
@@ -318,5 +318,59 @@ describe("TMDB face à une limitation de débit", () => {
     await expect(fetchMetadataBundle({
       kind: "movie", title: "Dune", year: 2021, showTitle: null, seasonNumber: null, episodeNumber: null,
     }, "fr-FR")).rejects.toThrow("TMDB 503");
+  });
+});
+
+/**
+ * Un identifiant IMDb désigne une œuvre ; il ne la décrit pas.
+ *
+ * C'est ce qui en fait la voie la plus sûre quand un titre ne suffit pas à trancher — « A Star Is
+ * Born » compte quatre versions. TMDB tient la correspondance et la rend en une requête, si bien
+ * que la fiche obtenue est la sienne, complète : résumé français, jaquette, distribution.
+ */
+describe("résolution d'un identifiant externe", () => {
+  it("rend l'identifiant TMDB d'un film désigné par son identifiant IMDb", async () => {
+    config.tmdbToken = "test-token";
+    const vues: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      vues.push(url);
+      if (url.includes("/find/tt0075029")) {
+        return Response.json({ movie_results: [{ id: 12345, title: "A Star Is Born" }], tv_results: [] });
+      }
+      return new Response(null, { status: 404 });
+    }));
+
+    await expect(resoudreIdentifiantExterne("tt0075029", "imdb_id", "movie")).resolves.toBe("12345");
+    expect(vues.some((url) => url.includes("external_source=imdb_id")), "la source est transmise").toBe(true);
+    expect(vues.some((url) => url.includes("/search/")), "aucune recherche par titre n'a lieu").toBe(false);
+  });
+
+  it("distingue un film d'une série : le même identifiant ne rend pas la même chose", async () => {
+    config.tmdbToken = "test-token";
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      movie_results: [], tv_results: [{ id: 999, name: "Silo" }],
+    })));
+
+    await expect(resoudreIdentifiantExterne("tt14688458", "imdb_id", "tv")).resolves.toBe("999");
+    await expect(resoudreIdentifiantExterne("tt14688458", "imdb_id", "movie"),
+      "un film n'est pas cherché parmi les séries").resolves.toBeNull();
+  });
+
+  /* Ne rien deviner : proposer un titre approchant serait exactement ce qu'une correction corrige. */
+  it("rend null quand TMDB ne connaît pas l'identifiant, sans proposer autre chose", async () => {
+    config.tmdbToken = "test-token";
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ movie_results: [], tv_results: [] })));
+
+    await expect(resoudreIdentifiantExterne("tt9999999", "imdb_id", "movie")).resolves.toBeNull();
+  });
+
+  it("ne tente rien sans clé TMDB, plutôt que d'échouer en chemin", async () => {
+    config.tmdbToken = "";
+    const appels = vi.fn(async () => Response.json({}));
+    vi.stubGlobal("fetch", appels);
+
+    await expect(resoudreIdentifiantExterne("tt0075029", "imdb_id", "movie")).resolves.toBeNull();
+    expect(appels).not.toHaveBeenCalled();
   });
 });
