@@ -156,6 +156,13 @@ class LecteurDirectActivity : ComponentActivity() {
     private var blocages = mutableListOf<Long>()
     /** Réparations tentées sur l'adresse en cours : une seule, après quoi la source est bien en cause. */
     private var reparations = 0
+    /**
+     * Quand on a demandé quelque chose au lecteur pour la dernière fois.
+     *
+     * Ouvrir, sauter, reprendre : chacun de ces gestes recharge le tampon, et le compter comme un
+     * hoquet faisait reculer le lecteur alors que tout allait bien.
+     */
+    private var dernierGeste = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -218,9 +225,17 @@ class LecteurDirectActivity : ComponentActivity() {
                      * laquelle on la lit — et la réponse n'est pas d'en changer, c'est de **reculer**.
                      * Seize secondes de plus derrière le bord, prises dans les 37 s de marge que la
                      * fenêtre médiane laisse. On le paie une fois, et l'image tient.
+                     *
+                     * **Mais tout rechargement n'est pas un hoquet.** Ouvrir une chaîne, sauter dans
+                     * la fenêtre, reprendre après une pause : chacun de ces gestes remplit le tampon
+                     * et passe par le même état. Les compter revenait à se punir soi-même — relevé à
+                     * l'écran, l'image sautait alors qu'elle allait très bien, parce que trois
+                     * flèches en deux minutes suffisaient à déclencher le recul. On ignore donc ce
+                     * qui suit de près une action délibérée.
                      */
                     if (etat != Player.STATE_BUFFERING || message != null) return
                     val maintenant = System.currentTimeMillis()
+                    if (maintenant - dernierGeste < REPIT_APRES_GESTE_MS) return
                     blocages = blocages.filter { maintenant - it < MEMOIRE_BLOCAGES_MS }.toMutableList()
                     blocages.add(maintenant)
                     if (blocages.size >= BLOCAGES_AVANT_RECUL && securite == 0) {
@@ -322,6 +337,8 @@ class LecteurDirectActivity : ComponentActivity() {
     private fun jouerRang(reprendre: Boolean = true) {
         val source = adresses.getOrNull(rang) ?: run { echec = true; message = getString(R.string.direct_aucune_source); return }
         if (reprendre) essai = source
+        // Préparer un flux remplit le tampon : c'est un geste, pas un hoquet.
+        dernierGeste = System.currentTimeMillis()
         lecteur?.apply {
             /*
              * La cible de retard : trois segments derrière le bord, comme le veut HLS, plus la
@@ -508,6 +525,7 @@ class LecteurDirectActivity : ComponentActivity() {
      */
     private fun sauter(deltaMs: Long) {
         val joueur = lecteur ?: return
+        dernierGeste = System.currentTimeMillis()
         val duree = joueur.duration
         if (duree <= 0) return
         joueur.seekTo(minOf(duree - 1_000, maxOf(2_000, joueur.currentPosition + deltaMs)))
@@ -516,6 +534,7 @@ class LecteurDirectActivity : ComponentActivity() {
 
     /** Revenir au bord du flux — la seule position qui mérite le mot « direct ». */
     private fun rejoindreDirect() {
+        dernierGeste = System.currentTimeMillis()
         lecteur?.seekToDefaultPosition()
         lecteur?.play()
         reveiller()
@@ -531,6 +550,7 @@ class LecteurDirectActivity : ComponentActivity() {
      */
     private fun basculerPause() {
         val joueur = lecteur ?: return
+        dernierGeste = System.currentTimeMillis()
         if (joueur.isPlaying) joueur.pause() else joueur.play()
         reveiller()
     }
@@ -605,7 +625,15 @@ class LecteurDirectActivity : ComponentActivity() {
                 factory = { PlayerView(contexte).apply { useController = false; player = lecteur } },
                 modifier = Modifier.fillMaxSize(),
             )
-            Column(Modifier.align(Alignment.TopStart).padding(24.dp)) {
+            /*
+             * Le nom s'efface avec les commandes.
+             *
+             * Il restait posé en haut à gauche pendant qu'on regardait, alors que tout le reste
+             * s'était retiré : sur un téléviseur, c'est une incrustation permanente sur l'image.
+             * Relevé à l'écran. Le message d'ouverture, lui, reste visible tant qu'il a quelque chose
+             * à dire — il ne se retire pas, il disparaît quand la chaîne démarre.
+             */
+            if (commandesVisibles) Column(Modifier.align(Alignment.TopStart).padding(24.dp)) {
                 val courante = chaine
                 Text(
                     listOfNotNull(courante?.numero?.toString(), courante?.nom).joinToString(" · "),
@@ -643,8 +671,17 @@ class LecteurDirectActivity : ComponentActivity() {
              * Sous deux segments, il n'y a rien derrière quoi revenir : une barre y serait un décor
              * qui ne répond pas, et c'est pire que pas de barre du tout.
              */
-            if (commandesVisibles && fenetreMs > FENETRE_MINIMALE_MS) {
-                val avance = (positionMs.toFloat() / fenetreMs.toFloat()).coerceIn(0f, 1f)
+            /*
+             * La pause s'affiche **toujours**, la piste seulement quand il y a une fenêtre.
+             *
+             * Les deux étaient liés, et le bouton disparaissait donc sur les chaînes dont l'hébergeur
+             * ne publie presque rien derrière le direct — c'est-à-dire là où l'on veut encore pouvoir
+             * mettre en pause. Ce qui n'a pas de sens sans fenêtre, c'est la barre : elle promettrait
+             * un retour en arrière qui n'existe pas. Le bouton, lui, en a toujours.
+             */
+            if (commandesVisibles) {
+                val fenetreUtile = fenetreMs > FENETRE_MINIMALE_MS
+                val avance = if (fenetreUtile) (positionMs.toFloat() / fenetreMs.toFloat()).coerceIn(0f, 1f) else 0f
                 val auDirect = retardMs <= MARGE_DIRECT_MS
                 Row(
                     Modifier.align(Alignment.BottomCenter).fillMaxWidth()
@@ -663,23 +700,27 @@ class LecteurDirectActivity : ComponentActivity() {
                         color = Color.White, fontSize = 20.sp,
                     )
                     Spacer(Modifier.width(14.dp))
-                    Box(
-                        Modifier.weight(1f).height(6.dp).clip(CircleShape)
-                            .background(Color.White.copy(alpha = .18f)),
-                    ) {
+                    if (fenetreUtile) {
                         Box(
-                            Modifier.fillMaxWidth(avance).height(6.dp).clip(CircleShape)
-                                .background(BleuClair),
-                        )
+                            Modifier.weight(1f).height(6.dp).clip(CircleShape)
+                                .background(Color.White.copy(alpha = .18f)),
+                        ) {
+                            Box(
+                                Modifier.fillMaxWidth(avance).height(6.dp).clip(CircleShape)
+                                    .background(BleuClair),
+                            )
+                        }
+                        Spacer(Modifier.width(14.dp))
+                    } else {
+                        Spacer(Modifier.weight(1f))
                     }
-                    Spacer(Modifier.width(14.dp))
                     Text(
                         if (auDirect) getString(R.string.direct_en_direct)
                         else getString(R.string.direct_retard, horodatage(retardMs)),
                         color = if (auDirect) Color.White else BleuClair,
                         fontSize = 12.sp, fontWeight = FontWeight.Bold,
                     )
-                    if (!auDirect) {
+                    if (!auDirect && fenetreUtile) {
                         Spacer(Modifier.width(10.dp))
                         Text(
                             "⏭",
@@ -805,5 +846,13 @@ class LecteurDirectActivity : ComponentActivity() {
 
         /** La barre s'efface après cette accalmie. */
         private const val REPOS_BARRE_MS = 3_500L
+
+        /**
+         * Le répit accordé après une action : ce qui recharge dans ce délai vient de nous.
+         *
+         * Quatre secondes couvrent l'ouverture d'un segment de 8 s et le remplissage qui suit un saut.
+         * Au-delà, un rechargement est bien un hoquet de la source.
+         */
+        private const val REPIT_APRES_GESTE_MS = 4_000L
     }
 }

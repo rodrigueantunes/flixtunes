@@ -767,6 +767,8 @@ h1, h2 { font-family: "Manrope", sans-serif; }
 .lecteur-direct-piste { flex: 1; height: 6px; border-radius: 3px; background: #ffffff2e; cursor: pointer; }
 .lecteur-direct-piste > i { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
 .lecteur-direct-piste:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+/* Sans fenêtre, la piste laisse sa place plutôt que de promettre un retour en arrière inexistant. */
+.lecteur-direct-piste-absente { flex: 1; }
 .lecteur-direct-retard { min-width: 5.5rem; color: #dbe4f7; font-size: .8rem; font-weight: 700;
   letter-spacing: .04em; text-align: right; }
 .form-actions { display: flex; justify-content: flex-end; gap: .7rem; margin-top: 1.2rem; }

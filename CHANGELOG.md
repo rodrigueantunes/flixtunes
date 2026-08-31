@@ -1,5 +1,36 @@
 # Journal des versions
 
+## 0.5.7.r4 — ce que le téléviseur a montré
+
+*Cinq retours d'un essai sur téléviseur, et deux défauts trouvés en les corrigeant. Aucun ne se voyait
+depuis un navigateur de bureau : c'est l'écran de salon qui les a sortis.*
+
+- **Le nom de la chaîne restait posé en haut à gauche** pendant qu'on regardait, alors que tout le
+  reste s'était retiré — une incrustation permanente sur l'image. Il s'efface maintenant avec les
+  commandes. Le message d'ouverture, lui, reste : il ne se retire pas, il disparaît quand la chaîne
+  démarre.
+- **La barre du lecteur Web ne s'effaçait jamais**, et la cause valait le détour : la position du
+  direct est relevée quatre fois par seconde et figurait dans les dépendances de l'effet qui la
+  masque. La minuterie repartait donc toutes les 250 ms sans jamais arriver au bout. Vérifié à
+  l'écran : cinq secondes après le dernier geste, elle était toujours là.
+- **Le bouton de pause disparaissait sur certaines chaînes.** Il était lié à la barre de progression,
+  qui ne s'affiche que si l'hébergeur publie une fenêtre derrière le direct — c'est-à-dire qu'il
+  manquait précisément là où l'on veut encore pouvoir mettre en pause. Ce qui n'a pas de sens sans
+  fenêtre, c'est la piste, pas le bouton.
+- **Revenir d'une chaîne rendait « 0 chaîne » sur Android.** La section du direct était **reconstruite
+  à neuf** à chaque retour : la grille repartait vide, les cases se décochaient, et l'écran annonçait
+  zéro là où il y en avait une minute plus tôt. Elle est désormais complétée — les facettes et la
+  dernière chaîne se rafraîchissent, ce que la personne avait choisi et parcouru reste. Le profil garde
+  son droit de veto : une grille bâtie pour quelqu'un d'autre se recharge plutôt que de mentir.
+- **Le recul de sécurité se déclenchait alors que tout allait bien.** Il comptait les rechargements du
+  tampon — mais ouvrir une chaîne, sauter dans la fenêtre ou reprendre après une pause passent par le
+  même état. Trois flèches en deux minutes suffisaient donc à faire sauter l'image pour se protéger
+  d'un hoquet qui n'existait pas. Ce qui recharge dans les quatre secondes suivant une action
+  délibérée ne compte plus : on ne se punit pas soi-même.
+- 876 tests serveur, 271 tests Web, le Kotlin compile, lint passe. Vérifié à l'écran : BFM TV s'ouvre
+  au **numéro 13**, celui du plan national, avec sa barre, sa pause et son retour au direct — et la
+  barre s'efface six secondes plus tard.
+
 ## 0.5.7.r3 — le lecteur du direct : la meilleure source, la barre, et la télécommande
 
 *Trois demandes, un audit et une mesure avant d'écrire : `docs/CHANTIER_LIVE_TV_R3.md`. La contrainte

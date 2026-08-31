@@ -114,6 +114,14 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
    */
   const [securite, setSecurite] = useState(0);
   const blocages = useRef<number[]>([]);
+  /**
+   * Quand on a demandé quelque chose au lecteur pour la dernière fois.
+   *
+   * Ouvrir, sauter, reprendre : chacun de ces gestes remplit le tampon et ressemble à un hoquet.
+   * Les compter revenait à se punir soi-même — trois flèches en deux minutes suffisaient à faire
+   * reculer le lecteur alors que tout allait bien.
+   */
+  const dernierGeste = useRef(0);
 
   useEffect(() => {
     let annule = false;
@@ -241,6 +249,8 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
     const relayer = (parRelais || mixte) && entree.relais;
     const source = relayer ? entree.relais! : entree.url;
     essai.current = entree.url;
+    // Ouvrir un flux remplit le tampon : c'est un geste, pas un hoquet.
+    dernierGeste.current = Date.now();
     let annule = false;
     let minuteur = 0;
     let reparations = 0;
@@ -305,6 +315,8 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
            */
           if (donnees.details === HlsClass.ErrorDetails.BUFFER_STALLED_ERROR) {
             const maintenant = Date.now();
+            // Quatre secondes de répit : ce qui recharge juste après un geste vient de nous.
+            if (maintenant - dernierGeste.current < 4_000) return;
             blocages.current = [...blocages.current, maintenant]
               .filter((instant) => maintenant - instant < MEMOIRE_BLOCAGES_MS);
             if (blocages.current.length >= BLOCAGES_AVANT_RECUL && hls.config.liveSyncDurationCount < 5) {
@@ -387,6 +399,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
   const rejoindreDirect = useCallback(() => {
     const element = videoRef.current;
     if (!element?.seekable.length) return;
+    dernierGeste.current = Date.now();
     element.currentTime = element.seekable.end(element.seekable.length - 1) - 1;
     void element.play().catch(() => undefined);
   }, []);
@@ -401,6 +414,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
   const sauter = useCallback((secondes: number) => {
     const element = videoRef.current;
     if (!element?.seekable.length) return;
+    dernierGeste.current = Date.now();
     const debut = element.seekable.start(0) + 2;
     const fin = element.seekable.end(element.seekable.length - 1) - 1;
     element.currentTime = Math.min(fin, Math.max(debut, element.currentTime + secondes));
@@ -419,6 +433,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
   const basculerPause = useCallback(() => {
     const element = videoRef.current;
     if (!element) return;
+    dernierGeste.current = Date.now();
     if (element.paused) void element.play().catch(() => undefined);
     else element.pause();
     setBarreVisible(true);
@@ -434,12 +449,21 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
     return () => window.clearTimeout(oubli);
   }, [barreUtile, fenetre, rejoindreDirect]);
 
-  /** La barre s'efface après une accalmie, et revient au moindre geste. En pause, elle reste. */
+  /**
+   * La barre s'efface après une accalmie, et revient au moindre geste. En pause, elle reste.
+   *
+   * **La position ne figure pas dans les dépendances**, et c'est tout le correctif : elle est relevée
+   * quatre fois par seconde, l'effet repartait donc toutes les 250 ms et remettait sa minuterie à
+   * zéro. La barre ne s'effaçait jamais — vérifié à l'écran, cinq secondes après le dernier geste
+   * elle était toujours là. Ce qui doit la rappeler, ce sont les gestes, et ils passent tous par
+   * `setBarreVisible`.
+   */
+  const enPause = fenetre?.enPause ?? false;
   useEffect(() => {
-    if (!barreVisible || choixOuvert || fenetre?.enPause) return;
+    if (!barreVisible || choixOuvert || enPause) return;
     const oubli = window.setTimeout(() => setBarreVisible(false), REPOS_BARRE_MS);
     return () => window.clearTimeout(oubli);
-  }, [barreVisible, choixOuvert, fenetre?.enPause, fenetre?.position]);
+  }, [barreVisible, choixOuvert, enPause]);
 
   useEffect(() => {
     const auClavier = (evenement: KeyboardEvent) => {
@@ -510,15 +534,17 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
     </ul>}
 
     {/*
-      * La barre ne s'affiche que si la fenêtre vaut la peine.
+      * La pause s'affiche **toujours**, la piste seulement quand il y a une fenêtre.
       *
-      * Sous deux segments, il n'y a rien derrière quoi revenir : une barre y serait un décor qui ne
-      * répond pas, et c'est pire que pas de barre du tout.
+      * Les deux étaient liées, et le bouton disparaissait donc sur les chaînes dont l'hébergeur ne
+      * publie presque rien derrière le direct — c'est-à-dire là où l'on veut encore pouvoir mettre en
+      * pause. Ce qui n'a pas de sens sans fenêtre, c'est la piste : elle promettrait un retour en
+      * arrière qui n'existe pas. Le bouton, lui, en a toujours un.
       */}
-    {barreUtile && barreVisible && fenetre && <div className="lecteur-direct-progression">
+    {barreVisible && fenetre && <div className="lecteur-direct-progression">
       <button type="button" className="player-icon-button" onClick={basculerPause}
         aria-label={fenetre.enPause ? "Reprendre" : "Mettre en pause"}>{fenetre.enPause ? "⏵" : "⏸"}</button>
-      <div className="lecteur-direct-piste" role="slider" aria-label="Position dans la fenêtre du direct"
+      {barreUtile ? <div className="lecteur-direct-piste" role="slider" aria-label="Position dans la fenêtre du direct"
         aria-valuemin={0} aria-valuemax={Math.round(largeurFenetre)}
         aria-valuenow={Math.round(fenetre.position - fenetre.debut)} tabIndex={0}
         onClick={(evenement) => {
@@ -527,11 +553,11 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
           sauter(fenetre.debut + part * largeurFenetre - fenetre.position);
         }}>
         <i style={{ width: `${avance}%` }} />
-      </div>
+      </div> : <span className="lecteur-direct-piste-absente" />}
       <span className="lecteur-direct-retard">
         {auDirect ? "EN DIRECT" : `− ${horodatage(fenetre.fin - fenetre.position)}`}
       </span>
-      {!auDirect && <button type="button" className="player-icon-button" onClick={rejoindreDirect}
+      {!auDirect && barreUtile && <button type="button" className="player-icon-button" onClick={rejoindreDirect}
         aria-label="Revenir au direct" title="Revenir au direct">⏭</button>}
     </div>}
 

@@ -140,6 +140,13 @@ data class MainState(
 @Immutable
 data class SectionDirect(
     val disponible: Boolean = false,
+    /**
+     * Le profil pour qui cette section a été bâtie.
+     *
+     * Il sert à savoir si l'on peut la garder au retour d'une chaîne. Les favorites et la dernière
+     * chaîne sont par profil : conserver la grille d'un autre serait pire que de la recharger.
+     */
+    val profileId: String? = null,
     val items: List<ChaineDirect> = emptyList(),
     val total: Int = 0,
     val loading: Boolean = false,
@@ -738,14 +745,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun chargerDirect(api: FlixTunesApi, profileId: String) {
         val etat = runCatching { api.etatDirect(profileId) }.getOrNull()
         if (etat?.disponible != true) { state = state.copy(direct = SectionDirect(disponible = false)); return }
-        val listes = runCatching { api.listesDirect(profileId) }.getOrDefault(emptyList())
-        val pays = runCatching { api.paysDirect(profileId) }.getOrDefault(emptyList())
-        // Au premier chargement, aucun filtre n'est coché : les comptes sont ceux du corpus entier,
-        // et c'est juste. Ils sont recomptés dès qu'une case l'est, par `recompterLesFacettes`.
+        /*
+         * **On complète la section, on ne la refait pas.**
+         *
+         * Elle était reconstruite à neuf à chaque retour d'une chaîne : la grille repartait vide, les
+         * cases se décochaient, et l'écran annonçait « 0 chaîne » là où il y en avait une minute plus
+         * tôt. Relevé sur téléviseur. Ce qui doit être rafraîchi, ce sont les facettes et la dernière
+         * chaîne regardée ; ce qui doit rester, c'est ce que la personne avait choisi et parcouru.
+         *
+         * Le profil garde son droit de veto : ses favorites et sa dernière chaîne sont les siennes, et
+         * une grille bâtie pour quelqu'un d'autre se recharge plutôt que de mentir.
+         */
+        val ancienne = state.direct?.takeIf { it.disponible && it.profileId == profileId }
+        val listes = runCatching {
+            api.listesDirect(profileId, ancienne?.paysChoisis.orEmpty(),
+                ancienne?.fiabilitesChoisies.orEmpty(), ancienne?.query.orEmpty())
+        }.getOrDefault(emptyList())
+        val pays = runCatching {
+            api.paysDirect(profileId, ancienne?.listesChoisies.orEmpty(),
+                ancienne?.fiabilitesChoisies.orEmpty(), ancienne?.query.orEmpty())
+        }.getOrDefault(emptyList())
         val fiabilites = runCatching { api.fiabilitesDirect(profileId) }.getOrDefault(emptyList())
         val derniere = api.derniereChaineDirect(profileId)
-        state = state.copy(direct = SectionDirect(disponible = true, listes = listes, pays = pays,
-            fiabilites = fiabilites, derniere = derniere))
+        state = state.copy(direct = (ancienne ?: SectionDirect()).copy(
+            disponible = true, profileId = profileId,
+            listes = listes, pays = pays, fiabilites = fiabilites, derniere = derniere,
+        ))
     }
 
     /**
