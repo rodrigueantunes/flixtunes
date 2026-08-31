@@ -33,7 +33,12 @@ import tv.flixtunes.app.ui.LocalMemoireTv
 import tv.flixtunes.app.ui.MemoireTv
 
 @OptIn(ExperimentalFoundationApi::class)
-@Composable internal fun FlixTunesApp(model: MainViewModel, discovered: List<DiscoveredServer>, play: (Media) -> Unit) {
+@Composable internal fun FlixTunesApp(
+    model: MainViewModel,
+    discovered: List<DiscoveredServer>,
+    play: (Media) -> Unit,
+    jouerChaine: (ChaineDirect) -> Unit,
+) {
     val state = model.state
     val gabarit = LocalGabarit.current
     val contexte = LocalContext.current
@@ -75,6 +80,7 @@ import tv.flixtunes.app.ui.MemoireTv
     val filmsScroll = rememberLazyGridState(cacheWindow = fenetreGrille)
     val seriesScroll = rememberLazyGridState(cacheWindow = fenetreGrille)
     val rechercheScroll = rememberLazyGridState(cacheWindow = fenetreGrille)
+    val directScroll = rememberLazyGridState(cacheWindow = fenetreGrille)
     /**
      * La section courante se retient **ici**, au-dessus du choix d'écran.
      *
@@ -117,7 +123,8 @@ import tv.flixtunes.app.ui.MemoireTv
                 { menuMedia = it })
             else -> EcranAccueil(
                 state, model, play, section,
-                accueilScroll, historiqueScroll, filmsScroll, seriesScroll, rechercheScroll,
+                accueilScroll, historiqueScroll, filmsScroll, seriesScroll, rechercheScroll, directScroll,
+                jouerChaine = jouerChaine,
                 ouvrirMedia = { media -> focusARestaurer = media.catalogId ?: media.id; model.open(media) },
                 focusARestaurer = focusARestaurer, focusRestaure = { focusARestaurer = null },
                 ouvrirReglages = { reglagesOuverts = true }, ouvrirMenu = { menuMedia = it },

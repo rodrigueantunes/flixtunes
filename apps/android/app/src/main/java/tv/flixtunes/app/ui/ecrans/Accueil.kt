@@ -72,6 +72,7 @@ import tv.flixtunes.app.ui.Squelette
 import tv.flixtunes.app.ui.TexteDoux
 import tv.flixtunes.app.ui.VitrineHalo
 import tv.flixtunes.app.ui.VitrineMilieu
+import tv.flixtunes.app.data.ChaineDirect
 import tv.flixtunes.app.ui.mobile.NavigationTactile
 import tv.flixtunes.app.ui.tv.NavigationTelevision
 
@@ -85,7 +86,10 @@ import tv.flixtunes.app.ui.tv.NavigationTelevision
     filmsScroll: LazyGridState,
     seriesScroll: LazyGridState,
     rechercheScroll: LazyGridState,
+    directScroll: LazyGridState,
     ouvrirMedia: (Media) -> Unit,
+    /** Ouvrir une chaîne en direct. Distinct de `play` : une chaîne n'est pas un média du catalogue. */
+    jouerChaine: (ChaineDirect) -> Unit,
     focusARestaurer: String?,
     focusRestaure: () -> Unit,
     ouvrirReglages: () -> Unit,
@@ -133,7 +137,7 @@ import tv.flixtunes.app.ui.tv.NavigationTelevision
                     Modifier.padding(start = if (compact) 8.dp else 12.dp),
                     taillePolice = if (compact) 11 else 13,
                 )
-                if (gabarit.televiseur) NavigationTelevision(section) { cle ->
+                if (gabarit.televiseur) NavigationTelevision(section, state.direct?.disponible == true) { cle ->
                     changerSection(cle)
                     model.search("")
                 }
@@ -233,6 +237,16 @@ import tv.flixtunes.app.ui.tv.NavigationTelevision
                     sauterLettre = { model.setCatalogLetter("shows", it) },
                     ancrePositionnee = { model.consumeCatalogAnchor("shows") },
                 )
+                /*
+                 * La télévision en direct, entre les séries et l'historique — l'ordre du menu du Web.
+                 *
+                 * La section n'est atteignable que si l'entrée existe, donc que si une source a rendu
+                 * des chaînes ; le `?:` n'est qu'un garde-fou pour l'instant où l'état revient de
+                 * `null` après un changement de profil.
+                 */
+                "live" -> state.direct?.let { direct ->
+                    EcranDirect(direct, model, jouerChaine, bottomInset, directScroll)
+                }
                 "history" -> EcranHistorique(state, image, open, ouvrirMenu, focusARestaurer, focusRestaure, bottomInset, historiqueScroll)
                 "search" -> PanneauRecherche(state, model, image, open, ouvrirMenu, focusARestaurer, focusRestaure, bottomInset, rechercheScroll)
                 else -> LazyColumn(Modifier.fillMaxSize(), state = accueilScroll, contentPadding = PaddingValues(bottom = bottomInset)) {
@@ -264,7 +278,7 @@ import tv.flixtunes.app.ui.tv.NavigationTelevision
         // Navigation tactile : une barre en bas, là où le pouce arrive. Sa composition vit dans
         // `ui/mobile`, celle du téléviseur dans `ui/tv` — deux surfaces, une seule liste de sections.
         if (!gabarit.televiseur) {
-            NavigationTactile(section, Modifier.align(Alignment.BottomCenter)) { cle ->
+            NavigationTactile(section, state.direct?.disponible == true, Modifier.align(Alignment.BottomCenter)) { cle ->
                 changerSection(cle)
                 model.search("")
             }

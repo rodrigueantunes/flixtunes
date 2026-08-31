@@ -23,6 +23,25 @@ const REFUS_ASSUMES = new Set([
   // passe qui décode pendant des heures est un geste sur la machine, pas sur la médiathèque.
   "POST /api/system/generiques", "POST /api/system/generiques/arret",
   "POST /api/system/generiques/passe",
+  // La télévision en direct, étape 1 : **tout est refusé, y compris la grille**, et les deux cas
+  // n'ont pas la même durée de vie.
+  //
+  // Les réglages resteront fermés : désigner un dossier du NAS, cocher cinq cents listes ou lancer un
+  // téléchargement de quarante mégaoctets sont des gestes sur la machine.
+  //
+  // La grille — `GET /api/live/channels` et `/api/live/groupes` — est en revanche une lecture, et elle
+  // a vocation à rejoindre les lectures autorisées **quand son écran existera** et aura été éprouvé.
+  // L'ouvrir maintenant exposerait une route dont personne ne se sert encore : ce serait ouvrir sans
+  // décider, ce que ce registre existe précisément pour empêcher.
+  "GET /api/system/live", "PUT /api/system/live",
+  "POST /api/system/live/rafraichir", "POST /api/system/live/arret",
+  "GET /api/system/live/listes",
+  "GET /api/system/live/sources", "POST /api/system/live/sources", "DELETE /api/system/live/sources/:id",
+  "GET /api/live", "GET /api/live/listes", "GET /api/live/pays", "GET /api/live/fiabilites",
+  "GET /api/live/channels",
+  "GET /api/live/channels/:id", "POST /api/live/channels/:id/resultat", "GET /api/live/numero",
+  // Le relais suivra la grille : il n'a de sens que pour un navigateur qui affiche déjà des chaînes.
+  "GET /api/live/relais",
   "GET /api/scans", "POST /api/scans", "GET /api/scans/skipped",
   "POST /api/scans/:id/cancel", "POST /api/scans/:id/retry",
   "GET /api/corrections", "POST /api/corrections", "POST /api/corrections/preview",

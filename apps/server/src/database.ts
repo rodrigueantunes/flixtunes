@@ -455,6 +455,173 @@ db.exec(`
 `);
 
 /**
+ * La télévision en direct — le modèle mesuré du chantier 0.5.7.
+ *
+ * Quatre tables, et chacune répond à un chiffre relevé sur le corpus réel (527 listes, 181 126
+ * entrées, `docs/CHANTIER_LIVE_TV_0.5.7.md`) :
+ *
+ * - `live_sources` — un fournisseur réglé. Une seule sorte existe aujourd'hui, `m3u` ; `xtream` et
+ *   `fast` viendront s'y ranger sans toucher au reste, ce qui est la raison d'être de cette table.
+ * - `live_playlists` — une liste à l'intérieur d'une source. C'est l'unité que l'on coche à l'écran,
+ *   et elle porte le classement ✅/〰️/⚠️/❌ lu dans le nom à l'import.
+ * - `live_channels` — la chaîne **fusionnée**. 181 126 entrées pour 84 309 noms distincts : sans
+ *   fusion, la grille afficherait quatre-vingts « TF1 » dont la plupart sont mortes.
+ * - `live_channel_urls` — les N adresses d'une chaîne. C'est la table qui rend le repli possible, et
+ *   la seule qui retienne ce qui a marché la dernière fois.
+ *
+ * **Une chaîne n'est jamais supprimée**, seulement laissée sans adresse (`adresses = 0`) et datée par
+ * `disparue_le`. C'est ce qui tient la promesse du numéro stable : une liste retirée puis remise ne
+ * doit pas renuméroter la grille de la personne qui s'en sert.
+ */
+db.exec(`
+  CREATE TABLE IF NOT EXISTS live_sources (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL CHECK(type IN ('m3u', 'xtream', 'fast')),
+    libelle TEXT NOT NULL,
+    emplacement TEXT NOT NULL,
+    activee INTEGER NOT NULL DEFAULT 1,
+    rafraichie_le TEXT,
+    dernier_message TEXT,
+    cree_le TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(type, emplacement)
+  );
+
+  CREATE TABLE IF NOT EXISTS live_playlists (
+    id TEXT PRIMARY KEY,
+    source_id TEXT NOT NULL REFERENCES live_sources(id) ON DELETE CASCADE,
+    nom TEXT NOT NULL,
+    url TEXT NOT NULL,
+    classement TEXT NOT NULL DEFAULT 'inconnue'
+      CHECK(classement IN ('bonne', 'moyenne', 'douteuse', 'faible', 'inconnue')),
+    cochee INTEGER NOT NULL DEFAULT 1,
+    entrees INTEGER NOT NULL DEFAULT 0,
+    ecartees INTEGER NOT NULL DEFAULT 0,
+    rafraichie_le TEXT,
+    dernier_message TEXT,
+    UNIQUE(source_id, url)
+  );
+  CREATE INDEX IF NOT EXISTS idx_live_playlists_source ON live_playlists(source_id, cochee);
+
+  CREATE TABLE IF NOT EXISTS live_channels (
+    id TEXT PRIMARY KEY,
+    cle TEXT NOT NULL UNIQUE,
+    nom TEXT NOT NULL,
+    nom_recherche TEXT NOT NULL,
+    logo TEXT,
+    groupe TEXT,
+    tvg_id TEXT,
+    numero INTEGER UNIQUE,
+    numero_manuel INTEGER,
+    numero_souhaite INTEGER,
+    etat TEXT NOT NULL DEFAULT 'inconnue' CHECK(etat IN ('bonne', 'morte', 'inconnue')),
+    adresses INTEGER NOT NULL DEFAULT 0,
+    vue_le TEXT,
+    disparue_le TEXT,
+    cree_le TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_live_channels_recherche ON live_channels(nom_recherche);
+  CREATE INDEX IF NOT EXISTS idx_live_channels_grille ON live_channels(adresses, numero);
+  CREATE INDEX IF NOT EXISTS idx_live_channels_groupe ON live_channels(groupe);
+
+  CREATE TABLE IF NOT EXISTS live_channel_urls (
+    channel_id TEXT NOT NULL REFERENCES live_channels(id) ON DELETE CASCADE,
+    url TEXT NOT NULL,
+    playlist_id TEXT NOT NULL REFERENCES live_playlists(id) ON DELETE CASCADE,
+    succes INTEGER NOT NULL DEFAULT 0,
+    echecs INTEGER NOT NULL DEFAULT 0,
+    essayee_le TEXT,
+    PRIMARY KEY(channel_id, url)
+  );
+  CREATE INDEX IF NOT EXISTS idx_live_urls_playlist ON live_channel_urls(playlist_id);
+  CREATE INDEX IF NOT EXISTS idx_live_urls_ordre ON live_channel_urls(channel_id, echecs, succes DESC);
+`);
+
+/**
+ * Le pays d'une chaîne, ajouté après coup.
+ *
+ * `CREATE TABLE IF NOT EXISTS` ne touche pas à une table qui existe déjà : une base créée avant ce
+ * jour n'aurait jamais eu la colonne, et l'index posé dessus aurait fait échouer le démarrage entier.
+ * C'est le même ajout additif que pour les fiches du catalogue, et il vaut aussi pour la base des
+ * tests, qui vit d'une exécution à l'autre.
+ *
+ * La valeur, elle, se remplit au prochain rafraîchissement : rien ne sert de la deviner ici.
+ */
+function ensureLiveChannelColumn(name: string, definition: string) {
+  const columns = db.prepare("PRAGMA table_info(live_channels)").all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === name)) db.exec(`ALTER TABLE live_channels ADD COLUMN ${name} ${definition}`);
+}
+ensureLiveChannelColumn("pays", "TEXT");
+/**
+ * Le nom **compact** : sans accents, sans espaces, mais **avec sa ponctuation**.
+ *
+ * Il sert la recherche littérale : « canal + » doit trouver « Canal+ » et « CANAL+ EN CLAIR », et
+ * surtout **pas** les mille « Canal 8 » du corpus hispanophone. La forme ordinaire ne peut pas s'en
+ * charger : elle retire la ponctuation, si bien que « canal + » et « canal » y deviennent le même mot.
+ */
+ensureLiveChannelColumn("nom_compact", "TEXT");
+
+/**
+ * Le ❌ des listes ne voulait pas dire ce qu'on croyait.
+ *
+ * Il était enregistré `morte` ; le script qui produit `m3u.json` le pose en réalité sur les listes
+ * dont **25 à 49 %** des flux répondent — une liste sur trois chaînes utiles, qu'on garde. La valeur
+ * s'appelle donc `faible`, et l'ancienne contrainte `CHECK` refuserait la nouvelle.
+ *
+ * Une base créée avant ce jour porte l'ancienne contrainte : on refait la table. Elle est reconstruite
+ * de bout en bout à chaque rafraîchissement — c'est le fichier de listes qui fait foi —, donc rien
+ * n'est perdu qu'un rafraîchissement ne rende. Les chaînes, elles, ne sont pas touchées : leurs
+ * numéros tiennent.
+ */
+const schemaListes = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'live_playlists'")
+  .get() as unknown as { sql: string } | undefined;
+if (schemaListes && !schemaListes.sql.includes("'faible'")) {
+  db.exec("DROP TABLE IF EXISTS live_playlists");
+  db.exec(`
+    CREATE TABLE live_playlists (
+      id TEXT PRIMARY KEY,
+      source_id TEXT NOT NULL REFERENCES live_sources(id) ON DELETE CASCADE,
+      nom TEXT NOT NULL,
+      url TEXT NOT NULL,
+      classement TEXT NOT NULL DEFAULT 'inconnue'
+        CHECK(classement IN ('bonne', 'moyenne', 'douteuse', 'faible', 'inconnue')),
+      cochee INTEGER NOT NULL DEFAULT 1,
+      entrees INTEGER NOT NULL DEFAULT 0,
+      ecartees INTEGER NOT NULL DEFAULT 0,
+      rafraichie_le TEXT,
+      dernier_message TEXT,
+      UNIQUE(source_id, url)
+    );
+    CREATE INDEX IF NOT EXISTS idx_live_playlists_source ON live_playlists(source_id, cochee);
+    UPDATE live_channels SET adresses = 0;
+  `);
+}
+db.exec("CREATE INDEX IF NOT EXISTS idx_live_channels_pays ON live_channels(pays, numero)");
+
+/**
+ * L'index de recherche des chaînes — et pourquoi il n'est pas un `LIKE` de plus.
+ *
+ * Le catalogue cherche ses titres par `LIKE '%…%'` sur une colonne normalisée, et c'est très bien
+ * pour quelques milliers de fiches. Ici il y en a **78 741**, mesurées sur le corpus réel, et le
+ * `LIKE` y coûtait **191 ms** sur un poste de développement — donc plusieurs fois cela sur le Celeron
+ * du NAS, pour un budget annoncé à 100 ms. Un `%…%` ne peut pas s'indexer : il parcourt tout.
+ *
+ * FTS5 indexe les mots, sait chercher par préfixe de mot (`can*` trouve « Canal+ » comme « TV Cannes »)
+ * et rend la recherche indépendante de la taille du corpus. Le contenu n'est pas dupliqué —
+ * `content='live_channels'` fait pointer l'index sur la table elle-même —, et il est **reconstruit**
+ * à la fin de chaque rafraîchissement plutôt qu'entretenu par des déclencheurs : une reconstruction
+ * de 78 000 lignes prend moins d'une seconde, là où un déclencheur oublié se paie en résultats
+ * manquants qu'on ne remarque pas.
+ */
+db.exec(`
+  CREATE VIRTUAL TABLE IF NOT EXISTS live_channels_fts USING fts5(
+    nom_recherche,
+    content='live_channels',
+    content_rowid='rowid',
+    tokenize='unicode61'
+  );
+`);
+
+/**
  * Saga d'un film — « Collection » chez TMDB.
  *
  * Deux colonnes plutôt qu'une table : un film n'appartient qu'à une seule saga, et l'identifiant

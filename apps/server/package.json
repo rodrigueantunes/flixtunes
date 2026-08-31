@@ -1,6 +1,6 @@
 {
   "name": "@flixtunes/server",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "private": true,
   "type": "module",
   "scripts": {
@@ -16,6 +16,7 @@
     "test:qualification": "tsx integration/qualification.integration.ts",
     "test:detection": "tsx integration/detection-corpus.integration.ts",
     "test:scale": "tsx integration/catalog-scale.integration.ts",
+    "test:live-corpus": "tsx integration/live-corpus.integration.ts",
     "test:scan-cost": "tsx integration/scan-cost.integration.ts",
     "seed:showcase": "tsx integration/seed-showcase.ts"
   },

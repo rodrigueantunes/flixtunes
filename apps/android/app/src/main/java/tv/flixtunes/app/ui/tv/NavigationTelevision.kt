@@ -14,7 +14,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import tv.flixtunes.app.ui.SECTIONS_TELEVISION
+import tv.flixtunes.app.ui.sectionsTelevision
 import tv.flixtunes.app.ui.Muet
 import tv.flixtunes.app.ui.indicationFocus
 import tv.flixtunes.app.ui.rememberSourceFocus
@@ -30,7 +30,7 @@ import tv.flixtunes.app.ui.rememberSourceFocus
  * pixels ne se lit pas, et rien n'oblige à économiser la largeur sur un écran de cette taille.
  */
 @Composable
-fun NavigationTelevision(sectionCourante: String, choisir: (String) -> Unit) {
+fun NavigationTelevision(sectionCourante: String, directDisponible: Boolean, choisir: (String) -> Unit) {
     /**
      * Le focus se pose de lui-même sur la première section à l'ouverture.
      *
@@ -42,7 +42,7 @@ fun NavigationTelevision(sectionCourante: String, choisir: (String) -> Unit) {
     LaunchedEffect(Unit) { runCatching { premiere.requestFocus() } }
 
     Spacer(Modifier.width(34.dp))
-    for ((rang, section) in SECTIONS_TELEVISION.withIndex()) {
+    for ((rang, section) in sectionsTelevision(directDisponible).withIndex()) {
         val active = section.cle == sectionCourante
         // Une seule source d'interaction pour le liseré et le clic : deux cibles de focus empilées
         // obligeaient à valider deux fois à la télécommande.

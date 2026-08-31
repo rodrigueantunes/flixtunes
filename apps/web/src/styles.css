@@ -592,6 +592,122 @@ h1, h2 { font-family: "Manrope", sans-serif; }
 }
 .inline-language select { min-width: 105px; cursor: pointer; }
 .form-error { padding: .7rem .8rem; border-radius: 9px; background: #3b1b22; color: #ffb7c0; }
+/*
+ * Le message qui confirme, pendant du message qui refuse.
+ *
+ * Il n'existait pas : une action réussie ne se voyait qu'en devinant que rien n'avait changé de
+ * rouge. Même silhouette, même rayon, même graisse — seule la teinte porte la différence, et elle
+ * vient du vert déjà employé par les états sains du panneau de diagnostic.
+ */
+.form-success { padding: .7rem .8rem; border-radius: var(--rayon-commande); background: #14301f; color: #a8e6bf; }
+
+/*
+ * La télévision en direct.
+ *
+ * Le bilan d'un rafraîchissement est une définition — un intitulé, une valeur —, donc une liste de
+ * définitions et non un tableau : il n'y a qu'une ligne, et un tableau à une ligne se lit moins bien
+ * qu'une suite de couples. La grille se resserre d'elle-même sur un téléphone.
+ */
+.live-bilan { display: grid; grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr)); gap: var(--pas-2); margin: var(--pas-2) 0 0; }
+.live-bilan > div { padding: var(--pas-2); border: 1px solid var(--line); border-radius: var(--rayon-commande); background: #ffffff08; }
+.live-bilan dt { color: var(--muted); font-size: .74rem; font-weight: 600; }
+.live-bilan dd { margin: .15rem 0 0; font-size: 1.05rem; font-weight: 700; }
+
+.live-listes { display: grid; gap: var(--pas-2); margin-top: var(--pas-3); }
+/*
+ * Cinq cents listes ne tiennent pas dans un écran, et ne doivent pas repousser tout ce qui suit.
+ * Elles défilent dans leur propre cadre, dont la hauteur est bornée en unités relatives afin de
+ * suivre la taille du texte plutôt qu'un nombre de pixels.
+ */
+.live-liste-choix { max-height: 22rem; overflow-y: auto; margin: 0; padding: 0; list-style: none;
+  border: 1px solid var(--line); border-radius: var(--rayon-panneau); background: #ffffff06; }
+.live-liste-choix li + li { border-top: 1px solid var(--line); }
+.live-liste-choix label { display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: center;
+  gap: var(--pas-2); padding: var(--pas-2) var(--pas-3); cursor: pointer; }
+.live-liste-choix b { overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.live-liste-choix small { grid-column: 3; color: var(--muted); font-size: .75rem; }
+.live-classement { font-size: .9rem; }
+
+/*
+ * La grille des chaînes.
+ *
+ * Elle n'emprunte pas `.catalog-grid` : une jaquette est un portrait 2/3, un logo de chaîne est un
+ * carré posé sur un fond. Les cartes sont donc plus petites et plus nombreuses par rangée — on
+ * parcourt des milliers de chaînes, pas des centaines de films.
+ */
+.live-grille { display: grid; grid-template-columns: repeat(auto-fill, minmax(clamp(120px, 9vw, 190px), 1fr));
+  gap: var(--pas-3); margin-top: var(--pas-3); }
+.live-carte { display: grid; justify-items: center; gap: var(--pas-1); padding: var(--pas-3) var(--pas-2);
+  border: 1px solid var(--line); border-radius: var(--rayon-panneau); background: #ffffff08; color: inherit;
+  text-align: center; cursor: pointer; transition: background var(--duree-reponse), border-color var(--duree-reponse); }
+.live-carte:hover, .live-carte:focus-visible { border-color: var(--blue-light); background: #ffffff14; }
+/* Le numéro passe avant le nom : c'est par lui qu'on choisit une chaîne à la télécommande. */
+.live-numero { color: var(--blue-light); font-size: .78rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.live-logo { width: clamp(44px, 4vw, 64px); height: clamp(44px, 4vw, 64px); object-fit: contain; }
+.live-initiale { display: grid; place-items: center; border-radius: var(--rayon-pastille);
+  background: #ffffff12; font-size: 1.4rem; font-weight: 700; }
+.live-nom { overflow: hidden; width: 100%; font-weight: 600; font-size: .88rem; text-overflow: ellipsis; white-space: nowrap; }
+.live-carte small { overflow: hidden; width: 100%; color: var(--muted); font-size: .72rem;
+  text-overflow: ellipsis; white-space: nowrap; }
+.live-squelette { aspect-ratio: 1 / 1; }
+
+/*
+ * Les filtres du direct : le filtre a genres du catalogue, mais repliable.
+ *
+ * Meme boite, meme liseré, meme legende, memes puces cliquables — c'est le meme geste, il doit avoir
+ * la meme forme. Une seule difference, et elle vient d'un chiffre : le catalogue a vingt genres, le
+ * direct a **499 listes** et soixante pays. Deployes, ils remplissaient l'ecran et repoussaient la
+ * grille hors de la page ; replies, ils disent d'un mot ce qui est coche.
+ */
+/*
+ * Une puce reste une puce, même dans la barre de filtres.
+ *
+ * `.catalog-controls label` pose une grille et `.catalog-controls input` une largeur minimale de
+ * 260 px — deux règles écrites pour les champs de recherche et de tri, et qui l'emportent en
+ * spécificité sur `.genre-choice`. Résultat, vu à l'écran : chaque case à cocher s'étirait en un
+ * grand rectangle vide avec son libellé dessous. Le défaut valait déjà pour les genres du catalogue.
+ */
+.catalog-controls .genre-choice { display: inline-flex; align-items: center; gap: .35rem; }
+.catalog-controls .genre-choice > input { width: 16px; min-width: 0; min-height: 0; height: 16px; margin: 0; }
+
+.live-filtre { flex: 0 1 auto; max-width: min(100%, 32rem); margin: 0; padding: 0;
+  border: 1px solid var(--line); border-radius: var(--rayon-commande); }
+.live-filtre > summary { padding: .5rem .7rem; color: var(--muted); font-size: .74rem; cursor: pointer;
+  list-style-position: inside; }
+.live-filtre[open] > summary { color: #f7f9ff; border-bottom: 1px solid var(--line); }
+.live-filtre-corps { display: grid; gap: .5rem; padding: .5rem .7rem; }
+.live-filtre-corps > input { width: 100%; }
+.live-filtre-corps > small { color: var(--muted); font-size: .74rem; }
+/* Les puces sont celles des genres, a la lettre. Seule la hauteur est bornee, pour que cinq cents
+   listes defilent dans le volet au lieu de pousser la grille vers le bas. */
+.live-filtre-choix { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .6rem;
+  max-height: 13rem; overflow-y: auto; }
+
+/*
+ * Un fichier dans le parcours du serveur.
+ *
+ * Il se distingue d'un dossier par sa marque de fin — une coche plutôt qu'un chevron : cliquer un
+ * dossier descend dedans, cliquer un fichier **choisit**, et rien dans la fenêtre ne doit laisser
+ * croire qu'il reste quelque chose à ouvrir.
+ */
+.folder-entry.fichier > i { color: var(--blue-light); }
+
+/*
+ * Le lecteur du direct.
+ *
+ * Même fond noir et mêmes commandes que le lecteur de la médiathèque, mais sans barre de progression :
+ * un direct n'a ni position ni durée, et une barre qui ne se déplace pas serait un mensonge.
+ */
+.lecteur-direct { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; background: #000; }
+.lecteur-direct video { width: 100%; height: 100%; object-fit: contain; }
+.lecteur-direct-barre { position: absolute; inset: 0 0 auto; display: flex; align-items: center; gap: var(--pas-3);
+  padding: 1.4rem 2rem 4rem; background: linear-gradient(#000c, transparent); opacity: 0; transition: opacity var(--duree-reponse); }
+.lecteur-direct:hover .lecteur-direct-barre, .lecteur-direct:focus-within .lecteur-direct-barre { opacity: 1; }
+.lecteur-direct-titre { display: grid; gap: .15rem; }
+.lecteur-direct-titre small { color: var(--muted); font-size: .85rem; }
+.lecteur-direct-message { position: absolute; padding: var(--pas-2) var(--pas-3); border-radius: var(--rayon-commande);
+  background: #000000a8; color: #dbe4f7; font-size: .9rem; }
+.lecteur-direct-message.echec { color: #ffb7c0; }
 .form-actions { display: flex; justify-content: flex-end; gap: .7rem; margin-top: 1.2rem; }
 .wide-field { display: block; margin-top: 1rem; }
 .language-field { display: block; width: min(320px, 100%); margin-top: 1rem; }

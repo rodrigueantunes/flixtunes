@@ -107,6 +107,11 @@ export interface DirectoryBrowserListing {
   parentPath: string | null;
   roots: DirectoryBrowserEntry[];
   directories: DirectoryBrowserEntry[];
+  /**
+   * Les fichiers du dossier, quand l'appelant en a demandé — et seulement ceux dont l'extension a été
+   * nommée. Absent lorsqu'on choisit un dossier, ce qui reste le cas des bibliothèques.
+   */
+  files?: DirectoryBrowserEntry[];
 }
 
 export const metadataSearchQuerySchema = z.object({
@@ -1007,6 +1012,126 @@ export interface HomeResponse {
   watchlist?: Array<MediaItem & { seasonCount?: number }>;
   recommendations?: Array<{ item: MediaItem & { seasonCount?: number }; score: number; reason: string }>;
 }
+
+/* ------------------------------------------------------------------------ */
+/* La télévision en direct                                                   */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * La fiabilité d'une liste : la part de ses chaînes qui répondent, **mesurée** par le script qui
+ * produit `m3u.json` et rangée dans une pastille en tête du nom.
+ *
+ * `bonne` = 75 % et plus (✅), `moyenne` = 50 à 74 % (〰️), `faible` = 25 à 49 % (❌), `douteuse` = une
+ * pastille ⚠️ d'une version antérieure du script. En dessous de 25 %, la liste n'est pas écrite dans
+ * le fichier. Un ❌ n'est donc **pas** une liste morte : c'est une liste sur trois chaînes utiles.
+ */
+export type ClassementListe = "bonne" | "moyenne" | "douteuse" | "faible" | "inconnue";
+
+export interface ParametresDirect {
+  /** Éteinte tant que personne ne l'a demandée : rien ne tourne, pas même au démarrage. */
+  actif: boolean;
+  /** Dossier du serveur où vit le catalogue de listes. `null` : rien n'est réglé. */
+  dossier: string | null;
+  /** Nom du fichier dans ce dossier — `m3u.json` par défaut. */
+  fichier: string;
+  cadenceHeures: number;
+}
+
+export interface EtatDirect {
+  actif: boolean;
+  /** Une source est-elle réglée ? Tant que non, l'entrée de menu n'existe pas côté client. */
+  configure: boolean;
+  enCours: boolean;
+  listes: number;
+  listesRetenues: number;
+  chaines: number;
+  adresses: number;
+  /** Entrées lues moins chaînes obtenues : ce que la fusion des doublons a réuni. */
+  fusionnees: number;
+  /** Entrées écartées faute d'un transport que nos lecteurs sachent ouvrir. */
+  ecartees: number;
+  rafraichieLe: string | null;
+  dernierMessage: string | null;
+  progression: { faites: number; total: number; liste: string | null; entrees: number } | null;
+  dureeSecondes: number | null;
+}
+
+/** Une source de chaînes : le fichier du NAS, un portail identifié, ou les listes publiques. */
+export interface SourceDirect {
+  id: string;
+  type: "m3u" | "xtream" | "fast";
+  libelle: string;
+  emplacement: string;
+  activee: boolean;
+  rafraichieLe: string | null;
+  dernierMessage: string | null;
+}
+
+export interface ListeDirect {
+  id: string;
+  nom: string;
+  url: string;
+  classement: ClassementListe;
+  cochee: boolean;
+  entrees: number;
+  ecartees: number;
+  rafraichieLe: string | null;
+  dernierMessage: string | null;
+}
+
+export interface ChaineDirect {
+  id: string;
+  nom: string;
+  numero: number | null;
+  logo: string | null;
+  groupe: string | null;
+  /** Code à deux lettres, déduit du `tvg-id`, d'un drapeau ou de l'intitulé. `null` si rien ne le dit. */
+  pays: string | null;
+  etat: "bonne" | "morte" | "inconnue";
+  /** Nombre d'adresses connues : c'est la profondeur du repli, et elle se voit à l'écran. */
+  adresses: number;
+}
+
+/**
+ * Une adresse d'une chaîne, avec ce que la lecture en a appris.
+ *
+ * Le compteur d'échecs et celui de réussites ne servent pas à établir des statistiques : ils
+ * **ordonnent** les essais. Ce qui a joué passe devant, ce qui a échoué passe derrière, et le repli
+ * cesse d'être un tirage au sort.
+ */
+export interface SourceChaine {
+  url: string;
+  succes: number;
+  echecs: number;
+  /**
+   * La même adresse, mais relayée par le serveur.
+   *
+   * Elle n'est pas le chemin normal : un navigateur essaie l'adresse directe d'abord, et n'y revient
+   * que sur un refus qu'il ne peut pas lever lui-même — absence d'en-tête CORS, ou contenu `http` nu
+   * dans une page servie en HTTPS. Android et le client de bureau ne s'en servent jamais.
+   */
+  relais?: string;
+}
+
+/** Une chaîne avec ses adresses, dans l'ordre où il faut les essayer. */
+export interface ChaineDirectDetaillee extends ChaineDirect {
+  sources: SourceChaine[];
+}
+
+export interface PageChaines {
+  items: ChaineDirect[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+export const parametresDirectSchema = z.object({
+  actif: z.boolean().optional(),
+  dossier: z.string().trim().max(4096).nullable().optional(),
+  fichier: z.string().trim().min(1).max(255).optional(),
+  cadenceHeures: z.number().int().min(1).max(168).optional(),
+}).strict();
+export type ParametresDirectInput = z.infer<typeof parametresDirectSchema>;
 
 // La géométrie des planches de vignettes, partagée par le serveur et l'interface.
 export * from "./vignettes.js";

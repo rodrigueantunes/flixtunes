@@ -8,6 +8,7 @@ import { scanCoordinator } from "./scan-coordinator.js";
 import { cleanupIdleSessions, cleanupPlaybackSessions, detectFfmpegSupport } from "./playback.js";
 import { calibrateHardware, refreshTemperature } from "./capacity.js";
 import { createBackup, listBackups } from "./maintenance.js";
+import { rafraichirDirect, rafraichissementDuAuDemarrage } from "./television-direct.js";
 
 /**
  * Génération de l'agent de métadonnées.
@@ -52,6 +53,27 @@ export function startRuntimeServices(log: FastifyBaseLogger): RuntimeServices {
       debounce.set(library.id, setTimeout(() => { debounce.delete(library.id); scanCoordinator.enqueue(library.id, "files"); }, 8000));
     });
     watcher.on("error", (error) => log.warn({ err: error }, "Surveillance des bibliothèques interrompue"));
+  }
+
+  /**
+   * La télévision en direct se relit au démarrage — si elle est activée, et si la cadence est échue.
+   *
+   * Le départ est différé de trente secondes : au démarrage, le serveur calibre le matériel, répare
+   * ce qu'il faut et met en file les analyses de bibliothèque. Cinq cents téléchargements lancés
+   * dans la même seconde disputeraient le réseau et le processeur à tout cela, et c'est la
+   * médiathèque qu'on veut voir d'abord.
+   *
+   * Un échec n'arrête rien : c'est un travail de fond, et une liste injoignable au démarrage le sera
+   * peut-être encore à la prochaine occasion. On le journalise, et le serveur continue de servir.
+   */
+  if (rafraichissementDuAuDemarrage()) {
+    timers.push(setTimeout(() => {
+      log.info("Télévision en direct : relecture des listes au démarrage");
+      void rafraichirDirect()
+        .then((etat) => log.info({ chaines: etat.chaines, listes: etat.listesRetenues, secondes: etat.dureeSecondes },
+          "Télévision en direct : listes relues"))
+        .catch((cause) => log.warn({ err: cause }, "Télévision en direct : relecture impossible"));
+    }, 30_000));
   }
 
   // Réparation unique des progressions faussées par la durée du flux transcodé, jusqu'à 0.5.2 incluse.

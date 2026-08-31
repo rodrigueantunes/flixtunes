@@ -1,4 +1,5 @@
 import { createReadStream, statSync } from "node:fs";
+import { Readable } from "node:stream";
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { stat } from "node:fs/promises";
 import path from "node:path";
@@ -22,9 +23,10 @@ import {
   watchedInputSchema,
   scanRequestSchema,
   setupInputSchema,
+  parametresDirectSchema,
   subtitlePreferenceSchema,
 } from "@flixtunes/contracts";
-import type { CatalogFilter, CatalogSort, CommandeAppareil, MetadataSearchCandidate } from "@flixtunes/contracts";
+import type { CatalogFilter, CatalogSort, ClassementListe, CommandeAppareil, MetadataSearchCandidate } from "@flixtunes/contracts";
 import { listSkippedFiles } from "./scan-safety.js";
 import { clearCodecQuarantine, listCodecQuarantine, quarantinedCodecs, recordCodecFailure } from "./codec-quarantine.js";
 import { db, getDefaultProfile, getProfile, isFirstRunRequired, listLibraries, listProfileGroups, mapMedia, mapProfile, mediaAgeRatingSql, mediaSelect, setSetting } from "./database.js";
@@ -36,6 +38,34 @@ import { fetchTmdbPreview } from "./tmdb.js";
 import { fetchMetadataWithProviders, metadataProviderStatuses, resetProviderRuntimeCaches, searchAllMetadata } from "./metadata-providers.js";
 import { resoudreIdentifiantExterne } from "./tmdb.js";
 import { saveProviderConfiguration } from "./provider-settings.js";
+import {
+  adresseRelayee,
+  estUnManifeste,
+  hoteAutorise,
+  lireAdresseRelayee,
+  reecrireManifeste,
+  signatureValide,
+} from "./live-relais.js";
+import { fetchWithTimeout } from "./resilience.js";
+import { enregistrerXtream, listerSources, reglerFast, retirerSource } from "./live-fournisseurs.js";
+import {
+  arreterRafraichissement,
+  chaineDetaillee,
+  chaineParNumero,
+  chaineVoisine,
+  cheminDuCatalogue,
+  enregistrerParametres,
+  etatClient,
+  etatDirect,
+  listerChaines,
+  listerListesClient,
+  listerFiabilites,
+  listerListes,
+  listerPays,
+  noterResultat,
+  parametresDirect,
+  rafraichirDirect,
+} from "./television-direct.js";
 import { listMetadataProvenance, recordMetadataField } from "./metadata-fields.js";
 import {
   cleanupIdleSessions,
@@ -558,6 +588,239 @@ export async function registerRoutes(app: FastifyInstance) {
     return etatDesGeneriques();
   });
 
+  /* ---------------------------------------------------------------------- */
+  /* La télévision en direct                                                 */
+  /* ---------------------------------------------------------------------- */
+
+  /**
+   * Ces routes ne figurent **pas** dans la liste blanche de l'accès distant, et c'est délibéré.
+   *
+   * Régler un dossier du NAS, cocher cinq cents listes ou lancer un rafraîchissement qui télécharge
+   * quarante mégaoctets sont des gestes sur la machine. La grille elle-même rejoindra les lectures
+   * autorisées quand l'écran existera et aura été éprouvé — un geste délibéré, comme le veut
+   * `wan-exposition.ts`, et non un effet de bord de cette étape.
+   */
+  app.get("/api/system/live", async () => ({ parametres: parametresDirect(), etat: etatDirect() }));
+
+  app.put("/api/system/live", async (request, reply) => {
+    const parsed = parametresDirectSchema.safeParse(request.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ message: "Réglage invalide", issues: parsed.error.issues });
+    try {
+      return { parametres: enregistrerParametres(parsed.data), etat: etatDirect() };
+    } catch (cause) {
+      return reply.code(400).send({ message: cause instanceof Error ? cause.message : "Réglage invalide" });
+    }
+  });
+
+  /**
+   * Relire le catalogue et les listes cochées.
+   *
+   * La réponse ne l'attend pas : cinq cents listes prennent des secondes, et une requête HTTP qui
+   * reste ouverte pendant ce temps ne dit rien de plus que l'avancement, déjà lisible sur `GET`.
+   * Une passe déjà en cours n'est pas doublée — deux passes se disputeraient les mêmes écritures.
+   */
+  app.post("/api/system/live/rafraichir", async (_request, reply) => {
+    const parametres = parametresDirect();
+    if (!parametres.actif) {
+      return reply.code(409).send({ message: "La télévision en direct est désactivée : activez-la d'abord." });
+    }
+    if (!etatDirect().configure) {
+      return reply.code(409).send({ message: "Aucune source n'est réglée." });
+    }
+    const avant = etatDirect();
+    if (!avant.enCours) {
+      void rafraichirDirect().catch((cause) => {
+        app.log.warn({ err: cause }, "Rafraîchissement de la télévision en direct interrompu");
+      });
+    }
+    return etatDirect();
+  });
+
+  /** Arrêter la passe en cours sans éteindre la fonction : « pas maintenant », pas « jamais ». */
+  app.post("/api/system/live/arret", async () => { arreterRafraichissement(); return etatDirect(); });
+
+  app.get("/api/system/live/listes", async () => listerListes());
+
+  /**
+   * Les fournisseurs réglés, et de quoi en ajouter.
+   *
+   * Trois sortes, un seul écran : le fichier du NAS, un portail Xtream — hôte, identifiant, mot de
+   * passe — et les listes publiques, qui ne demandent rien. Le mot de passe est chiffré au repos par
+   * le même mécanisme que les jetons TMDB, et il n'est jamais réaffiché.
+   */
+  app.get("/api/system/live/sources", async () => listerSources());
+
+  app.post("/api/system/live/sources", async (request, reply) => {
+    const corps = request.body as { type?: unknown; hote?: unknown; utilisateur?: unknown; motDePasse?: unknown; libelle?: unknown } | null;
+    if (corps?.type === "fast") return { source: reglerFast(true) };
+    if (corps?.type !== "xtream" || typeof corps.hote !== "string" || typeof corps.utilisateur !== "string"
+      || typeof corps.motDePasse !== "string") {
+      return reply.code(400).send({ message: "Fournisseur invalide" });
+    }
+    try {
+      return { source: enregistrerXtream(
+        { hote: corps.hote, utilisateur: corps.utilisateur, motDePasse: corps.motDePasse },
+        typeof corps.libelle === "string" ? corps.libelle : undefined,
+      ) };
+    } catch (cause) {
+      return reply.code(400).send({ message: cause instanceof Error ? cause.message : "Fournisseur invalide" });
+    }
+  });
+
+  app.delete<{ Params: IdParams }>("/api/system/live/sources/:id", async (request, reply) => {
+    if (!retirerSource(request.params.id)) return reply.code(404).send({ message: "Fournisseur introuvable" });
+    return reply.code(204).send();
+  });
+
+  app.get("/api/live", async (request, reply) => {
+    const profile = profileFromRequest(request);
+    if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
+    return etatClient();
+  });
+
+  app.get("/api/live/fiabilites", async (request, reply) => {
+    const profile = profileFromRequest(request);
+    if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
+    return listerFiabilites();
+  });
+
+  app.get("/api/live/pays", async (request, reply) => {
+    const profile = profileFromRequest(request);
+    if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
+    return listerPays();
+  });
+
+  app.get("/api/live/listes", async (request, reply) => {
+    const profile = profileFromRequest(request);
+    if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
+    return listerListesClient();
+  });
+
+  app.get("/api/live/channels", async (request, reply) => {
+    const profile = profileFromRequest(request);
+    if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
+    const query = request.query as Record<string, string | undefined>;
+    if (query.q && query.q.length > 120) return reply.code(400).send({ message: "Recherche trop longue" });
+    const offset = Number(query.offset ?? 0);
+    const limit = Number(query.limit ?? 60);
+    if (!Number.isFinite(offset) || offset < 0 || !Number.isFinite(limit) || limit < 1) {
+      return reply.code(400).send({ message: "Pagination invalide" });
+    }
+    const decouper = (valeur: string | undefined): string[] =>
+      (valeur ?? "").split(",").map((element) => element.trim()).filter(Boolean).slice(0, 200);
+    return listerChaines({ q: query.q, listes: decouper(query.listes), pays: decouper(query.pays),
+      fiabilites: decouper(query.fiabilites) as ClassementListe[], offset, limit });
+  });
+
+  /**
+   * La chaîne d'un numéro, ou sa voisine — les deux gestes de la télécommande.
+   *
+   * `numero` répond à la saisie d'un numéro, `sens` à P+ et P−. Les deux vivent sur la même route
+   * parce qu'ils répondent à la même question — « quelle chaîne ouvrir maintenant ? » — et rendent la
+   * même chose.
+   */
+  app.get("/api/live/numero", async (request, reply) => {
+    const profile = profileFromRequest(request);
+    if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
+    const query = request.query as { numero?: string; sens?: string };
+    const numero = Number(query.numero);
+    if (!Number.isInteger(numero) || numero < 1 || numero > 99_999) {
+      return reply.code(400).send({ message: "Numéro invalide" });
+    }
+    const sens = query.sens === "1" ? 1 : query.sens === "-1" ? -1 : null;
+    const chaine = sens ? chaineVoisine(numero, sens) : chaineParNumero(numero);
+    if (!chaine) return reply.code(404).send({ message: "Aucune chaîne à ce numéro" });
+    return chaine;
+  });
+
+  app.get<{ Params: IdParams }>("/api/live/channels/:id", async (request, reply) => {
+    const profile = profileFromRequest(request);
+    if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
+    const chaine = chaineDetaillee(request.params.id);
+    if (!chaine) return reply.code(404).send({ message: "Chaîne introuvable" });
+    /*
+     * Chaque adresse part avec son doublon relayé, signé pour elle seule.
+     *
+     * Le client essaie la directe d'abord — c'est le chemin qui ne coûte rien au NAS — et bascule sur
+     * l'autre quand le navigateur refuse : contenu mixte, ou absence d'en-tête CORS. Signer ici plutôt
+     * qu'à la demande évite d'ouvrir une route qui signerait n'importe quelle adresse.
+     */
+    return { ...chaine, sources: chaine.sources.map((source) => ({ ...source, relais: adresseRelayee(source.url) })) };
+  });
+
+  /**
+   * Ce que la lecture a appris : cette adresse a joué, ou elle n'a pas répondu.
+   *
+   * C'est ainsi que l'ordre d'essai s'améliore et que l'état d'une chaîne se mesure — à l'usage,
+   * plutôt qu'en sondant les cent mille adresses du corpus. L'adresse doit appartenir à la chaîne :
+   * sans cette vérification, n'importe quel corps de requête écrirait n'importe quelle ligne.
+   */
+  app.post<{ Params: IdParams }>("/api/live/channels/:id/resultat", async (request, reply) => {
+    const profile = profileFromRequest(request);
+    if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
+    const corps = request.body as { url?: unknown; ok?: unknown } | null;
+    if (typeof corps?.url !== "string" || typeof corps.ok !== "boolean") {
+      return reply.code(400).send({ message: "Résultat invalide" });
+    }
+    if (!noterResultat(request.params.id, corps.url, corps.ok)) {
+      return reply.code(404).send({ message: "Adresse inconnue pour cette chaîne" });
+    }
+    return reply.code(204).send();
+  });
+
+  /**
+   * Le relais du navigateur : les octets d'une chaîne, recopiés par le NAS.
+   *
+   * Il n'est jamais le premier chemin — le client essaie l'adresse en direct d'abord, et n'y revient
+   * que sur un blocage CORS ou un contenu mixte, les deux cas que rien côté navigateur ne peut lever.
+   * Le serveur ne décode rien : il recopie, et ne signe que des adresses qu'il connaît déjà.
+   *
+   * Un manifeste est réécrit pour que ses segments repassent par ici ; tout le reste est transmis tel
+   * quel, sans être mis en mémoire — un flux en direct n'a pas de fin, et l'accumuler serait une fuite
+   * de mémoire à retardement.
+   */
+  app.get("/api/live/relais", async (request, reply) => {
+    const profile = profileFromRequest(request);
+    if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
+    const query = request.query as { u?: string; s?: string };
+    const cible = query.u ? lireAdresseRelayee(query.u) : null;
+    if (!cible || !query.s || !signatureValide(cible, query.s)) {
+      // Indiscernable d'une route inexistante : un 403 confirmerait qu'une adresse existe.
+      return reply.code(404).send({ message: "Adresse inconnue" });
+    }
+    if (!(await hoteAutorise(new URL(cible).hostname))) {
+      return reply.code(403).send({ message: "Adresse interne refusée" });
+    }
+    try {
+      const amont = await fetchWithTimeout(cible, {
+        headers: { "User-Agent": "FlixTunes", ...(request.headers.range ? { Range: String(request.headers.range) } : {}) },
+      }, 20_000);
+      if (!amont.ok || !amont.body) return reply.code(502).send({ message: `Source indisponible (${amont.status})` });
+
+      const type = amont.headers.get("content-type");
+      // Un manifeste tient en quelques kilooctets : le lire entier pour le réécrire ne coûte rien.
+      // Un segment, lui, est transmis en flux — d'où les deux chemins.
+      if ((type ?? "").toLowerCase().includes("mpegurl") || /\.m3u8(\?|$)/i.test(cible)) {
+        const corps = await amont.text();
+        if (estUnManifeste(type, corps)) {
+          return reply.header("Content-Type", "application/vnd.apple.mpegurl")
+            .header("Cache-Control", "no-store")
+            .send(reecrireManifeste(corps, cible));
+        }
+        return reply.header("Content-Type", type ?? "application/octet-stream").send(corps);
+      }
+      reply.code(amont.status === 206 ? 206 : 200);
+      if (type) reply.header("Content-Type", type);
+      for (const entete of ["content-length", "content-range", "accept-ranges"]) {
+        const valeur = amont.headers.get(entete);
+        if (valeur) reply.header(entete, valeur);
+      }
+      return reply.header("Cache-Control", "no-store").send(Readable.fromWeb(amont.body as never));
+    } catch (cause) {
+      return reply.code(502).send({ message: cause instanceof Error ? cause.message : "Relais impossible" });
+    }
+  });
+
   app.post("/api/scans", async (request, reply) => {
     const parsed = scanRequestSchema.safeParse(request.body ?? {});
     if (!parsed.success) return reply.code(400).send({ message: "Demande d'analyse invalide", issues: parsed.error.issues });
@@ -952,9 +1215,13 @@ export async function registerRoutes(app: FastifyInstance) {
     ? { firstRunRequired: false, libraries: [] }
     : { firstRunRequired: isFirstRunRequired(), libraries: listLibraries() });
 
-  app.get<{ Querystring: { path?: string } }>("/api/filesystem/directories", async (request, reply) => {
+  app.get<{ Querystring: { path?: string; fichiers?: string } }>("/api/filesystem/directories", async (request, reply) => {
     try {
-      return await browseDirectories(request.query.path);
+      // Les extensions voulues, nommées par l'appelant. Deux au plus, et courtes : ce paramètre sert à
+      // choisir un fichier de réglages, pas à faire du serveur un explorateur de fichiers.
+      const extensions = (request.query.fichiers ?? "").split(",").map((item) => item.trim().toLowerCase())
+        .filter((item) => /^[a-z0-9]{1,8}$/.test(item)).slice(0, 2);
+      return await browseDirectories(request.query.path, undefined, extensions);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Parcours du dossier impossible";
       return reply.code(message.includes("hors des volumes") ? 403 : 404).send({ message });

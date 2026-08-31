@@ -1,5 +1,204 @@
 # Journal des versions
 
+## 0.5.7.r1 — la télévision en direct
+
+*Chantier découpé en sept étapes, livrées ensemble. Le plan, ses mesures et les huit décisions qui
+l'ont orienté vivent dans `docs/CHANTIER_LIVE_TV_0.5.7.md`.*
+
+- 846 tests serveur, 252 tests Web et les tests unitaires Android, tous verts. Les budgets du client Web sont
+  tenus — 90,6 Kio de JavaScript au premier affichage pour un plafond de 95.
+
+**Étape 1 — le modèle, l'import et l'index.**
+
+- **535 listes M3U, 76 899 chaînes, en 21,1 secondes.** Le fichier `m3u.json` de TvPourTous est lu tel
+  quel — c'est le format qu'on a, il n'y avait aucune raison d'en imposer un autre —, ses listes sont
+  téléchargées huit à la fois, analysées et indexées. Le dossier où il vit se choisit à l'écran, avec
+  le même sélecteur que les bibliothèques.
+- **Les doublons ne sont plus un défaut : ils sont la réserve.** 105 362 entrées sur 183 837 — **57,8 %** —
+  désignaient une chaîne déjà vue ailleurs. Réunies sous une seule entrée portant plusieurs adresses,
+  elles deviennent le repli qui fera qu'une chaîne morte ne se verra pas. Sans cette fusion, la grille
+  afficherait quatre-vingts « TF1 » dont la plupart ne répondent plus.
+- **Le numéro de chaîne ne bouge plus jamais une fois attribué.** Il n'est présent que sur 12,7 % des
+  entrées : il faut donc l'attribuer, et le tenir. La correction manuelle l'emporte, sinon le
+  `tvg-chno` de la liste, sinon le premier numéro libre. Une liste décochée puis recochée rend ses
+  chaînes **avec leur numéro d'avant** — c'est la promesse faite à la saisie à la télécommande, et
+  c'est ce que le test vérifie.
+- **Trois défauts trouvés par les tests avant d'atteindre l'écran.** L'attribution en une seule passe
+  alphabétique donnait le 1 à « Arte » avant que « TF1 » n'arrive avec son `tvg-chno="1"` : le seul
+  numéro explicite du corpus était le seul à ne pas être respecté. Décocher une liste ne retirait pas
+  ses adresses, puisque la boucle ne visite que les listes retenues. Et l'état rendu en fin de passe
+  annonçait la passe encore en cours.
+- **Une chaîne n'est jamais supprimée, seulement laissée sans adresse.** C'est ce qui rend le numéro
+  stable ; une liste qui ne répond pas garde d'ailleurs les siennes — une panne de dix secondes chez
+  un hébergeur ne doit pas vider la grille, alors qu'une liste décochée, elle, doit disparaître.
+- **La recherche est passée à FTS5, et le tri à l'index.** Mesuré sur 78 741 chaînes : ouvrir la
+  grille passe de **96,2 ms à 0,4 ms**, chercher « tf1 » de **191,4 ms à 0,6 ms**. Deux causes, l'une
+  et l'autre invisibles à la lecture : un tri sur `numero IS NULL` — une expression, donc un tri
+  complet à chaque page, pour départager un cas qui n'existe pas — et un `LIKE '%…%'` qui ne peut pas
+  s'indexer. FTS cherche par préfixe de mot : « can » trouve « Canal+ » et « TV Cannes », mais plus
+  « Toucan ». C'est le bon compromis pour des noms de chaînes.
+- **L'analyseur M3U tient les cas que le corpus lui oppose vraiment.** La virgule qui sépare le nom
+  des attributs est celle qui n'est pas entre guillemets — TvPourTous prenait la dernière, et
+  « Paris Première, la chaîne » devenait « la chaîne ». Les `#EXTVLCOPT` et `#KODIPROP` glissés entre
+  l'entrée et son adresse sont sautés, `#EXTGRP` est honoré, la marque d'ordre des octets et les fins
+  de ligne Windows aussi. **3 765 entrées** de plus que le relevé initial, qui exigeait une durée
+  numérique après `#EXTINF:`.
+- **Le classement ✅/〰️/⚠️/❌ des noms devient un état.** Il était rangé faute de mieux dans le nom du
+  fichier de listes ; il est lu à l'import et retiré du libellé, pour ne plus remonter dans les
+  recherches ni dans les titres affichés.
+- **1 576 entrées sont écartées, et comptées.** `rtp`, `rtsp`, `rtmp` : aucun de nos trois lecteurs ne
+  les ouvre. Les relayer serait un chantier entier pour 0,9 % du corpus. Une chaîne retirée en silence
+  est une chaîne qu'on cherchera, d'où le compteur à l'écran.
+- **La fonction s'active.** Éteinte au départ, réglage en base, arrêt net — la même règle que le
+  repérage des génériques. Tant qu'aucune source n'est réglée, rien ne tourne : ni téléchargement, ni
+  indexation, ni rafraîchissement au démarrage.
+- **Rien n'est ouvert à l'accès distant.** Régler un dossier du NAS, cocher cinq cents listes ou
+  lancer un téléchargement de quarante mégaoctets sont des gestes sur la machine. La grille rejoindra
+  les lectures autorisées quand son écran existera — un geste délibéré, comme le veut la liste
+  blanche, et non un effet de bord.
+- **Un banc rejoue tout et chronomètre** : `pnpm --filter @flixtunes/server test:live-corpus <m3u.json>`.
+  Les chiffres ci-dessus viennent du poste de développement ; **ils doivent être refaits sur le NAS**,
+  et c'est ce que le banc existe pour permettre.
+
+**Étapes 2 et 3 — l'écran, la lecture, et le repli.**
+
+- **Le direct est dans le menu, après « Séries TV », et seulement s'il est réglé.** L'entrée n'existe
+  pas tant qu'aucune source n'a rendu de chaîne : une installation qui ne s'en sert pas ne voit rien
+  changer, ce qui est la règle des fonctions qui s'activent.
+- **La grille tient 76 899 chaînes sans broncher** : soixante par page, le numéro avant le nom — c'est
+  par lui qu'on choisit à la télécommande —, le logo remplacé par l'initiale quand l'hébergeur ne le
+  sert plus, et le nombre de sources affiché, parce que « 11 sources » veut dire « cette chaîne a du
+  secours ».
+- **Le filtre par liste a changé de forme après l'avoir vu à l'écran.** Le filtre à puces du catalogue
+  tient pour vingt genres ; avec **535 listes**, il remplissait la page et repoussait la grille hors de
+  l'écran. Les listes et les bouquets sont désormais dans un volet qu'on ouvre, avec leur propre champ
+  de filtre, et le compte des cochées se lit sans l'ouvrir.
+- **Beaucoup de listes numérotent la chaîne dans son nom** — « 21. LA CHAÎNE L'ÉQUIPE ». Ce numéro
+  était jeté et le préfixe restait. Il sert maintenant de second recours quand `tvg-chno` manque, et le
+  nom est nettoyé : **1 842 chaînes de plus** ont été réunies, parce que « 21. LA CHAÎNE L'ÉQUIPE » et
+  « LA CHAÎNE L'ÉQUIPE » ne sont pas deux chaînes. Un nom qui commence par un chiffre sans séparateur
+  — « 24 Horas », « 13 Kids », « 2x2 » — reste intact.
+- **Une chaîne morte ne se voit plus.** Le lecteur essaie les adresses dans l'ordre que l'usage a
+  établi, bascule sur la suivante à la première erreur fatale, et rapporte au serveur ce qui a marché
+  — c'est ainsi que l'ordre s'améliore tout seul, sans sonder cent mille adresses. Une échéance de
+  douze secondes couvre le cas d'un hébergeur qui accepte la connexion puis n'envoie rien.
+- **Le relais du navigateur, et pourquoi il a fallu l'écrire.** Deux refus ne se réparent pas côté
+  client : l'absence d'en-tête CORS — relevée dans le journal du navigateur en
+  `ERR_BLOCKED_BY_RESPONSE.NotSameOrigin`, sur une chaîne pourtant vivante — et le contenu `http` nu
+  dans une page HTTPS, c'est-à-dire tout l'accès distant. Le NAS recopie alors les octets, sans rien
+  décoder. **Ce n'est jamais le premier chemin** : on essaie l'adresse en direct, et le relais n'est
+  qu'un rattrapage — Android et le client de bureau ne s'en servent pas du tout.
+- **Rien n'est relayé qui n'ait été signé.** Sans cette règle, la route serait un relais ouvert :
+  n'importe qui ferait sortir le NAS vers n'importe quelle adresse, et surtout vers l'intérieur du
+  réseau. Le serveur ne signe que ce qu'il connaît — les adresses de ses chaînes, et celles qu'un
+  manifeste qu'il vient de relire désigne —, refuse les plages privées jusque dans les noms de domaine
+  qui y pointent, et réécrit les manifestes pour que segments, clés et en-têtes d'initialisation
+  repassent par le même chemin.
+- **Un défaut du lecteur trouvé dans le journal du navigateur, pas dans un test.** Le rapport d'échec
+  et les messages vivaient **à l'intérieur** de la fonction de mise à jour de l'état : React l'appelle
+  deux fois en mode strict, et **quatre** `POST /resultat` partaient pour un seul échec — de quoi
+  fausser le classement des adresses par l'affichage. Le rang vit désormais dans une référence.
+- **Vérifié à l'écran, sur le corpus réel** : Arte en 1080p, lecture directe, `readyState` à 4 et
+  l'horloge du direct qui avance — le NAS n'a rien décodé et rien relayé.
+- 828 tests serveur et 250 tests Web.
+
+**Les filtres, repris après les avoir vus servir.**
+
+- **« canal + » rendait 1 141 chaînes. Il en rend 13.** Trois défauts se cachaient derrière un seul
+  symptôme. *Un* : la grille n'était triée que par numéro, donc une recherche rendait ses résultats
+  dans un ordre qui n'avait aucun rapport avec elle — le nom exact passe désormais devant, puis ce qui
+  commence par la saisie, puis **le nombre d'adresses**, qui est la meilleure mesure de notoriété
+  qu'on ait sous la main. *Deux* : l'index ne connaît que des mots, si bien que « canal + » et
+  « canal » étaient la même requête ; **un signe tapé compte** maintenant, et la suite de caractères
+  est exigée en plus des mots, espaces mis à part. *Trois*, et c'est le principal : il manquait une
+  dimension.
+- **Le pays, parce qu'aucun classement ne pouvait réparer le reste.** *Canal* est le mot espagnol et
+  portugais pour « chaîne » : les mille résultats étaient **tous justes**. Le pays se déduit du
+  `tvg-id` — la convention XMLTV met le code en suffixe —, d'un drapeau dans l'intitulé — un drapeau
+  Unicode **est** la paire de lettres, aucune table à tenir — ou d'un nom de pays reconnu comme mot
+  entier. Mesuré sur le corpus : **32,5 % des chaînes** reçoivent un pays, dont **1 081 françaises**.
+  Rien n'est inventé : une chaîne sans indice reste visible tant qu'aucun pays n'est coché.
+- **Le filtre par bouquet est retiré.** Il exposait les `group-title` bruts des listes — « News »,
+  « Filmler », « RJM | Addl. » —, c'est-à-dire le vocabulaire de cinq cents auteurs différents.
+- **Le choix des listes a quitté la configuration** pour devenir un filtre de l'écran, repliable et à
+  puces comme les genres du catalogue. On choisit ce qu'on regarde au moment de regarder ; la
+  configuration ne garde que le diagnostic, c'est-à-dire les listes qui n'ont pas répondu.
+- **Un filtre de fiabilité, parce que la pastille était une mesure qu'on ignorait.** Le script qui
+  produit `m3u.json` sonde tous les flux de chaque liste : ✅ vaut « 75 % et plus répondent », 〰️
+  « 50 à 74 % », ❌ « 25 à 49 % ». Le ❌ était enregistré comme « morte » — **c'était faux**, et c'est
+  corrigé : une liste ❌ porte une chaîne utile sur trois, on la garde et on laisse choisir. Le seuil
+  est maintenant écrit à l'écran, une pastille seule ne disant rien.
+- **Le fichier de listes se choisit comme un dossier de films.** Le parcours du serveur descend
+  jusqu'au fichier quand on lui nomme une extension ; il ne montrait que des dossiers, et il fallait
+  taper « m3u.json » à la main après avoir choisi le sien.
+- **Un défaut de mise en page qui touchait aussi les genres du catalogue.** `.catalog-controls input`
+  impose une largeur minimale de 260 px, écrite pour les champs de recherche : chaque case à cocher
+  s'étirait en un grand rectangle vide avec son libellé dessous. Vu à l'écran, corrigé pour les deux.
+
+**Étape 4 — le direct se relit au démarrage.**
+
+- **Les listes sont relues au démarrage du serveur**, si la fonction est activée, si une source est
+  réglée, et **si la cadence est échue** — douze heures par défaut. Redémarrer trois fois de suite ne
+  retélécharge pas quarante mégaoctets trois fois. Le départ est différé de trente secondes : le
+  serveur calibre, répare et met en file les analyses, et c'est la médiathèque qu'on veut voir
+  d'abord.
+- **L'écran de démarrage Android annonce l'étape**, entre « médiathèque » et « affiches », comme
+  demandé — et seulement si le direct est réglé.
+
+**Étape 5 — Android, mobile et téléviseur.**
+
+- **« Live TV » apparaît après « Séries TV »**, sur les deux surfaces, et **seulement si le serveur
+  dit qu'une source a rendu des chaînes**. Un serveur antérieur, qui ignore la route, se comporte
+  exactement comme une installation éteinte : l'entrée reste absente et rien ne casse.
+- **La grille est paginée comme le catalogue**, et les trois filtres sont des sections repliables —
+  le composant qui existait déjà pour les genres, pas une quatrième variante.
+
+**Étape 6 — la télécommande.**
+
+- **Composer un numéro ouvre la chaîne.** Les chiffres s'accumulent, s'affichent en grand, et la
+  chaîne s'ouvre une seconde et demie après le dernier — le temps qu'on ait fini de composer. C'est le
+  serveur qui répond, jamais la grille : elle n'en tient que soixante à la fois, et composer « 1 340 »
+  ne peut pas dépendre de ce qu'on a fait défiler.
+- **P+ et P− passent à la voisine**, par numéro et non par rang : les numéros ont des trous, puisqu'une
+  chaîne disparue garde le sien. Les extrémités bouclent, comme sur n'importe quel téléviseur.
+- **Le lecteur du direct est séparé de celui de la médiathèque**, et ce n'est pas un doublon : l'un
+  négocie une session, un mode de conversion, des pistes, une reprise, des sous-titres et l'épisode
+  suivant ; l'autre ouvre une adresse HLS qui n'a ni début, ni position, ni fin. Ce qu'il a en propre
+  — le repli sur les adresses de secours et la saisie du numéro — n'existe nulle part ailleurs.
+
+**Étape 7 — les fournisseurs identifiés.**
+
+- **Un portail Xtream se règle par hôte, identifiant et mot de passe**, ce qui est littéralement le
+  « via identifiant » demandé. Il expose une API JSON, mais il expose aussi le **même bouquet au
+  format M3U** — attributs compris, `tvg-chno` en particulier, qu'il est l'un des rares à fournir. On
+  passe par là : tout le reste tombe dans l'analyseur déjà écrit et déjà éprouvé, au lieu d'un second
+  qui finirait par diverger.
+- **Le mot de passe est chiffré au repos**, par le même mécanisme que les jetons TMDB, jamais
+  réaffiché, et il part avec la source qu'on retire — un secret dont plus rien ne se sert est le pire
+  des deux mondes.
+- **Les chaînes gratuites ne demandent aucun réglage.** Pluto TV, Samsung TV Plus et Rakuten diffusent
+  librement des chaînes financées par la publicité : c'est ce qu'un nouvel arrivant verra en premier
+  s'il n'a rien d'autre.
+- **Le fichier du NAS n'est plus obligatoire.** Un portail seul, ou les listes gratuites seules, sont
+  des installations complètes. Et une source qui échoue ne fait pas échouer les autres : son message
+  reste sur sa ligne, ses listes précédentes restent en place — une panne de portail ne vide pas la
+  grille.
+
+**Deux défauts de la chaîne de livraison, trouvés en s'en servant.**
+
+- **L'APK sortait en 0.5.6 alors que tout le reste était en 0.5.7.** La version Android était écrite en
+  dur à trois endroits d'un fichier Gradle, que `Sync-Version.ps1` ne touche pas — il propage dans les
+  six manifestes du dépôt, pas dans du Kotlin de build. C'est la **première montée de version mineure
+  depuis que la chaîne existe** : de la r7 à la r88, tout est resté en 0.5.6, et le défaut ne pouvait
+  pas se voir. Il se voyait tout de même à la fin — « aucun APK en 0.5.7.r1 » —, ce qui vaut mieux
+  qu'un paquet mal nommé. La version se lit désormais dans le `package.json` de la racine, comme le
+  serveur le fait déjà, et le `versionCode` s'en déduit : 0.5.6.r88 valait 56 088, 0.5.7.r1 vaut
+  57 001, l'ordre est gardé.
+- **Une activité marquée instable oblige tous ses appelants à le déclarer.** Le nouveau lecteur du
+  direct portait `@UnstableApi` — l'annotation qui dit « je fais partie d'une surface instable » — au
+  lieu de `@OptIn`, qui dit « j'en consomme une ». Lint remontait neuf erreurs dans `MainActivity`,
+  une par constante lue. Le lecteur de la médiathèque faisait déjà le bon choix.
+
 ## 0.5.6.r88 — le dernier épisode d'une saison, TMDB qu'on croyait absent, et les commandes restées grises
 
 - **Le dernier épisode d'une saison n'avait jamais son générique.** Constaté sur *Silo* S03E09. Deux conditions se ressemblaient et la requête les confondait : « la saison a au moins deux épisodes » — la vraie contrainte, une empreinte sonore se reconnaissant par comparaison — et « au moins deux épisodes n'ont pas encore leur repère », que le filtre appliquait en réalité. Elles coïncident tant qu'une saison est largement incomplète, et divergent **exactement à la fin** : quand il ne restait qu'un épisode sans repère, la saison sortait de la file et cet épisode n'y revenait plus jamais. Le cas le plus visible était le pire — celui d'une série qu'on vient de finir. Le test le prouve : sur l'ancienne requête, la saison était visitée **zéro** fois.

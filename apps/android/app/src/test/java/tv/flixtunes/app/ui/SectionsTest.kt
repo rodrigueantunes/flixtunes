@@ -15,21 +15,22 @@ class SectionsTest {
     @Test
     fun `les deux surfaces partagent la même liste de sections`() {
         // C'est tout l'intérêt : une section ajoutée l'est pour les deux, sans oubli possible.
-        assertTrue(SECTIONS_TELEVISION.all { it in SECTIONS })
+        assertTrue(sectionsTelevision(true).all { it in SECTIONS })
+        assertTrue(sectionsTelevision(false).all { it in SECTIONS })
     }
 
     @Test
     fun `la recherche est absente de la barre du téléviseur`() {
         // Saisir du texte à la télécommande est pénible, et la recherche a son propre bouton. L'y
         // remettre allongerait le parcours au focus vers les sections dont on se sert vraiment.
-        assertFalse(SECTIONS_TELEVISION.any { it.cle == "search" })
+        assertFalse(sectionsTelevision(true).any { it.cle == "search" })
         assertTrue(SECTIONS.any { it.cle == "search" })
     }
 
     @Test
     fun `l'accueil vient en premier sur les deux surfaces`() {
         assertEquals("home", SECTIONS.first().cle)
-        assertEquals("home", SECTIONS_TELEVISION.first().cle)
+        assertEquals("home", sectionsTelevision(true).first().cle)
     }
 
     @Test
@@ -48,10 +49,25 @@ class SectionsTest {
 
     @Test
     fun `les sections sont celles du menu du client Web`() {
-        // Le Web propose Accueil, Films, Séries TV et Historique, la recherche étant à part. Android
-        // n'avait pas d'Historique : un profil pouvait consulter son activité depuis un navigateur et
-        // pas depuis son téléphone, alors que la donnée arrive dans la même réponse `/api/home`.
-        assertEquals(listOf("home", "movies", "shows", "history"), SECTIONS_TELEVISION.map { it.cle })
-        assertEquals(listOf("home", "movies", "shows", "history", "search"), SECTIONS.map { it.cle })
+        // Le Web propose Accueil, Films, Séries TV, Live TV et Historique, la recherche étant à part.
+        assertEquals(listOf("home", "movies", "shows", "live", "history"), sectionsTelevision(true).map { it.cle })
+        assertEquals(listOf("home", "movies", "shows", "live", "history", "search"), sectionsVisibles(true).map { it.cle })
+    }
+
+    @Test
+    fun `le direct n'apparaît que si le serveur en offre`() {
+        /*
+         * C'est la règle des fonctions qui coûtent : éteinte, la fonction n'existe nulle part. Une
+         * installation qui ne s'en sert pas — et c'est l'état par défaut — ne voit rien changer, et
+         * un serveur antérieur qui ignore la route se comporte exactement pareil.
+         *
+         * Le placement compte autant que la présence : « après Séries TV », comme demandé.
+         */
+        assertFalse(sectionsVisibles(false).any { it.cle == "live" })
+        assertFalse(sectionsTelevision(false).any { it.cle == "live" })
+        assertEquals(listOf("home", "movies", "shows", "history", "search"), sectionsVisibles(false).map { it.cle })
+
+        val avec = sectionsVisibles(true).map { it.cle }
+        assertEquals(avec.indexOf("shows") + 1, avec.indexOf("live"))
     }
 }

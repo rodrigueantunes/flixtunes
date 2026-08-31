@@ -258,6 +258,114 @@ class FlixTunesApi(
     suspend fun stopPlayback(sessionId: String) { requestRaw("/playback/${encode(sessionId)}", "DELETE", null) }
     fun absolute(path: String?): String? = ServerUrl.resolve(serverUrl, path)
 
+    /* -------------------------------------------------------------------- */
+    /* La télévision en direct                                              */
+    /* -------------------------------------------------------------------- */
+
+    /**
+     * L'entrée « Live TV » doit-elle exister ?
+     *
+     * Elle n'existe que si la fonction est activée **et** qu'une source a rendu des chaînes. Un
+     * serveur plus ancien ne connaît pas cette route : l'erreur est traitée comme un « non » par
+     * l'appelant, ce qui est le comportement voulu par défaut.
+     */
+    suspend fun etatDirect(profileId: String): EtatDirectClient = withContext(Dispatchers.Default) {
+        val reponse = request("/live?profileId=${encode(profileId)}")
+        EtatDirectClient(reponse.optBoolean("disponible"), reponse.optInt("chaines"))
+    }
+
+    suspend fun chainesDirect(
+        profileId: String, offset: Int, limit: Int,
+        query: String = "", listes: List<String> = emptyList(), pays: List<String> = emptyList(),
+        fiabilites: List<String> = emptyList(),
+    ): PageChaines = withContext(Dispatchers.Default) {
+        val reponse = request(buildString {
+            append("/live/channels?profileId=${encode(profileId)}&offset=$offset&limit=$limit")
+            if (query.isNotBlank()) append("&q=${encode(query)}")
+            if (listes.isNotEmpty()) append("&listes=${encode(listes.joinToString(","))}")
+            if (pays.isNotEmpty()) append("&pays=${encode(pays.joinToString(","))}")
+            if (fiabilites.isNotEmpty()) append("&fiabilites=${encode(fiabilites.joinToString(","))}")
+        })
+        val items = reponse.optJSONArray("items") ?: JSONArray()
+        PageChaines(
+            items = (0 until items.length()).map { lireChaine(items.getJSONObject(it)) },
+            total = reponse.optInt("total"), offset = reponse.optInt("offset"), limit = reponse.optInt("limit"),
+        )
+    }
+
+    /**
+     * La chaîne qui porte ce numéro. C'est la moitié serveur de la saisie à la télécommande : la
+     * grille du client n'en tient que soixante à la fois, composer « 1 340 » ne peut pas en dépendre.
+     */
+    suspend fun chaineParNumero(profileId: String, numero: Int): ChaineDirect? = withContext(Dispatchers.Default) {
+        runCatching { lireChaine(request("/live/numero?profileId=${encode(profileId)}&numero=$numero")) }.getOrNull()
+    }
+
+    /** La chaîne voisine, par numéro — P+ et P− d'un téléviseur. Les extrémités bouclent. */
+    suspend fun chaineVoisine(profileId: String, numero: Int, sens: Int): ChaineDirect? = withContext(Dispatchers.Default) {
+        runCatching { lireChaine(request("/live/numero?profileId=${encode(profileId)}&numero=$numero&sens=$sens")) }.getOrNull()
+    }
+
+    /** Les adresses d'une chaîne, déjà triées par ce que l'usage a appris. */
+    suspend fun chaineDirect(profileId: String, id: String): ChaineDetaillee = withContext(Dispatchers.Default) {
+        val reponse = request("/live/channels/${encode(id)}?profileId=${encode(profileId)}")
+        val sources = reponse.optJSONArray("sources") ?: JSONArray()
+        ChaineDetaillee(
+            chaine = lireChaine(reponse),
+            sources = (0 until sources.length()).map {
+                val source = sources.getJSONObject(it)
+                SourceChaine(source.optString("url"), source.optInt("succes"), source.optInt("echecs"))
+            },
+        )
+    }
+
+    /**
+     * Ce que la lecture a appris : cette adresse a joué, ou elle n'a pas répondu.
+     *
+     * C'est ainsi que l'ordre d'essai s'améliore tout seul. L'échec de cet appel n'a aucune
+     * conséquence pour la personne qui regarde : il est avalé par l'appelant.
+     */
+    suspend fun resultatChaineDirect(profileId: String, id: String, url: String, ok: Boolean) {
+        requestRaw("/live/channels/${encode(id)}/resultat?profileId=${encode(profileId)}", "POST",
+            JSONObject().put("url", url).put("ok", ok))
+    }
+
+    suspend fun listesDirect(profileId: String): List<ListeDirect> = withContext(Dispatchers.Default) {
+        val tableau = requestArray("/live/listes?profileId=${encode(profileId)}")
+        (0 until tableau.length()).map {
+            val entree = tableau.getJSONObject(it)
+            ListeDirect(entree.optString("id"), entree.optString("nom"),
+                entree.optString("classement", "inconnue"), entree.optInt("chaines"))
+        }
+    }
+
+    suspend fun paysDirect(profileId: String): List<PaysDirect> = withContext(Dispatchers.Default) {
+        val tableau = requestArray("/live/pays?profileId=${encode(profileId)}")
+        (0 until tableau.length()).map {
+            val entree = tableau.getJSONObject(it)
+            PaysDirect(entree.optString("code"), entree.optString("nom"), entree.optInt("chaines"))
+        }
+    }
+
+    suspend fun fiabilitesDirect(profileId: String): List<FiabiliteDirect> = withContext(Dispatchers.Default) {
+        val tableau = requestArray("/live/fiabilites?profileId=${encode(profileId)}")
+        (0 until tableau.length()).map {
+            val entree = tableau.getJSONObject(it)
+            FiabiliteDirect(entree.optString("classement"), entree.optInt("listes"))
+        }
+    }
+
+    private fun lireChaine(entree: JSONObject) = ChaineDirect(
+        id = entree.optString("id"),
+        nom = entree.optString("nom"),
+        numero = if (entree.isNull("numero")) null else entree.optInt("numero"),
+        logo = entree.optString("logo").takeIf { it.isNotBlank() && it != "null" },
+        groupe = entree.optString("groupe").takeIf { it.isNotBlank() && it != "null" },
+        pays = entree.optString("pays").takeIf { it.isNotBlank() && it != "null" },
+        etat = entree.optString("etat", "inconnue"),
+        adresses = entree.optInt("adresses"),
+    )
+
     private suspend fun request(path: String, method: String = "GET", body: JSONObject? = null): JSONObject {
         val texte = requestRaw(path, method, body)
         return withContext(Dispatchers.Default) { JSONObject(texte) }

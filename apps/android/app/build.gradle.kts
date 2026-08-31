@@ -22,9 +22,40 @@ val revisionPaquet: String = (project.findProperty("flixtunesRevision") as Strin
 val numeroRevision = Regex("""\d+""").find(revisionPaquet)?.value?.toIntOrNull() ?: 0
 val suffixeRevision = if (numeroRevision > 0) ".r$numeroRevision" else ""
 
+/**
+ * La version du produit, lue au **manifeste racine** et non écrite ici.
+ *
+ * Elle y était en dur — « 0.5.6 » à trois endroits — et la première montée de version mineure depuis
+ * l'écriture de la chaîne de livraison l'a fait voir : `Sync-Version.ps1` propage la version dans les
+ * six manifestes du dépôt, mais pas dans un fichier Gradle. La livraison 0.5.7 produisait donc un APK
+ * nommé `0.5.6.r1`, et le script s'arrêtait sur « aucun APK en 0.5.7.r1 » — le défaut se voyait, au
+ * moins, plutôt que de sortir un paquet mal nommé.
+ *
+ * Le `package.json` de la racine est la source unique, comme il l'est déjà pour le serveur, qui lit
+ * sa version au démarrage plutôt que de la porter en dur.
+ */
+val versionProduit: String = run {
+    val manifeste = rootProject.file("../../package.json").readText()
+    Regex("\"version\"\\s*:\\s*\"([^\"]+)\"").find(manifeste)?.groupValues?.get(1)
+        ?: error("Version introuvable dans package.json : l'APK ne doit pas en inventer une.")
+}
+
+/**
+ * `versionCode` dérivé de la version, et non d'un nombre écrit à la main.
+ *
+ * Android exige un entier croissant : 0.5.7.r1 donne 57 001, 0.5.6.r88 donnait 56 088. Une version
+ * mineure de plus vaut donc mille révisions, ce qui laisse largement la place et garde l'ordre.
+ */
+val codeVersion: Int = run {
+    val morceaux = versionProduit.split(".").mapNotNull { it.toIntOrNull() }
+    val mineur = morceaux.getOrElse(1) { 0 }
+    val correctif = morceaux.getOrElse(2) { 0 }
+    (mineur * 10 + correctif) * 1_000 + numeroRevision
+}
+
 // Le fichier produit porte le même numéro que ce que l'application affichera : c'est ce qu'on lit sur
 // un téléphone quand on cherche à savoir ce qui y est installé.
-base { archivesName.set("FlixTunes-Android-0.5.6$suffixeRevision") }
+base { archivesName.set("FlixTunes-Android-$versionProduit$suffixeRevision") }
 
 android {
     namespace = "tv.flixtunes.app"
@@ -36,8 +67,8 @@ android {
         targetSdk = 36
         // Une révision doit aussi avancer versionCode, sinon Android refuse la mise à jour ou ne
         // permet pas de distinguer deux APK qui affichent pourtant des numéros différents.
-        versionCode = 56_000 + numeroRevision
-        versionName = "0.5.6$suffixeRevision"
+        versionCode = codeVersion
+        versionName = "$versionProduit$suffixeRevision"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

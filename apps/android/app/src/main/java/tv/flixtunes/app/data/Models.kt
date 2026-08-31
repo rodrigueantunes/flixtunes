@@ -271,3 +271,41 @@ fun parsePlaybackSession(json: JSONObject) = PlaybackSession(
     json.optJSONArray("decisionReasons")?.let { a -> (0 until a.length()).map(a::getString) }.orEmpty(),
     json.intOrNull("targetWidth"), json.intOrNull("targetHeight"), json.intOrNull("targetVideoBitrate"),
 )
+
+/* ------------------------------------------------------------------------ */
+/* La télévision en direct                                                  */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * Une chaîne, telle que la grille l'affiche.
+ *
+ * `adresses` n'est pas un détail de plomberie : c'est la **profondeur du repli**. Une chaîne reprise
+ * dans onze listes a onze chances de répondre, et le corpus mesuré en compte 57 % de doublons.
+ */
+data class ChaineDirect(
+    val id: String,
+    val nom: String,
+    val numero: Int?,
+    val logo: String?,
+    val groupe: String?,
+    val pays: String?,
+    val etat: String,
+    val adresses: Int,
+)
+
+data class PageChaines(val items: List<ChaineDirect>, val total: Int, val offset: Int, val limit: Int)
+
+/** Une adresse d'une chaîne, et son doublon relayé par le serveur — dont Android ne se sert pas. */
+data class SourceChaine(val url: String, val succes: Int, val echecs: Int)
+
+data class ChaineDetaillee(val chaine: ChaineDirect, val sources: List<SourceChaine>)
+
+/** Une liste de lecture proposée au filtre, avec son effectif et sa fiabilité mesurée. */
+data class ListeDirect(val id: String, val nom: String, val classement: String, val chaines: Int)
+
+data class PaysDirect(val code: String, val nom: String, val chaines: Int)
+
+data class FiabiliteDirect(val classement: String, val listes: Int)
+
+/** Ce qu'un client demande avant d'afficher quoi que ce soit : l'entrée « Direct » doit-elle exister ? */
+data class EtatDirectClient(val disponible: Boolean, val chaines: Int)

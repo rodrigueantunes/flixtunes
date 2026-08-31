@@ -1,4 +1,4 @@
-# FlixTunes 0.5.6
+# FlixTunes 0.5.7
 
 FlixTunes est un serveur multimédia auto-hébergé conçu pour un NAS, accompagné de clients modernes pour le Web, le bureau — Windows et Linux —, Android TV et Android mobile.
 

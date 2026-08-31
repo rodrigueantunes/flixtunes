@@ -15,6 +15,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import tv.flixtunes.app.data.DecouverteServeurs
 import tv.flixtunes.app.data.DiscoveredServer
+import tv.flixtunes.app.data.ChaineDirect
 import tv.flixtunes.app.data.Media
 import tv.flixtunes.app.data.ServerDiscovery
 import tv.flixtunes.app.ui.LocalGabarit
@@ -50,7 +51,7 @@ class MainActivity : ComponentActivity() {
             // recréer artificiellement l'activité. Le mode TV reste décidé par le système.
             val gabarit = gabaritPour(televiseur, LocalConfiguration.current.screenWidthDp)
             CompositionLocalProvider(LocalGabarit provides gabarit, LocalMemoireTv provides memoire) {
-                ThemeFlixTunes { FlixTunesApp(model, discovered, ::play) }
+                ThemeFlixTunes { FlixTunesApp(model, discovered, ::play, ::jouerChaine) }
             }
         }
     }
@@ -64,6 +65,23 @@ class MainActivity : ComponentActivity() {
         }
     }
     override fun onPause() { discovery.stop(); super.onPause() }
+
+    /**
+     * Ouvrir une chaîne en direct.
+     *
+     * Elle ne passe pas par [PlayerActivity] : une chaîne n'a ni session de lecture, ni position, ni
+     * fin, et rien de ce que ce lecteur négocie ne s'y applique. Elle a en revanche un repli sur ses
+     * adresses de secours et une saisie de numéro, que le lecteur de la médiathèque n'a pas.
+     */
+    private fun jouerChaine(chaine: ChaineDirect) {
+        val state = model.state
+        startActivity(Intent(this, LecteurDirectActivity::class.java).apply {
+            putExtra(LecteurDirectActivity.EXTRA_SERVER, state.server)
+            putExtra(LecteurDirectActivity.EXTRA_PROFILE_ID, state.profile?.id)
+            putExtra(LecteurDirectActivity.EXTRA_PROFILE_TOKEN, model.profileAccessToken())
+            putExtra(LecteurDirectActivity.EXTRA_CHANNEL_ID, chaine.id)
+        })
+    }
 
     private fun play(media: Media) {
         val playable = media.playableMediaId ?: if (media.kind != "show") media.id else return

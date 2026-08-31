@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CatalogPerson, HomeResponse, LibraryFolder, MediaDetails, MediaItem, PersonDetails, Profile, ProfileGroup } from "@flixtunes/contracts";
+import type { CatalogPerson, ChaineDirect, HomeResponse, LibraryFolder, MediaDetails, MediaItem, PersonDetails, Profile, ProfileGroup } from "@flixtunes/contracts";
 import { api } from "./api";
 import { ecrireCache, lireCache, oublierCache } from "./server-cache";
 import { scrollBehavior } from "./motion";
@@ -21,12 +21,19 @@ import { useDialogFocus } from "./useDialogFocus";
  * et l'attente n'existe pas en pratique.
  */
 const Player = lazy(() => import("./Player").then((module) => ({ default: module.Player })));
+/*
+ * La télévision en direct suit la même règle que le lecteur, et pour la même raison : une
+ * installation qui ne s'en sert pas — c'est le cas par défaut, la fonction étant éteinte — ne doit
+ * pas payer son poids au premier affichage. Le lecteur du direct emporte en plus `hls.js`.
+ */
+const LiveTv = lazy(() => import("./LiveTv").then((module) => ({ default: module.LiveTv })));
+const LecteurDirect = lazy(() => import("./LecteurDirect").then((module) => ({ default: module.LecteurDirect })));
 import { LibraryManager } from "./LibraryManager";
 import { MetadataManager } from "./MetadataManager";
 import { SetupWizard } from "./SetupWizard";
 
 type CardItem = MediaItem & { seasonCount?: number };
-type AppView = "home" | "movies" | "shows" | "history";
+type AppView = "home" | "movies" | "shows" | "live" | "history";
 type CatalogSort = "title" | "release" | "added";
 const profileColors = ["#2968ff", "#8b5cf6", "#ec4899", "#f59e0b", "#10b981", "#06b6d4"];
 const isTestDom = typeof navigator !== "undefined" && navigator.userAgent.toLowerCase().includes("jsdom");
@@ -43,12 +50,22 @@ function playingFromHash(): string | null {
   return trouve ? decodeURIComponent(trouve[1]!) : null;
 }
 
+/**
+ * L'ancre de chaque section, déclarée une fois.
+ *
+ * Elle était écrite trois fois en ternaires parallèles — dans la lecture de l'adresse, dans la
+ * navigation et à la fermeture du lecteur. Ajouter une section obligeait à modifier les trois, et
+ * l'oubli de l'une ne se serait vu que par un retour au mauvais endroit.
+ */
+const ANCRES: Record<AppView, string> = {
+  home: "top", movies: "films", shows: "series", live: "direct", history: "historique",
+};
+
 function viewFromHash(): AppView {
   if (typeof window === "undefined") return "home";
-  if (window.location.hash === "#films") return "movies";
-  if (window.location.hash === "#series") return "shows";
-  if (window.location.hash === "#historique") return "history";
-  return "home";
+  const ancre = window.location.hash.replace(/^#/, "");
+  const trouvee = (Object.keys(ANCRES) as AppView[]).find((vue) => ANCRES[vue] === ancre);
+  return trouvee && trouvee !== "home" ? trouvee : "home";
 }
 
 function Icon({ name }: { name: "home" | "movie" | "tv" | "search" | "settings" | "play" | "info" | "history" }) {
@@ -706,6 +723,15 @@ export function App() {
   const [quickMenu, setQuickMenu] = useState<{ item: CardItem; x: number; y: number } | null>(null);
   const [playing, setPlaying] = useState<string | null>(playingFromHash);
   const [view, setView] = useState<AppView>(viewFromHash);
+  /**
+   * La télévision en direct est-elle offerte ?
+   *
+   * `false` tant que le serveur n'a pas répondu, et tant qu'aucune source n'a rendu de chaîne :
+   * l'entrée de menu n'apparaît donc jamais « en attendant de voir ». C'est exactement ce qui était
+   * demandé — « le Live TV apparaît après Série TV **seulement si paramétré** ».
+   */
+  const [directDisponible, setDirectDisponible] = useState(false);
+  const [chaineDirect, setChaineDirect] = useState<ChaineDirect | null>(null);
 
   const refreshGroups = async () => { const next = await api.profileGroups(); setGroups(next); return next; };
   const refreshProfiles = async (activeGroup = group) => {
@@ -747,6 +773,13 @@ export function App() {
   };
   const loadHome = async (active = profile) => { if (!active) return; oublierCache(`catalogue:${active.id}`);
     await assurerSessionProfil(active);
+    /*
+     * L'état de la télévision en direct se demande **après** la médiathèque, jamais avant : c'est
+     * l'accueil qui doit s'afficher en premier, et cette réponse ne sert qu'à décider d'une entrée de
+     * menu. Un serveur qui ne la connaît pas — client à jour, serveur non — laisse simplement
+     * l'entrée absente, ce qui est le comportement voulu par défaut.
+     */
+    void api.etatLive().then((direct) => setDirectDisponible(direct.disponible)).catch(() => setDirectDisponible(false));
     try { setHome(await api.home(active.id)); setError(null); } catch {
     if (active.protected && !api.hasProfileAccess(active.id)) { setHome(null); setProfile(null); setProfileToUnlock(active); setError(null); return; }
     setError("Impossible de joindre le serveur FlixTunes."); } };
@@ -831,7 +864,7 @@ export function App() {
   /** Ouvre le lecteur et inscrit la lecture dans l'adresse, pour qu'elle survive à un rechargement. */
   const ouvrirLecteur = (mediaId: string) => { setPlaying(mediaId); window.location.hash = `lecture/${encodeURIComponent(mediaId)}`; };
   /** Quitte le lecteur et rend l'adresse à la vue courante. */
-  const fermerLecteur = () => { setPlaying(null); window.location.hash = view === "home" ? "top" : view === "movies" ? "films" : view === "shows" ? "series" : "historique"; };
+  const fermerLecteur = () => { setPlaying(null); window.location.hash = ANCRES[view]; };
   /** Enchaînement depuis le lecteur : l'épisode suivant n'est connu que par son identifiant. */
 
   useEffect(() => {
@@ -850,7 +883,7 @@ export function App() {
     return () => clearTimeout(minuteur);
   }, [playing, details]);
 
-  const navigate = (next: AppView) => { setView(next); setSearchOpen(false); setQuery(""); window.location.hash = next === "home" ? "top" : next === "movies" ? "films" : next === "shows" ? "series" : "historique"; };
+  const navigate = (next: AppView) => { setView(next); setSearchOpen(false); setQuery(""); window.location.hash = ANCRES[next]; };
 
   /**
    * Un écran s'ouvre en haut. Tous les écrans, et par toutes les voies.
@@ -883,6 +916,11 @@ export function App() {
       <Player mediaId={playing} profile={profile} onPlayMedia={playById} onClose={() => { fermerLecteur(); void loadHome(); }} />
     </Suspense>
   );
+  if (chaineDirect && profile) return (
+    <Suspense fallback={<div className="player-page" role="status" aria-label="Ouverture de la chaîne" />}>
+      <LecteurDirect chaine={chaineDirect} onClose={() => setChaineDirect(null)} />
+    </Suspense>
+  );
   if (!introComplete || firstRunRequired === null || remoteLoginRequired === null) return <div className="app-loading brand-intro"><div className="intro-orbit"/><img src="/brand/flixtunes-logo.png" alt="FlixTunes" /><strong>Flix<span>Tunes</span></strong><span>{firstRunRequired === null || remoteLoginRequired === null ? "Connexion au serveur…" : "Votre cinéma prend vie"}</span></div>;
   if (remoteLoginRequired) return <RemoteLoginPanel onAuthenticated={bootstrap} />;
   if (firstRunRequired) return <SetupWizard onComplete={() => { setFirstRunRequired(false); void refreshGroups(); }} />;
@@ -890,7 +928,7 @@ export function App() {
 
   const featured = home?.featured; const empty = home && !home.recentlyAdded.length;
   return <div className="app-shell"><a className="skip-link" href="#main-content">Aller au contenu</a><header className="topbar"><a className="brand" href="#top" onClick={(event) => { event.preventDefault(); navigate("home"); }}><img src="/brand/flixtunes-logo.png" alt="" /><span>Flix<span>Tunes</span></span></a>
-    <nav aria-label="Menu principal"><a className={view === "home" ? "active" : ""} href="#top" onClick={(event) => { event.preventDefault(); navigate("home"); }}><Icon name="home" />Accueil</a><a className={view === "movies" ? "active" : ""} href="#films" onClick={(event) => { event.preventDefault(); navigate("movies"); }}><Icon name="movie" />Films</a><a className={view === "shows" ? "active" : ""} href="#series" onClick={(event) => { event.preventDefault(); navigate("shows"); }}><Icon name="tv" />Séries TV</a><a className={view === "history" ? "active" : ""} href="#historique" onClick={(event) => { event.preventDefault(); navigate("history"); }}><Icon name="history" />Historique</a></nav>
+    <nav aria-label="Menu principal"><a className={view === "home" ? "active" : ""} href="#top" onClick={(event) => { event.preventDefault(); navigate("home"); }}><Icon name="home" />Accueil</a><a className={view === "movies" ? "active" : ""} href="#films" onClick={(event) => { event.preventDefault(); navigate("movies"); }}><Icon name="movie" />Films</a><a className={view === "shows" ? "active" : ""} href="#series" onClick={(event) => { event.preventDefault(); navigate("shows"); }}><Icon name="tv" />Séries TV</a>{directDisponible && <a className={view === "live" ? "active" : ""} href="#direct" onClick={(event) => { event.preventDefault(); navigate("live"); }}><Icon name="tv" />Live TV</a>}<a className={view === "history" ? "active" : ""} href="#historique" onClick={(event) => { event.preventDefault(); navigate("history"); }}><Icon name="history" />Historique</a></nav>
     <div className="top-actions"><button className="icon-button" onClick={() => setLibrariesOpen(true)} aria-label="Gérer les dossiers"><Icon name="settings" /></button><button className="icon-button" onClick={() => setSearchOpen((v) => !v)} aria-label="Rechercher"><Icon name="search" /></button>
     {profile && <button className="profile" onClick={() => setProfileOpen(true)}><span style={{ background: profile.avatarColor }}>{profile.name[0]}</span><b>{profile.name}</b></button>}</div></header>
     {searchOpen && <div className="search-panel"><Icon name="search" /><input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Titres, acteurs, réalisateurs, genres…" />{query && <div className="search-results">{results.length ? results.map((item) => <MediaCard key={item.id} item={item} onOpen={openDetails} onContext={openContext} />) : <p>Aucun résultat.</p>}</div>}</div>}
@@ -901,6 +939,7 @@ export function App() {
       {view === "home" && !empty && home && <div className="content"><Rail title="Continuer à regarder" items={home.continueWatching} onOpen={openDetails} onContext={openContext} />{profile && <RecommendationRail recommendations={home.recommendations ?? []} profile={profile} onOpen={openDetails} onChanged={() => void loadHome()} onContext={openContext} />}<Rail title="Ma liste" items={home.watchlist ?? []} onOpen={openDetails} onContext={openContext} /><Rail title="Ajouts récents" items={home.recentlyAdded} onOpen={openDetails} onContext={openContext} /><Rail title="Films" items={home.movies} onOpen={openDetails} onContext={openContext} /><Rail title="Séries" items={home.shows} onOpen={openDetails} onContext={openContext} /><Rail title="Déjà vus" items={home.completed} onOpen={openDetails} onContext={openContext} /><Rail title="Historique récent" items={home.watchedRecently} onOpen={openDetails} onContext={openContext} /></div>}
       {home && profile && view === "movies" && <CatalogPage kind="movies" profileId={profile.id} total={home.movieTotal ?? home.movies.length} onOpen={openDetails} onContext={openContext} />}
       {home && profile && view === "shows" && <CatalogPage kind="shows" profileId={profile.id} total={home.showTotal ?? home.shows.length} onOpen={openDetails} onContext={openContext} />}
+      {view === "live" && directDisponible && <Suspense fallback={<HomeSkeleton />}><LiveTv onPlay={setChaineDirect} /></Suspense>}
       {home && view === "history" && <section className="catalog-page"><header className="catalog-header"><div><span className="eyebrow">Votre activité</span><h1>Historique</h1></div></header><Rail title="Déjà vus" items={home.completed} onOpen={openDetails} onContext={openContext} /><Rail title="Historique récent" items={home.watchedRecently} onOpen={openDetails} onContext={openContext} /></section>}
     </main><footer><span>FlixTunes</span><button onClick={() => setLibrariesOpen(true)}>Gérer les bibliothèques</button><small>Votre cinéma. Votre réseau.</small></footer>
     {librariesOpen && <LibraryManager onClose={() => { setLibrariesOpen(false); void loadHome(); }} onChanged={() => void loadHome()} />}

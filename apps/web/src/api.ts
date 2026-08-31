@@ -30,6 +30,13 @@ import type {
   ProfileInput,
   ScanJob,
   ScanRequest,
+  ChaineDirectDetaillee,
+  ClassementListe,
+  EtatDirect,
+  ListeDirect,
+  PageChaines,
+  ParametresDirect,
+  SourceDirect,
 } from "@flixtunes/contracts";
 
 /** La cible A–Z peut vivre au milieu de la page afin de conserver les jaquettes précédentes. */
@@ -238,7 +245,15 @@ export const api = {
   ),
   setupStatus: () => request<SetupStatus>("/setup"),
   completeSetup: (input: SetupInput) => request<SetupStatus>("/setup", { method: "POST", body: JSON.stringify(input) }),
-  browseDirectories: (path?: string) => request<DirectoryBrowserListing>(`/filesystem/directories${path ? `?path=${encodeURIComponent(path)}` : ""}`),
+  browseDirectories: (path?: string, fichiers?: string[]) => {
+    const parametres = new URLSearchParams();
+    if (path) parametres.set("path", path);
+    // Les extensions ne sont demandées que lorsqu'on choisit un fichier : sans elles, le serveur ne
+    // liste que des dossiers, ce qui reste le cas des bibliothèques.
+    if (fichiers?.length) parametres.set("fichiers", fichiers.join(","));
+    const requete = parametres.toString();
+    return request<DirectoryBrowserListing>(`/filesystem/directories${requete ? `?${requete}` : ""}`);
+  },
   libraries: () => request<LibraryFolder[]>("/libraries"),
   scans: (limit = 100) => request<ScanJob[]>(`/scans?limit=${limit}`),
   /** Où en est le repérage des génériques de séries. Voir `marqueurs-passe` côté serveur. */
@@ -247,6 +262,57 @@ export const api = {
   /** Reprendre le repérage sur les saisons restantes, sans relancer la moindre analyse. */
   reprendreGeneriques: () => request<EtatGeneriques>("/system/generiques/passe", { method: "POST" }),
   generiques: () => request<EtatGeneriques>("/system/generiques"),
+
+  /*
+   * La télévision en direct.
+   *
+   * Les quatre premières sont des réglages du serveur : elles ne sont pas offertes à l'accès distant,
+   * et la liste blanche de `wan-exposition.ts` les refuse d'office. La grille, elle, rejoindra les
+   * lectures autorisées quand son écran existera.
+   */
+  live: () => request<{ parametres: ParametresDirect; etat: EtatDirect }>("/system/live"),
+  enregistrerLive: (parametres: Partial<ParametresDirect>) => request<{ parametres: ParametresDirect; etat: EtatDirect }>(
+    "/system/live", { method: "PUT", body: JSON.stringify(parametres) },
+  ),
+  rafraichirLive: () => request<EtatDirect>("/system/live/rafraichir", { method: "POST" }),
+  arreterLive: () => request<EtatDirect>("/system/live/arret", { method: "POST" }),
+  listesLive: () => request<ListeDirect[]>("/system/live/listes"),
+  sourcesLive: () => request<SourceDirect[]>("/system/live/sources"),
+  ajouterXtream: (hote: string, utilisateur: string, motDePasse: string, libelle?: string) =>
+    request<{ source: SourceDirect }>("/system/live/sources",
+      { method: "POST", body: JSON.stringify({ type: "xtream", hote, utilisateur, motDePasse, libelle }) }),
+  activerFast: () => request<{ source: SourceDirect | null }>("/system/live/sources",
+    { method: "POST", body: JSON.stringify({ type: "fast" }) }),
+  retirerSourceLive: (id: string) => request<void>(`/system/live/sources/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  chainesLive: (requete: { q?: string; listes?: string[]; pays?: string[]; fiabilites?: string[];
+    offset?: number; limit?: number } = {}) => {
+    const parametres = new URLSearchParams();
+    if (requete.q) parametres.set("q", requete.q);
+    if (requete.listes?.length) parametres.set("listes", requete.listes.join(","));
+    if (requete.pays?.length) parametres.set("pays", requete.pays.join(","));
+    if (requete.fiabilites?.length) parametres.set("fiabilites", requete.fiabilites.join(","));
+    if (requete.offset) parametres.set("offset", String(requete.offset));
+    if (requete.limit) parametres.set("limit", String(requete.limit));
+    return request<PageChaines>(`/live/channels?${parametres.toString()}`);
+  },
+  /*
+   * Ce qu'un client demande avant d'afficher quoi que ce soit : l'entrée « Direct » doit-elle
+   * exister ? Elle n'existe que si la fonction est activée et qu'une source a rendu des chaînes.
+   */
+  etatLive: () => request<{ disponible: boolean; chaines: number; rafraichieLe: string | null }>("/live"),
+  listesLiveClient: () => request<Array<{ id: string; nom: string; classement: ClassementListe; chaines: number }>>("/live/listes"),
+  fiabilitesLive: () => request<Array<{ classement: ClassementListe; listes: number }>>("/live/fiabilites"),
+  paysLive: () => request<Array<{ code: string; nom: string; chaines: number }>>("/live/pays"),
+  /*
+   * Les adresses d'une chaîne, dans l'ordre où il faut les essayer : celles qui ont déjà marché
+   * d'abord, celles qui ont échoué en dernier. C'est ce qui rend le repli utile plutôt qu'aléatoire.
+   */
+  chaineLive: (id: string) => request<ChaineDirectDetaillee>(
+    `/live/channels/${encodeURIComponent(id)}`,
+  ),
+  resultatChaineLive: (id: string, url: string, ok: boolean) => request<void>(
+    `/live/channels/${encodeURIComponent(id)}/resultat`, { method: "POST", body: JSON.stringify({ url, ok }) },
+  ),
   startScan: (input: ScanRequest) => request<{ jobs: ScanJob[] }>("/scans", { method: "POST", body: JSON.stringify(input) }),
   cancelScan: (id: string) => request<ScanJob>(`/scans/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
   retryScan: (id: string) => request<ScanJob>(`/scans/${encodeURIComponent(id)}/retry`, { method: "POST" }),

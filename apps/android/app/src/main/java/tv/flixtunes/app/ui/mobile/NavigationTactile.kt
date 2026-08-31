@@ -6,7 +6,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.sp
-import tv.flixtunes.app.ui.SECTIONS
+import tv.flixtunes.app.ui.sectionsVisibles
 
 /**
  * Navigation de la surface tactile : une barre au bas de l'écran.
@@ -19,9 +19,14 @@ import tv.flixtunes.app.ui.SECTIONS
  * sur un téléphone.
  */
 @Composable
-fun NavigationTactile(sectionCourante: String, modifier: Modifier = Modifier, choisir: (String) -> Unit) {
+fun NavigationTactile(
+    sectionCourante: String,
+    directDisponible: Boolean,
+    modifier: Modifier = Modifier,
+    choisir: (String) -> Unit,
+) {
     NavigationBar(modifier) {
-        for (section in SECTIONS) {
+        for (section in sectionsVisibles(directDisponible)) {
             NavigationBarItem(
                 selected = section.cle == sectionCourante,
                 onClick = { choisir(section.cle) },

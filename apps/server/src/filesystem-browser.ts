@@ -61,6 +61,26 @@ export async function discoverBrowseRoots(): Promise<string[]> {
   return uniqueExistingDirectories([config.dataDir]);
 }
 
+/**
+ * Les fichiers d'un dossier, filtrés par extension.
+ *
+ * Le parcours ne montrait que des dossiers, parce qu'une bibliothèque **est** un dossier. Le fichier
+ * de listes, lui, est un fichier : demander de le taper à la main après avoir choisi son dossier
+ * revenait à faire à moitié le travail que ce composant existe pour faire.
+ *
+ * L'extension est **exigée** plutôt qu'optionnelle : sans elle, un dossier de médias afficherait ses
+ * milliers de fichiers vidéo dans une fenêtre qui sert à en choisir un seul.
+ */
+async function fileEntries(directory: string, extensions: string[]): Promise<DirectoryBrowserEntry[]> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const voulues = extensions.map((extension) => `.${extension.replace(/^\./, "").toLowerCase()}`);
+  return entries
+    .filter((entry) => entry.isFile() && !entry.name.startsWith(".")
+      && voulues.includes(path.extname(entry.name).toLowerCase()))
+    .map((entry) => ({ name: entry.name, path: path.join(directory, entry.name) }))
+    .sort((left, right) => left.name.localeCompare(right.name, "fr", { numeric: true, sensitivity: "base" }));
+}
+
 async function directoryEntries(directory: string, allowedRoot: string): Promise<DirectoryBrowserEntry[]> {
   const entries = await readdir(directory, { withFileTypes: true });
   const directories = await Promise.all(entries
@@ -79,7 +99,8 @@ async function directoryEntries(directory: string, allowedRoot: string): Promise
     .sort((left, right) => left.name.localeCompare(right.name, "fr", { numeric: true, sensitivity: "base" }));
 }
 
-export async function browseDirectories(requestedPath?: string, explicitRoots?: string[]): Promise<DirectoryBrowserListing> {
+export async function browseDirectories(requestedPath?: string, explicitRoots?: string[],
+  extensions: string[] = []): Promise<DirectoryBrowserListing> {
   const roots = await uniqueExistingDirectories(explicitRoots ?? await discoverBrowseRoots());
   const rootEntries = roots.map((root) => ({ name: path.basename(root) || root, path: root }));
   if (!requestedPath?.trim()) return { path: null, parentPath: null, roots: rootEntries, directories: rootEntries };
@@ -101,5 +122,6 @@ export async function browseDirectories(requestedPath?: string, explicitRoots?: 
     parentPath,
     roots: rootEntries,
     directories: await directoryEntries(current, allowedRoot),
+    files: extensions.length ? await fileEntries(current, extensions) : undefined,
   };
 }

@@ -6,6 +6,7 @@ import { MetadataManager } from "./MetadataManager";
 import { FolderBrowser } from "./FolderBrowser";
 import { ProviderSetup } from "./ProviderSetup";
 import { DiagnosticsPanel } from "./DiagnosticsPanel";
+import { TelevisionDirect } from "./TelevisionDirect";
 
 const kindLabels: Record<LibraryKind, string> = {
   auto: "Détection automatique",
@@ -170,6 +171,7 @@ export function LibraryManager({ onClose, onChanged }: { onClose: () => void; on
 
         <ProviderSetup />
         <DiagnosticsPanel />
+        <TelevisionDirect />
 
         <section className="scan-center" aria-labelledby="scan-center-title">
           <div className="scan-center-heading">

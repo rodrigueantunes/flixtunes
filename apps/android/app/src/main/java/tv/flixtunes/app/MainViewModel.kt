@@ -21,13 +21,17 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import org.json.JSONObject
 import java.text.Normalizer
+import tv.flixtunes.app.data.ChaineDirect
 import tv.flixtunes.app.data.Details
 import tv.flixtunes.app.data.FlixTunesApi
 import tv.flixtunes.app.data.FlixTunesRepository
+import tv.flixtunes.app.data.FiabiliteDirect
 import tv.flixtunes.app.data.Home
+import tv.flixtunes.app.data.ListeDirect
 import tv.flixtunes.app.data.Media
 import tv.flixtunes.app.data.PersonCredit
 import tv.flixtunes.app.data.PersonDetails
+import tv.flixtunes.app.data.PaysDirect
 import tv.flixtunes.app.data.Profile
 import tv.flixtunes.app.data.ProfileGroup
 import tv.flixtunes.app.data.Season
@@ -40,6 +44,14 @@ private const val CATALOG_PAGE_SIZE = 60
 private const val CATALOG_PAGE_SIZE_TV = 120
 
 /**
+ * Chaînes demandées par page.
+ *
+ * Soixante, comme le catalogue du Web. Le corpus en compte 76 823 : tout charger d'avance coûterait
+ * plusieurs mégaoctets de JSON pour une grille dont on voit vingt cartes.
+ */
+private const val taillePageDirect = 60
+
+/**
  * Étapes réelles du démarrage, dans l'ordre où elles surviennent.
  * Le pourcentage jalonne une séquence effective : il n'est pas une animation décorative qui avancerait
  * sans rien attendre.
@@ -49,7 +61,10 @@ enum class StartupStep(val libelle: Int, val progress: Float) {
     // Elle transporte donc l'identifiant de ressource, que l'ecran resout au moment de l'afficher.
     CONNEXION(R.string.etat_connexion, .18f),
     PROFILS(R.string.etat_profils, .5f),
-    MEDIATHEQUE(R.string.etat_mediatheque, .76f),
+    MEDIATHEQUE(R.string.etat_mediatheque, .70f),
+    // La télévision en direct vient **après** la médiathèque, et seulement si elle est réglée : c'est
+    // l'accueil qu'on veut voir en premier, et une grille de chaînes ne vaut pas de le retarder.
+    DIRECT(R.string.etat_direct, .82f),
     AFFICHES(R.string.etat_affiches_tv, .92f),
 }
 
@@ -103,9 +118,42 @@ data class MainState(
     val query: String = "",
     val movies: CatalogSection = CatalogSection(),
     val shows: CatalogSection = CatalogSection(),
+    /**
+     * La télévision en direct, ou son absence.
+     *
+     * `direct` reste à `null` tant que le serveur n'a pas répondu, et la section n'apparaît dans le
+     * menu que lorsqu'il a dit **oui** : une installation qui ne s'en sert pas ne voit rien changer,
+     * et un serveur plus ancien qui ignore la route se comporte comme une installation éteinte.
+     */
+    val direct: SectionDirect? = null,
     val loading: Boolean = false,
     val error: String? = null,
 )
+
+/**
+ * La grille des chaînes en direct et ses filtres.
+ *
+ * Elle est paginée comme le catalogue et pour la même raison, en plus fort : le corpus mesuré compte
+ * **76 823 chaînes**. Rien n'est chargé d'avance, et une page en appelle une autre quand on approche
+ * du bas.
+ */
+@Immutable
+data class SectionDirect(
+    val disponible: Boolean = false,
+    val items: List<ChaineDirect> = emptyList(),
+    val total: Int = 0,
+    val loading: Boolean = false,
+    val loaded: Boolean = false,
+    val query: String = "",
+    val listes: List<ListeDirect> = emptyList(),
+    val listesChoisies: List<String> = emptyList(),
+    val pays: List<PaysDirect> = emptyList(),
+    val paysChoisis: List<String> = emptyList(),
+    val fiabilites: List<FiabiliteDirect> = emptyList(),
+    val fiabilitesChoisies: List<String> = emptyList(),
+) {
+    val hasMore: Boolean get() = items.size < total
+}
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     // Le type déclaré est le contrat, pas la mise en œuvre : c'est ce qui permettra de fournir un
@@ -343,6 +391,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val accueil = currentApi.home(profile.id)
             if (!premierDemarrageTv) {
                 state = state.copy(home = accueil, loading = false, startup = null)
+                // Sur téléphone, la question se pose sans écran de démarrage : l'entrée de menu
+                // apparaît quand la réponse arrive, et pas avant.
+                chargerDirect(currentApi, profile.id)
                 return@launch
             }
 
@@ -355,7 +406,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val series = async { chargerCatalogueTv(currentApi, profile.id, "shows") }
                 films.await() to series.await()
             }
-            state = state.copy(movies = films, shows = series, startup = StartupStep.AFFICHES)
+            state = state.copy(movies = films, shows = series, startup = StartupStep.DIRECT)
+            chargerDirect(currentApi, profile.id)
+            state = state.copy(startup = StartupStep.AFFICHES)
 
             val urls = urlsAffiches(currentApi, films.items, series.items)
             prechargerAffichesTv(urls.take(nombreAffichesInitialesTv(memoire)))
@@ -669,6 +722,74 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * L'accueil ne transmet plus que les premières fiches : sur une médiathèque de plusieurs milliers
      * de titres, tout envoyer d'un bloc représentait près d'un mégaoctet à chaque ouverture.
      */
+    /**
+     * Ce que le serveur dit de la télévision en direct, et les filtres qui vont avec.
+     *
+     * Un serveur plus ancien ignore ces routes : l'échec vaut « non disponible », ce qui est aussi
+     * l'état d'une installation qui ne s'en sert pas. Les filtres ne sont demandés que si la réponse
+     * est oui — trois requêtes de plus au démarrage pour une fonction éteinte n'auraient aucun sens.
+     */
+    private suspend fun chargerDirect(api: FlixTunesApi, profileId: String) {
+        val etat = runCatching { api.etatDirect(profileId) }.getOrNull()
+        if (etat?.disponible != true) { state = state.copy(direct = SectionDirect(disponible = false)); return }
+        val listes = runCatching { api.listesDirect(profileId) }.getOrDefault(emptyList())
+        val pays = runCatching { api.paysDirect(profileId) }.getOrDefault(emptyList())
+        val fiabilites = runCatching { api.fiabilitesDirect(profileId) }.getOrDefault(emptyList())
+        state = state.copy(direct = SectionDirect(disponible = true, listes = listes, pays = pays, fiabilites = fiabilites))
+    }
+
+    /**
+     * Une page de la grille des chaînes.
+     *
+     * `reset` reprend depuis le début : c'est ce que fait tout changement de recherche ou de filtre.
+     * Sans lui, la nouvelle page s'ajouterait à l'ancienne et la grille mélangerait deux critères.
+     */
+    fun chargerChaines(reset: Boolean = false) = viewModelScope.launch {
+        val currentApi = repository.api ?: return@launch
+        val profile = state.profile ?: return@launch
+        val section = state.direct ?: return@launch
+        if (!section.disponible || section.loading) return@launch
+        if (!reset && section.loaded && !section.hasMore) return@launch
+        state = state.copy(direct = section.copy(loading = true))
+        runCatching {
+            currentApi.chainesDirect(profile.id, if (reset) 0 else section.items.size, taillePageDirect,
+                query = section.query, listes = section.listesChoisies,
+                pays = section.paysChoisis, fiabilites = section.fiabilitesChoisies)
+        }
+            .onSuccess { page ->
+                val courante = state.direct ?: return@onSuccess
+                // Une réponse lancée pour un critère peut arriver après qu'on en a changé : elle ne
+                // doit pas repeupler la grille avec ce qu'on ne demande plus.
+                if (courante.query != section.query || courante.listesChoisies != section.listesChoisies ||
+                    courante.paysChoisis != section.paysChoisis || courante.fiabilitesChoisies != section.fiabilitesChoisies) {
+                    state = state.copy(direct = courante.copy(loading = false)); return@onSuccess
+                }
+                val connues = if (reset) emptySet() else courante.items.mapTo(mutableSetOf()) { it.id }
+                val base = if (reset) emptyList() else courante.items
+                state = state.copy(direct = courante.copy(
+                    items = base + page.items.filterNot { it.id in connues },
+                    total = page.total, loading = false, loaded = true))
+            }
+            .onFailure { failure ->
+                state = state.copy(direct = (state.direct ?: section).copy(loading = false), error = failure.message)
+            }
+    }
+
+    /** Un critère changé repart de la première page : c'est une autre grille, pas la suite de celle-ci. */
+    fun filtrerDirect(
+        query: String? = null, listes: List<String>? = null,
+        pays: List<String>? = null, fiabilites: List<String>? = null,
+    ) {
+        val section = state.direct ?: return
+        state = state.copy(direct = section.copy(
+            query = query ?: section.query,
+            listesChoisies = listes ?: section.listesChoisies,
+            paysChoisis = pays ?: section.paysChoisis,
+            fiabilitesChoisies = fiabilites ?: section.fiabilitesChoisies,
+        ))
+        chargerChaines(reset = true)
+    }
+
     fun loadCatalog(kind: String, reset: Boolean = false) = viewModelScope.launch {
         val currentApi = repository.api ?: return@launch
         val profile = state.profile ?: return@launch
