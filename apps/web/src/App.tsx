@@ -2,6 +2,9 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import type { CatalogPerson, ChaineDirect, HomeResponse, LibraryFolder, MediaDetails, MediaItem, PersonDetails, Profile, ProfileGroup } from "@flixtunes/contracts";
 import { api } from "./api";
 import { ecrireCache, lireCache, oublierCache } from "./server-cache";
+import { oublierSouvenirDirect } from "./memoire-direct";
+import { lireSouvenirCatalogue, oublierSouvenirsCatalogue, retenirSouvenirCatalogue } from "./memoire-catalogue";
+import { reposerDefilement } from "./defilement";
 import { scrollBehavior } from "./motion";
 import { useRemoteNavigation } from "./remote-navigation";
 import { useDialogFocus } from "./useDialogFocus";
@@ -178,17 +181,25 @@ function CatalogPage({ kind, profileId, total, onOpen, onContext }: {
   kind: "movies" | "shows"; profileId: string; total: number; onOpen: (item: CardItem) => void;
   onContext?: (item: CardItem, x: number, y: number) => void;
 }) {
-  const [sort, setSort] = useState<CatalogSort>("title");
-  const [filter, setFilter] = useState<"all" | "progress" | "watched" | "unwatched">("all");
-  const [catalogQuery, setCatalogQuery] = useState("");
-  const [debouncedQuery, setDebouncedQuery] = useState("");
+  /*
+   * Tout repart de ce que la session a retenu.
+   *
+   * Ouvrir un film démonte cet écran : sans cela, le retour repartait du haut d'une liste sans filtre,
+   * après qu'on avait mis vingt secondes à arriver là où on en était. C'est le même défaut que le
+   * direct avait, et il se répare de la même façon.
+   */
+  const souvenir = lireSouvenirCatalogue(kind);
+  const [sort, setSort] = useState<CatalogSort>(souvenir.sort);
+  const [filter, setFilter] = useState<"all" | "progress" | "watched" | "unwatched">(souvenir.filter);
+  const [catalogQuery, setCatalogQuery] = useState(souvenir.query);
+  const [debouncedQuery, setDebouncedQuery] = useState(souvenir.query);
   /** Décennie retenue, ou « toutes ». Une décennie parle mieux qu'un couple d'années à saisir. */
-  const [decade, setDecade] = useState<"all" | number>("all");
-  const [genres, setGenres] = useState<string[]>([]);
+  const [decade, setDecade] = useState<"all" | number>(souvenir.decade);
+  const [genres, setGenres] = useState<string[]>(souvenir.genres);
   const [availableGenres, setAvailableGenres] = useState<string[]>([]);
   /** Point de départ absolu de la fenêtre reçue, non nul après un saut par l'index A–Z. */
-  const [initialOffset, setInitialOffset] = useState(0);
-  const [selectedLetter, setSelectedLetter] = useState<string | null>(null);
+  const [initialOffset, setInitialOffset] = useState(souvenir.initialOffset);
+  const [selectedLetter, setSelectedLetter] = useState<string | null>(souvenir.selectedLetter);
   // Pas d'amorçage avec la page reçue par l'accueil : elle est classée par date d'ajout alors que le
   // catalogue s'ouvre en ordre alphabétique, et la grille se réordonnerait sous les yeux de la personne.
   const [items, setItems] = useState<CardItem[]>([]);
@@ -342,6 +353,38 @@ function CatalogPage({ kind, profileId, total, onOpen, onContext }: {
     }
   };
 
+  /*
+   * Ce qu'on retient, et quand.
+   *
+   * À chaque changement plutôt qu'au démontage : un composant démonté par une navigation n'a pas
+   * toujours l'occasion de faire ses adieux, et un souvenir qui manque une fois sur dix est pire
+   * qu'aucun souvenir.
+   */
+  useEffect(() => {
+    retenirSouvenirCatalogue(kind, {
+      sort, filter, query: debouncedQuery, decade, genres, initialOffset, selectedLetter,
+    });
+  }, [decade, debouncedQuery, filter, genres, initialOffset, kind, selectedLetter, sort]);
+
+  /**
+   * Ouvrir une fiche, en notant d'abord où l'on en était.
+   *
+   * Au clic, et non au démontage : ouvrir un film raccourcit la page d'un coup, le navigateur ramène
+   * le défilement au nouveau maximum, et une position lue à ce moment-là ne vaut plus rien — mesuré
+   * sur le direct, 282 pixels au lieu de 1 500. Le clic, lui, a lieu avant que rien ne bouge.
+   */
+  const ouvrir = useCallback((item: CardItem) => {
+    retenirSouvenirCatalogue(kind, { defilement: window.scrollY });
+    onOpen(item);
+  }, [kind, onOpen]);
+
+  const defilementRepose = useRef(false);
+  useEffect(() => {
+    if (defilementRepose.current || !items.length) return;
+    defilementRepose.current = true;
+    reposerDefilement(souvenir.defilement);
+  }, [items.length, souvenir.defilement]);
+
   const title = kind === "movies" ? "Films" : "Séries TV";
   const remainingBefore = Math.max(0, initialOffset);
   const remaining = Math.max(0, matching - initialOffset - items.length);
@@ -379,7 +422,7 @@ function CatalogPage({ kind, profileId, total, onOpen, onContext }: {
         <button type="button" onClick={() => void loadPrevious()} disabled={loading}>
           {loading ? "Chargement…" : `Afficher ${Math.min(CATALOG_PAGE_SIZE, remainingBefore)} titres précédents`}
         </button>
-      </div>}<div className="catalog-grid" ref={grid}>{items.map((item) => <MediaCard key={item.id} item={item} onOpen={onOpen} onContext={onContext} />)}</div>
+      </div>}<div className="catalog-grid" ref={grid}>{items.map((item) => <MediaCard key={item.id} item={item} onOpen={ouvrir} onContext={onContext} />)}</div>
       {remaining > 0 && <div className="catalog-more" ref={sentinel}>
         <button type="button" onClick={() => void loadMore()} disabled={loading}>
           {loading ? "Chargement…" : `Afficher ${Math.min(CATALOG_PAGE_SIZE, remaining)} titres de plus`}
@@ -793,6 +836,20 @@ export function App() {
     // c'est la lecture elle-même qui dira ce qui manque.
     try { await api.unlockProfile(active.id); } catch { /* le refus viendra de la lecture */ }
   };
+  /**
+   * Le souvenir de l'écran des chaînes appartient au profil.
+   *
+   * Ses favorites sont à lui : rouvrir la grille filtrée sur les chaînes de quelqu'un d'autre serait
+   * un souvenir qui ment. Il part donc en même temps que le cache du catalogue, au même endroit.
+   */
+  const profilPrecedent = useRef<string | null>(null);
+  useEffect(() => {
+    if (profile?.id === profilPrecedent.current) return;
+    profilPrecedent.current = profile?.id ?? null;
+    oublierSouvenirDirect();
+    oublierSouvenirsCatalogue();
+  }, [profile?.id]);
+
   const loadHome = async (active = profile) => { if (!active) return; oublierCache(`catalogue:${active.id}`);
     await assurerSessionProfil(active);
     /*

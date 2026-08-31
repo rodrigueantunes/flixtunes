@@ -6,13 +6,22 @@ import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -21,6 +30,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -30,6 +41,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
@@ -38,11 +50,13 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import tv.flixtunes.app.data.ChaineDirect
 import tv.flixtunes.app.data.FlixTunesApi
+import tv.flixtunes.app.ui.BleuClair
 import tv.flixtunes.app.ui.Encre
 import tv.flixtunes.app.ui.Muet
 import tv.flixtunes.app.ui.ThemeFlixTunes
@@ -76,8 +90,16 @@ class LecteurDirectActivity : ComponentActivity() {
     private lateinit var api: FlixTunesApi
     private lateinit var profileId: String
 
-    /** Les adresses de la chaîne courante, déjà triées par ce que l'usage a appris. */
+    /**
+     * Les adresses de la chaîne courante, dans l'ordre du serveur.
+     *
+     * Ce n'est pas l'ordre de déclaration : le serveur les classe par échecs, puis par définition
+     * mesurée dans le manifeste, puis par débit. La première est donc la meilleure qu'on connaisse,
+     * et les autres restent accessibles à la touche verte.
+     */
     private var adresses: List<String> = emptyList()
+    /** Ce que le serveur sait de chaque adresse — définition et débit —, pour le dire dans la liste. */
+    private var qualites: List<Pair<Int?, Int?>> = emptyList()
     /** La chaîne quittée, pour y revenir d'une touche — le second geste d'un téléviseur. */
     private var precedente: String? = null
     private var rang = 0
@@ -92,6 +114,28 @@ class LecteurDirectActivity : ComponentActivity() {
     private var saisie by mutableStateOf<String?>(null)
     private var effacementSaisie: Job? = null
 
+    /** La fenêtre publiée par la chaîne et l'endroit où l'on s'y trouve, relevés quatre fois par seconde. */
+    private var fenetreMs by mutableStateOf(0L)
+    private var positionMs by mutableStateOf(0L)
+    private var retardMs by mutableStateOf(0L)
+    private var enPause by mutableStateOf(false)
+    /** Les commandes se montrent au geste et s'effacent : on regarde la télévision, pas une interface. */
+    private var commandesVisibles by mutableStateOf(true)
+    private var effacementCommandes: Job? = null
+    /** La liste des sources, ouverte à la touche verte. */
+    private var choixOuvert by mutableStateOf(false)
+    private var choixIndex by mutableStateOf(0)
+    /**
+     * Le retard de sécurité pris après des blocages répétés, en secondes.
+     *
+     * Zéro tant que tout va bien : on part **au bord du flux**, et l'on ne paie du retard que
+     * lorsqu'il est mérité.
+     */
+    private var securite by mutableStateOf(0)
+    private var blocages = mutableListOf<Long>()
+    /** Réparations tentées sur l'adresse en cours : une seule, après quoi la source est bien en cause. */
+    private var reparations = 0
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val serveur = intent.getStringExtra(EXTRA_SERVER) ?: return finish()
@@ -100,17 +144,81 @@ class LecteurDirectActivity : ComponentActivity() {
         api = FlixTunesApi(serveur, intent.getStringExtra(EXTRA_PROFILE_TOKEN))
         message = getString(R.string.direct_ouverture)
 
-        lecteur = ExoPlayer.Builder(this).build().apply {
+        /*
+         * Le lecteur était construit nu — `ExoPlayer.Builder(this).build()` — et c'est ce qui manquait
+         * le plus à la stabilité. Deux réglages y répondent, et ils ne coûtent rien au NAS puisque
+         * tout se passe ici.
+         *
+         * **Le tampon.** Quinze secondes avant de démarrer et jusqu'à soixante en réserve : la fenêtre
+         * médiane du corpus fait 61 s, il n'y a pas plus de média publié à prendre. C'est la marge que
+         * l'on peut acheter, et pas une de plus.
+         *
+         * **La vitesse.** `LiveConfiguration` autorise ExoPlayer à jouer entre 0,97× et 1,03× pour
+         * revenir à sa cible : il **glisse** vers elle au lieu de se figer puis de sauter. C'est le
+         * mécanisme prévu pour exactement ce cas, et on ne le lui demandait pas.
+         */
+        lecteur = ExoPlayer.Builder(this)
+            .setLoadControl(
+                DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(15_000, 60_000, 2_500, 5_000)
+                    .build(),
+            )
+            .build().apply {
             playWhenReady = true
             addListener(object : Player.Listener {
                 override fun onPlayerError(error: PlaybackException) {
-                    // Une erreur fatale sur un direct ne se répare pas en réessayant la même adresse :
-                    // la source est en panne, et la suivante est déjà connue.
+                    /*
+                     * Réparer avant d'abandonner.
+                     *
+                     * Deux pannes sur trois n'en sont pas. **Sortir de la fenêtre** arrive dès qu'on a
+                     * mis en pause un peu trop longtemps : la réponse est de rejoindre le direct, pas
+                     * de changer de source. Une **erreur de décodage** est un segment abîmé : on
+                     * reprépare la même adresse. Le reste — le réseau, le format — est une vraie
+                     * panne, et la suivante est déjà connue.
+                     */
+                    if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
+                        seekToDefaultPosition()
+                        prepare()
+                        return
+                    }
+                    if (error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED && reparations < 1) {
+                        reparations += 1
+                        prepare()
+                        return
+                    }
                     suivante()
                 }
 
+                override fun onPlaybackStateChanged(etat: Int) {
+                    /*
+                     * Le rechargement du tampon n'est pas une panne, c'est un avertissement.
+                     *
+                     * Trois fois en deux minutes, il dit que cette source ne tient pas la cadence à
+                     * laquelle on la lit — et la réponse n'est pas d'en changer, c'est de **reculer**.
+                     * Seize secondes de plus derrière le bord, prises dans les 37 s de marge que la
+                     * fenêtre médiane laisse. On le paie une fois, et l'image tient.
+                     */
+                    if (etat != Player.STATE_BUFFERING || message != null) return
+                    val maintenant = System.currentTimeMillis()
+                    blocages = blocages.filter { maintenant - it < MEMOIRE_BLOCAGES_MS }.toMutableList()
+                    blocages.add(maintenant)
+                    if (blocages.size >= BLOCAGES_AVANT_RECUL && securite == 0) {
+                        securite = RECUL_S
+                        blocages.clear()
+                        jouerRang(reprendre = false)
+                    }
+                }
+
                 override fun onIsPlayingChanged(joue: Boolean) {
+                    enPause = !joue
                     if (!joue) return
+                    /*
+                     * L'accalmie commence quand l'image arrive, pas à la première touche.
+                     *
+                     * `reveiller` n'était appelé que depuis la télécommande : au doigt, sur mobile,
+                     * rien ne la touche jamais et la barre serait restée à l'écran pour toujours.
+                     */
+                    reveiller()
                     message = null
                     echeance?.cancel()
                     val jouee = essai ?: return
@@ -129,6 +237,11 @@ class LecteurDirectActivity : ComponentActivity() {
         essai = null
         rang = 0
         echec = false
+        // Une chaîne neuve repart au bord : le retard de sécurité était celui de la précédente.
+        securite = 0
+        blocages.clear()
+        choixOuvert = false
+        reparations = 0
         // Ce qu'on quitte devient ce vers quoi on revient. Enregistré avant de charger : si la
         // nouvelle chaîne ne répond pas, le retour reste possible.
         chaine?.id?.takeIf { it != chaineId }?.let { precedente = it }
@@ -136,7 +249,9 @@ class LecteurDirectActivity : ComponentActivity() {
         runCatching { api.chaineDirect(profileId, chaineId) }
             .onSuccess { details ->
                 chaine = details.chaine
-                adresses = courirLesAdresses(details.sources.map { it.url }.take(REPLIS))
+                val retenues = details.sources.take(REPLIS)
+                qualites = retenues.map { it.hauteur to it.debit }
+                adresses = courirLesAdresses(retenues.map { it.url })
                 jouerRang()
             }
             .onFailure { echec = true; message = getString(R.string.direct_aucune_source) }
@@ -182,11 +297,28 @@ class LecteurDirectActivity : ComponentActivity() {
         return repondues + candidates.filterNot { it in repondues }
     }
 
-    private fun jouerRang() {
+    private fun jouerRang(reprendre: Boolean = true) {
         val source = adresses.getOrNull(rang) ?: run { echec = true; message = getString(R.string.direct_aucune_source); return }
-        essai = source
+        if (reprendre) essai = source
         lecteur?.apply {
-            setMediaItem(MediaItem.fromUri(source))
+            /*
+             * La cible de retard : trois segments derrière le bord, comme le veut HLS, plus la
+             * sécurité que les blocages ont fait gagner. C'est le seul levier réel — grossir le
+             * tampon ne sert à rien quand il n'y a pas plus de média publié devant soi.
+             */
+            val cible = (CIBLE_DIRECT_S + securite) * 1_000L
+            setMediaItem(
+                MediaItem.Builder()
+                    .setUri(source)
+                    .setLiveConfiguration(
+                        MediaItem.LiveConfiguration.Builder()
+                            .setTargetOffsetMs(cible)
+                            .setMinPlaybackSpeed(0.97f)
+                            .setMaxPlaybackSpeed(1.03f)
+                            .build(),
+                    )
+                    .build(),
+            )
             prepare()
         }
         /*
@@ -207,6 +339,7 @@ class LecteurDirectActivity : ComponentActivity() {
     private fun suivante() {
         val morte = essai ?: return
         essai = null
+        reparations = 0
         val identifiant = chaine?.id
         if (identifiant != null) {
             lifecycleScope.launch { runCatching { api.resultatChaineDirect(profileId, identifiant, morte, false) } }
@@ -269,7 +402,30 @@ class LecteurDirectActivity : ComponentActivity() {
          * flèche gauche fait donc la même chose, et rien d'autre ne s'en sert devant une image plein
          * écran.
          */
-        if (code == KeyEvent.KEYCODE_LAST_CHANNEL || code == KeyEvent.KEYCODE_DPAD_LEFT) {
+        /*
+         * La liste des sources prend la main tant qu'elle est ouverte.
+         *
+         * Sans cela, la croix ferait défiler les chaînes derrière une liste affichée : deux gestes
+         * pour une même touche, et l'on ne saurait jamais lequel on vient de faire.
+         */
+        if (choixOuvert) {
+            when (code) {
+                KeyEvent.KEYCODE_DPAD_UP -> { choixIndex = (choixIndex - 1).coerceAtLeast(0); return true }
+                KeyEvent.KEYCODE_DPAD_DOWN -> { choixIndex = (choixIndex + 1).coerceAtMost(adresses.lastIndex); return true }
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> { choisirSource(choixIndex); return true }
+                KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> { choixOuvert = false; return true }
+                else -> Unit
+            }
+        }
+        reveiller()
+        /*
+         * La chaîne précédente : le second geste d'un téléviseur, après le numéro.
+         *
+         * Elle était sur la flèche gauche, qui recule maintenant dans la fenêtre — une barre de
+         * progression sans flèches pour la parcourir n'aurait servi à rien. Restent les deux touches
+         * que les télécommandes portent pour cela.
+         */
+        if (code == KeyEvent.KEYCODE_LAST_CHANNEL || code == KeyEvent.KEYCODE_MEDIA_PREVIOUS) {
             precedente?.let { ouvrir(it) }
             return true
         }
@@ -277,6 +433,20 @@ class LecteurDirectActivity : ComponentActivity() {
             code == KeyEvent.KEYCODE_DPAD_UP) { voisine(1); return true }
         if (code == KeyEvent.KEYCODE_CHANNEL_DOWN || code == KeyEvent.KEYCODE_PAGE_DOWN ||
             code == KeyEvent.KEYCODE_DPAD_DOWN) { voisine(-1); return true }
+        // Reculer et avancer : la croix horizontale et les touches de transport disent la même chose.
+        if (code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_MEDIA_REWIND) { sauter(-SAUT_MS); return true }
+        if (code == KeyEvent.KEYCODE_DPAD_RIGHT || code == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD) { sauter(SAUT_MS); return true }
+        if (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER ||
+            code == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) { basculerPause(); return true }
+        if (code == KeyEvent.KEYCODE_MEDIA_PLAY) { lecteur?.play(); return true }
+        if (code == KeyEvent.KEYCODE_MEDIA_PAUSE) { lecteur?.pause(); return true }
+        // La touche verte ouvre les sources : c'est la convention des boîtiers, et elle ne sert à rien d'autre ici.
+        if (code == KeyEvent.KEYCODE_PROG_GREEN && adresses.size > 1) {
+            choixIndex = rang
+            choixOuvert = true
+            commandesVisibles = true
+            return true
+        }
         return super.dispatchKeyEvent(evenement)
     }
 
@@ -292,6 +462,75 @@ class LecteurDirectActivity : ComponentActivity() {
         ouvrir(trouvee.id)
     }
 
+    /**
+     * Montrer les commandes, et les laisser s'effacer.
+     *
+     * Devant une image plein écran, tout geste les rappelle et l'accalmie les renvoie. C'est ce que
+     * fait n'importe quel téléviseur, et ce qu'on attend sans y penser.
+     */
+    private fun reveiller() {
+        commandesVisibles = true
+        effacementCommandes?.cancel()
+        effacementCommandes = lifecycleScope.launch {
+            delay(REPOS_BARRE_MS)
+            if (lecteur?.isPlaying == true && !choixOuvert) commandesVisibles = false
+        }
+    }
+
+    /**
+     * Reculer ou avancer dans la fenêtre publiée.
+     *
+     * Bornée des deux côtés : le début est le segment que l'hébergeur va retirer d'une seconde à
+     * l'autre, s'y coller garantit d'en tomber.
+     */
+    private fun sauter(deltaMs: Long) {
+        val joueur = lecteur ?: return
+        val duree = joueur.duration
+        if (duree <= 0) return
+        joueur.seekTo(minOf(duree - 1_000, maxOf(2_000, joueur.currentPosition + deltaMs)))
+        reveiller()
+    }
+
+    /** Revenir au bord du flux — la seule position qui mérite le mot « direct ». */
+    private fun rejoindreDirect() {
+        lecteur?.seekToDefaultPosition()
+        lecteur?.play()
+        reveiller()
+    }
+
+    /**
+     * Mettre en pause un direct, c'est reculer dans la fenêtre.
+     *
+     * Rien ne s'arrête à la source : le flux avance pendant qu'on regarde une image fixe, et l'on
+     * dérive vers l'arrière. Sur 92 % des chaînes mesurées la fenêtre fait entre 30 s et 2 min : une
+     * pause d'une minute passe, une pause de cinq ne passe pas. On laisse faire et **on rattrape** —
+     * `ERROR_CODE_BEHIND_LIVE_WINDOW` rejoint le direct au lieu de figer l'image sans rien dire.
+     */
+    private fun basculerPause() {
+        val joueur = lecteur ?: return
+        if (joueur.isPlaying) joueur.pause() else joueur.play()
+        reveiller()
+    }
+
+    /**
+     * Choisir une source à la main.
+     *
+     * Le repli sait quand une adresse ne répond pas ; il ne sait rien de celle qui répond **mal** —
+     * l'image qui se fige, la définition qui s'effondre. Cela, seule la personne devant l'écran le
+     * voit. L'adresse quittée n'est pas rapportée comme morte : elle ne l'est pas, on lui préfère
+     * simplement une autre.
+     */
+    private fun choisirSource(index: Int) {
+        choixOuvert = false
+        if (index !in adresses.indices || index == rang) return
+        essai = null
+        reparations = 0
+        rang = index
+        echec = false
+        message = getString(R.string.direct_source_essai, index + 1, adresses.size)
+        jouerRang()
+    }
+
     /** La chaîne voisine, par numéro. P+ et P− d'un téléviseur. */
     private fun voisine(sens: Int) = lifecycleScope.launch {
         val depuis = chaine?.numero ?: return@launch
@@ -302,6 +541,42 @@ class LecteurDirectActivity : ComponentActivity() {
     @Composable
     private fun Ecran() {
         val contexte = LocalContext.current
+        /*
+         * La fenêtre publiée, relevée quatre fois par seconde.
+         *
+         * `duration` porte la fenêtre glissante d'un direct — 61 s de médiane sur le corpus, quatre
+         * heures pour Arte —, `currentPosition` l'endroit où l'on s'y trouve. C'est la seule source
+         * de vérité : la barre s'en sert telle quelle plutôt que d'inventer une échelle qui
+         * promettrait un retour en arrière inexistant.
+         */
+        LaunchedEffect(Unit) {
+            while (true) {
+                val joueur = lecteur
+                if (joueur != null) {
+                    fenetreMs = joueur.duration.coerceAtLeast(0)
+                    positionMs = joueur.currentPosition.coerceAtLeast(0)
+                    val decalage = joueur.currentLiveOffset
+                    retardMs = if (decalage == androidx.media3.common.C.TIME_UNSET) {
+                        (fenetreMs - positionMs).coerceAtLeast(0)
+                    } else decalage
+                    enPause = !joueur.isPlaying
+                    /*
+                     * Sortir de la fenêtre par l'arrière : on rattrape avant que l'image ne se fige.
+                     *
+                     * Une pause d'une minute passe sur presque tout le corpus, une pause de cinq n'y
+                     * passe pas. Plutôt que d'interdire la pause, on la laisse et on revient au
+                     * direct en le disant — ExoPlayer sait aussi le signaler lui-même, par
+                     * `ERROR_CODE_BEHIND_LIVE_WINDOW`, mais l'attendre voudrait dire attendre l'erreur.
+                     */
+                    if (fenetreMs > FENETRE_MINIMALE_MS && positionMs in 1 until FENETRE_MINIMALE_MS) {
+                        rejoindreDirect()
+                        message = getString(R.string.direct_fin_fenetre)
+                        lifecycleScope.launch { delay(4_000); message = null }
+                    }
+                }
+                delay(250)
+            }
+        }
         Box(Modifier.fillMaxSize().background(Color.Black)) {
             AndroidView(
                 factory = { PlayerView(contexte).apply { useController = false; player = lecteur } },
@@ -315,11 +590,23 @@ class LecteurDirectActivity : ComponentActivity() {
                 )
                 // Le repli se dit, mais discrètement : savoir qu'on est sur la deuxième source explique
                 // une qualité différente sans transformer un rattrapage réussi en incident.
+                /*
+                 * Le repli se dit, mais discrètement : savoir qu'on est sur la deuxième source
+                 * explique une qualité différente sans transformer un rattrapage réussi en incident.
+                 * Au doigt comme à la touche verte, il ouvre la liste — c'est le seul moyen de dire
+                 * qu'une source qui *répond* répond mal.
+                 */
                 Text(
                     listOfNotNull(
                         courante?.groupe,
-                        if (adresses.size > 1) "source ${rang + 1}/${adresses.size}" else null,
+                        if (adresses.size > 1) "source ${rang + 1}/${adresses.size} ▾" else null,
+                        if (securite > 0) getString(R.string.direct_securite, securite) else null,
                     ).joinToString(" · "),
+                    Modifier.clickable(enabled = adresses.size > 1) {
+                        choixIndex = rang
+                        choixOuvert = true
+                        commandesVisibles = true
+                    },
                     color = Muet, fontSize = 13.sp,
                 )
             }
@@ -328,6 +615,108 @@ class LecteurDirectActivity : ComponentActivity() {
                     .clip(RoundedCornerShape(10.dp)).background(Encre.copy(alpha = .82f)).padding(14.dp, 10.dp),
                     color = if (echec) Color(0xFFFFB7C0) else Color.White)
             }
+            /*
+             * La barre ne s'affiche que si la fenêtre vaut la peine.
+             *
+             * Sous deux segments, il n'y a rien derrière quoi revenir : une barre y serait un décor
+             * qui ne répond pas, et c'est pire que pas de barre du tout.
+             */
+            if (commandesVisibles && fenetreMs > FENETRE_MINIMALE_MS) {
+                val avance = (positionMs.toFloat() / fenetreMs.toFloat()).coerceIn(0f, 1f)
+                val auDirect = retardMs <= MARGE_DIRECT_MS
+                Row(
+                    Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                        .background(Encre.copy(alpha = .82f)).padding(24.dp, 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        if (enPause) "⏵" else "⏸",
+                        Modifier.clickable { basculerPause() }
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                            .semantics {
+                                contentDescription = getString(
+                                    if (enPause) R.string.direct_reprendre_lecture else R.string.direct_pause,
+                                )
+                            },
+                        color = Color.White, fontSize = 20.sp,
+                    )
+                    Spacer(Modifier.width(14.dp))
+                    Box(
+                        Modifier.weight(1f).height(6.dp).clip(CircleShape)
+                            .background(Color.White.copy(alpha = .18f)),
+                    ) {
+                        Box(
+                            Modifier.fillMaxWidth(avance).height(6.dp).clip(CircleShape)
+                                .background(BleuClair),
+                        )
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    Text(
+                        if (auDirect) getString(R.string.direct_en_direct)
+                        else getString(R.string.direct_retard, horodatage(retardMs)),
+                        color = if (auDirect) Color.White else BleuClair,
+                        fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                    )
+                    if (!auDirect) {
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            "⏭",
+                            Modifier.clickable { rejoindreDirect() }
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                .semantics { contentDescription = getString(R.string.direct_revenir_direct) },
+                            color = Color.White, fontSize = 18.sp,
+                        )
+                    }
+                }
+            }
+
+            /*
+             * La liste des sources : ce que le serveur a mesuré, et le moyen d'en préférer une autre.
+             *
+             * La définition vient du manifeste, lue par le serveur — un client ne peut pas la
+             * connaître seul, faute d'en-tête CORS côté navigateur, et Android n'a aucune raison de
+             * refaire ce travail dans son coin. Une source non mesurée le dit plutôt que d'inventer.
+             */
+            if (choixOuvert) {
+                Column(
+                    Modifier.align(Alignment.Center).clip(RoundedCornerShape(14.dp))
+                        .background(Encre.copy(alpha = .95f)).padding(18.dp),
+                ) {
+                    Text(getString(R.string.direct_sources_titre), color = Muet, fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(10.dp))
+                    adresses.forEachIndexed { index, _ ->
+                        val (hauteur, debit) = qualites.getOrNull(index) ?: (null to null)
+                        Column(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp))
+                                .background(
+                                    if (index == choixIndex) Color.White.copy(alpha = .12f) else Color.Transparent,
+                                )
+                                .clickable { choisirSource(index) }
+                                .padding(horizontal = 14.dp, vertical = 9.dp),
+                        ) {
+                            Text(
+                                getString(
+                                    if (index == 0) R.string.direct_source_recommandee else R.string.direct_source_rang,
+                                    index + 1,
+                                ),
+                                color = if (index == rang) BleuClair else Color.White,
+                                fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                when {
+                                    hauteur != null && debit != null ->
+                                        getString(R.string.direct_source_debit, hauteur, "%.1f".format(debit / 1_000_000f))
+                                    hauteur != null -> getString(R.string.direct_source_definition, hauteur)
+                                    else -> getString(R.string.direct_source_inconnue)
+                                },
+                                color = Muet, fontSize = 12.sp,
+                            )
+                        }
+                    }
+                }
+            }
+
             // Le numéro composé, en gros et au centre : c'est le retour qu'un téléviseur donne, et
             // sans lui on ne sait pas si la télécommande a répondu.
             saisie?.let { compose ->
@@ -336,6 +725,12 @@ class LecteurDirectActivity : ComponentActivity() {
                     color = Color.White, fontSize = 44.sp, fontWeight = FontWeight.ExtraBold)
             }
         }
+    }
+
+    /** Un retard se lit en minutes et secondes, jamais en millisecondes. */
+    private fun horodatage(ms: Long): String {
+        val total = (ms / 1000.0).roundToInt().coerceAtLeast(0)
+        return "%d:%02d".format(total / 60, total % 60)
     }
 
     override fun onStop() {
@@ -361,5 +756,32 @@ class LecteurDirectActivity : ComponentActivity() {
 
         /** Au-delà, on n'attend plus : une adresse muette trois secondes fera perdre du temps. */
         private const val DELAI_COURSE_MS = 3_000L
+
+        /**
+         * Le retard visé derrière le bord du flux, en secondes.
+         *
+         * Trois segments, comme le veut HLS — 8 s de médiane sur le corpus mesuré, donc 24 s. C'est
+         * ce que « en direct » veut dire en pratique, et le point de départ tant que rien ne hoquette.
+         */
+        private const val CIBLE_DIRECT_S = 24
+
+        /** Ce qu'on recule après des blocages répétés, pris dans les 37 s de marge de la fenêtre médiane. */
+        private const val RECUL_S = 16
+
+        /** Trois blocages dans cette fenêtre, et le lecteur recule. */
+        private const val MEMOIRE_BLOCAGES_MS = 120_000L
+        private const val BLOCAGES_AVANT_RECUL = 3
+
+        /** Le saut d'une flèche, en millisecondes. Dix secondes, comme partout ailleurs. */
+        private const val SAUT_MS = 10_000L
+
+        /** Le direct, c'est le bord à quelques secondes près : au-delà, on est en différé et on le dit. */
+        private const val MARGE_DIRECT_MS = 12_000L
+
+        /** Sous deux segments, une fenêtre ne mérite pas de barre : elle ne promettrait rien. */
+        private const val FENETRE_MINIMALE_MS = 16_000L
+
+        /** La barre s'efface après cette accalmie. */
+        private const val REPOS_BARRE_MS = 3_500L
     }
 }

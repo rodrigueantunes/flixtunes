@@ -350,7 +350,8 @@ Trois filtres, et un retiré :
 - **les listes**, cochées comme les genres du catalogue, mais repliées : 499 ne tiennent pas à plat ;
 - **la fiabilité**, qui est la mesure que le script de `m3u.json` avait déjà faite et qu'on ignorait —
   ✅ vaut « 75 % des flux répondent », ❌ « 25 à 49 % », et **non « morte »** comme on l'avait d'abord
-  enregistré ;
+  enregistré. *(Le script a été corrigé depuis : `❌` marque les listes sous 25 % et `⚠️` celles de
+  25 à 49 %, et la part se compte en chaînes fusionnées. Voir `tools/tv_playlist_checker.py`.)* ;
 - **le bouquet, retiré** : il exposait les `group-title` bruts, c'est-à-dire le vocabulaire de cinq
   cents auteurs différents.
 

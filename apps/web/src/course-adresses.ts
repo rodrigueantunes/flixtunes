@@ -22,25 +22,36 @@
 /** Au-delà, on n'attend plus : une adresse qui n'a rien dit en trois secondes fera perdre du temps. */
 const DELAI_MS = 3_000;
 
-export interface AdresseCourue { url: string; relais: string | null }
+/**
+ * Ce dont la course a besoin : une adresse, et rien d'autre.
+ *
+ * Le reste — le relais, la définition mesurée — voyage avec elle sans qu'elle le regarde. Le type est
+ * donc générique : elle rend exactement ce qu'on lui a donné, réordonné.
+ */
+export interface AdresseCourue { url: string }
 
 /**
- * Rend les adresses réordonnées : celles qui ont répondu d'abord, dans leur ordre de réponse, puis
- * les autres dans l'ordre reçu.
+ * Rend les adresses réordonnées : celles qui ont répondu d'abord, puis les autres.
+ *
+ * **Entre celles qui répondent, l'ordre du serveur est conservé** — et ce n'est pas un détail. La
+ * première écriture gardait l'ordre d'*arrivée*, si bien qu'une source en 480p qui répond en 100 ms
+ * passait devant la même chaîne en 1080p qui répond en 300 ms. Or le serveur, lui, sait laquelle est
+ * la meilleure : il les classe par échecs, puis par définition, puis par débit. La course ne doit donc
+ * répondre qu'à une seule question — *qui est joignable* —, et laisser le classement à qui l'a mesuré.
  *
  * Les silencieuses ne sont pas jetées. Une réponse opaque ne prouve pas grand-chose, et son absence
  * ne prouve pas davantage : un hébergeur lent reste jouable, et si tout se tait il faut bien essayer
  * quelque chose. On ne perd donc jamais une adresse, on ne fait que changer l'ordre.
  */
-export async function courirLesAdresses(
-  adresses: AdresseCourue[],
+export async function courirLesAdresses<T extends AdresseCourue>(
+  adresses: T[],
   sonder: (url: string, signal: AbortSignal) => Promise<unknown> = sondeParDefaut,
   delaiMs = DELAI_MS,
-): Promise<AdresseCourue[]> {
+): Promise<T[]> {
   if (adresses.length <= 1) return adresses;
 
   const controleur = new AbortController();
-  const arrivees: AdresseCourue[] = [];
+  const arrivees: T[] = [];
   const minuteur = setTimeout(() => controleur.abort(), delaiMs);
   try {
     await Promise.all(adresses.map(async (adresse) => {
@@ -57,7 +68,10 @@ export async function courirLesAdresses(
   }
 
   const repondues = new Set(arrivees.map((adresse) => adresse.url));
-  return [...arrivees, ...adresses.filter((adresse) => !repondues.has(adresse.url))];
+  return [
+    ...adresses.filter((adresse) => repondues.has(adresse.url)),
+    ...adresses.filter((adresse) => !repondues.has(adresse.url)),
+  ];
 }
 
 /**

@@ -132,6 +132,19 @@ export interface EtatGeneriques {
   passe: { saisonsFaites: number; trouves: number } | null;
 }
 
+/** Ce qui pèse sur une facette : les autres filtres déjà cochés. */
+export interface CriteresFacette { listes?: string[]; pays?: string[]; fiabilites?: string[]; q?: string }
+
+function queteFacette(criteres: CriteresFacette): string {
+  const parametres = new URLSearchParams();
+  if (criteres.listes?.length) parametres.set("listes", criteres.listes.join(","));
+  if (criteres.pays?.length) parametres.set("pays", criteres.pays.join(","));
+  if (criteres.fiabilites?.length) parametres.set("fiabilites", criteres.fiabilites.join(","));
+  if (criteres.q?.trim()) parametres.set("q", criteres.q);
+  const quete = parametres.toString();
+  return quete ? `?${quete}` : "";
+}
+
 export const api = {
   remoteSession: () => request<SessionDistante>("/remote/session"),
   remoteLogin: (username: string, password: string) => request<{ token: string; account: string; expiresAt: string }>(
@@ -307,9 +320,15 @@ export const api = {
    * exister ? Elle n'existe que si la fonction est activée et qu'une source a rendu des chaînes.
    */
   etatLive: () => request<{ disponible: boolean; chaines: number; rafraichieLe: string | null }>("/live"),
-  listesLiveClient: () => request<Array<{ id: string; nom: string; classement: ClassementListe; chaines: number }>>("/live/listes"),
+  listesLiveClient: (criteres: CriteresFacette = {}) =>
+    request<Array<{ id: string; nom: string; classement: ClassementListe; chaines: number }>>(`/live/listes${queteFacette(criteres)}`),
   fiabilitesLive: () => request<Array<{ classement: ClassementListe; listes: number }>>("/live/fiabilites"),
-  paysLive: () => request<Array<{ code: string; nom: string; chaines: number }>>("/live/pays"),
+  /*
+   * Les facettes prennent les critères déjà cochés : elles comptent ce qu'on obtiendrait en cochant
+   * celle-ci **en plus**. Chacune ignore le sien, sinon cocher France ne laisserait voir que la France.
+   */
+  paysLive: (criteres: CriteresFacette = {}) =>
+    request<Array<{ code: string; nom: string; chaines: number }>>(`/live/pays${queteFacette(criteres)}`),
   /*
    * Les adresses d'une chaîne, dans l'ordre où il faut les essayer : celles qui ont déjà marché
    * d'abord, celles qui ont échoué en dernier. C'est ce qui rend le repli utile plutôt qu'aléatoire.

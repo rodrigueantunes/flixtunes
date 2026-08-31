@@ -335,7 +335,13 @@ class FlixTunesApi(
             chaine = lireChaine(reponse),
             sources = (0 until sources.length()).map {
                 val source = sources.getJSONObject(it)
-                SourceChaine(source.optString("url"), source.optInt("succes"), source.optInt("echecs"))
+                SourceChaine(
+                    source.optString("url"), source.optInt("succes"), source.optInt("echecs"),
+                    // Absentes tant que le serveur n'a pas sondé la chaîne : `null`, et non zéro, qui
+                    // se lirait comme « mesurée à rien ».
+                    source.optInt("hauteur").takeIf { source.has("hauteur") && !source.isNull("hauteur") },
+                    source.optInt("debit").takeIf { source.has("debit") && !source.isNull("debit") },
+                )
             },
         )
     }
@@ -351,8 +357,31 @@ class FlixTunesApi(
             JSONObject().put("url", url).put("ok", ok))
     }
 
-    suspend fun listesDirect(profileId: String): List<ListeDirect> = withContext(Dispatchers.Default) {
-        val tableau = requestArray("/live/listes?profileId=${encode(profileId)}")
+    /**
+     * Les facettes comptent **sous les autres filtres cochés**, jamais sur le corpus entier.
+     *
+     * Sans cela l'écran promettait « France 1 355 » alors qu'une playlist déjà cochée n'en contenait
+     * aucune : on cochait, on tombait sur zéro. Chaque facette ignore son propre critère — sinon
+     * cocher France ne laisserait plus voir que la France.
+     */
+    private fun facette(pays: List<String>, listes: List<String>, fiabilites: List<String>, q: String): String {
+        val morceaux = mutableListOf<String>()
+        if (listes.isNotEmpty()) morceaux += "listes=${encode(listes.joinToString(","))}"
+        if (pays.isNotEmpty()) morceaux += "pays=${encode(pays.joinToString(","))}"
+        if (fiabilites.isNotEmpty()) morceaux += "fiabilites=${encode(fiabilites.joinToString(","))}"
+        if (q.isNotBlank()) morceaux += "q=${encode(q)}"
+        return if (morceaux.isEmpty()) "" else "&" + morceaux.joinToString("&")
+    }
+
+    suspend fun listesDirect(
+        profileId: String,
+        pays: List<String> = emptyList(),
+        fiabilites: List<String> = emptyList(),
+        q: String = "",
+    ): List<ListeDirect> = withContext(Dispatchers.Default) {
+        val tableau = requestArray(
+            "/live/listes?profileId=${encode(profileId)}" + facette(pays, emptyList(), fiabilites, q),
+        )
         (0 until tableau.length()).map {
             val entree = tableau.getJSONObject(it)
             ListeDirect(entree.optString("id"), entree.optString("nom"),
@@ -360,8 +389,15 @@ class FlixTunesApi(
         }
     }
 
-    suspend fun paysDirect(profileId: String): List<PaysDirect> = withContext(Dispatchers.Default) {
-        val tableau = requestArray("/live/pays?profileId=${encode(profileId)}")
+    suspend fun paysDirect(
+        profileId: String,
+        listes: List<String> = emptyList(),
+        fiabilites: List<String> = emptyList(),
+        q: String = "",
+    ): List<PaysDirect> = withContext(Dispatchers.Default) {
+        val tableau = requestArray(
+            "/live/pays?profileId=${encode(profileId)}" + facette(emptyList(), listes, fiabilites, q),
+        )
         (0 until tableau.length()).map {
             val entree = tableau.getJSONObject(it)
             PaysDirect(entree.optString("code"), entree.optString("nom"), entree.optInt("chaines"))

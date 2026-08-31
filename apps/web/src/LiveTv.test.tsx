@@ -16,9 +16,12 @@ const { apiMock } = vi.hoisted(() => ({ apiMock: {
 vi.mock("./api", () => ({ api: apiMock }));
 
 const { LiveTv } = await import("./LiveTv");
+const { oublierSouvenirDirect } = await import("./memoire-direct");
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Le souvenir de session survit au démontage : chaque cas doit partir d'une grille neuve.
+  oublierSouvenirDirect();
   apiMock.chainesLive.mockResolvedValue({ items: chaines, total: 2, offset: 0, limit: 60 });
   apiMock.paysLive.mockResolvedValue([
     { code: "fr", nom: "France", chaines: 1543 },
@@ -92,7 +95,7 @@ describe("la grille des chaînes", () => {
     render(<LiveTv onPlay={() => undefined} />);
     fireEvent.click(await screen.findByLabelText("✅ 75 % et plus (260)"));
     await waitFor(() => expect(apiMock.chainesLive).toHaveBeenCalledWith(expect.objectContaining({ fiabilites: ["bonne"] })));
-    expect(screen.getByLabelText("❌ 25 à 49 % (76)")).toBeInTheDocument();
+    expect(screen.getByLabelText("❌ moins de 25 % (76)")).toBeInTheDocument();
   });
 
   it("garde une chaîne d'un clic, et repeint l'étoile sans attendre le serveur", async () => {
@@ -142,5 +145,37 @@ describe("la grille des chaînes", () => {
     render(<LiveTv onPlay={() => undefined} />);
     expect(await screen.findByText("Aucune chaîne")).toBeInTheDocument();
     expect(screen.getByText(/Réglez une source de listes/)).toBeInTheDocument();
+  });
+});
+
+describe("le retour d'une chaîne", () => {
+  it("retrouve la grille et la recherche, sans redemander au serveur", async () => {
+    const premier = render(<LiveTv onPlay={() => undefined} />);
+    await screen.findByText("TF1");
+    const champ = screen.getByPlaceholderText("Rechercher une chaîne");
+    fireEvent.change(champ, { target: { value: "canal +" } });
+    await waitFor(() => expect(apiMock.chainesLive).toHaveBeenCalledWith(expect.objectContaining({ q: "canal +" })));
+    apiMock.chainesLive.mockClear();
+
+    // Ouvrir une chaîne démonte cet écran : c'est exactement ce que fait `unmount`.
+    premier.unmount();
+    render(<LiveTv onPlay={() => undefined} />);
+
+    // La grille est là **avant** toute réponse du serveur, et la recherche avec elle.
+    expect(screen.getByText("TF1")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Rechercher une chaîne")).toHaveValue("canal +");
+    await waitFor(() => expect(apiMock.listesLiveClient).toHaveBeenCalled());
+    // Les critères n'ont pas changé : rien à redemander. Vingt secondes de recherche restent acquises.
+    expect(apiMock.chainesLive).not.toHaveBeenCalled();
+  });
+
+  it("repart du serveur dès qu'un critère change", async () => {
+    render(<LiveTv onPlay={() => undefined} />);
+    await screen.findByText("TF1");
+    apiMock.chainesLive.mockClear();
+
+    fireEvent.change(screen.getByPlaceholderText("Rechercher une chaîne"), { target: { value: "arte" } });
+    // Une autre grille est une autre demande : la mémoire ne sert qu'à revenir, jamais à figer.
+    await waitFor(() => expect(apiMock.chainesLive).toHaveBeenCalledWith(expect.objectContaining({ q: "arte" })));
   });
 });

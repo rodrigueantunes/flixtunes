@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
-import { courirLesAdresses, type AdresseCourue } from "./course-adresses";
+import { courirLesAdresses } from "./course-adresses";
 
 /**
  * La course décide dans quel ordre on essaie les adresses d'une chaîne. Elle a deux devoirs et un
  * interdit : mettre devant ce qui répond, garder ce qui se tait, et ne jamais perdre une adresse.
  */
 
-const adresse = (url: string): AdresseCourue => ({ url, relais: `/relais?u=${url}` });
+/*
+ * Le relais voyage avec l'adresse sans que la course le regarde : elle est générique, et rend
+ * exactement ce qu'on lui a donné. Le vérifier ici évite qu'un jour elle ne se mette à le perdre.
+ */
+const adresse = (url: string) => ({ url, relais: `/relais?u=${url}` });
 
 /** Une sonde qui répond après le délai indiqué, ou qui échoue si `delai` est `null`. */
 function sondeSimulee(delais: Record<string, number | null>) {
@@ -19,11 +23,24 @@ function sondeSimulee(delais: Record<string, number | null>) {
 }
 
 describe("la course des adresses", () => {
-  it("met devant celle qui a répondu la première", async () => {
-    // C'est tout l'objet : le lecteur essayait la première déclarée et attendait douze secondes.
+  it("garde le classement du serveur entre celles qui répondent", async () => {
+    /*
+     * La course répond à une seule question : qui est joignable. Elle ne classe pas.
+     *
+     * La première écriture rendait l'ordre d'*arrivée*, et c'était un défaut : une source en 480p qui
+     * répond en 20 ms passait devant la même chaîne en 1080p qui répond en 200 ms. Or le serveur a
+     * déjà classé — échecs, puis définition, puis débit — et il est le seul à l'avoir mesuré.
+     */
     const adresses = [adresse("a"), adresse("b"), adresse("c")];
     const ordonnees = await courirLesAdresses(adresses, sondeSimulee({ a: 200, b: 20, c: 100 }), 1_000);
-    expect(ordonnees.map((entree) => entree.url)).toEqual(["b", "c", "a"]);
+    expect(ordonnees.map((entree) => entree.url)).toEqual(["a", "b", "c"]);
+  });
+
+  it("ne garde ce classement qu'entre celles qui répondent", async () => {
+    // La muette passe derrière, même si le serveur la donnait en tête : injoignable l'emporte.
+    const adresses = [adresse("muette"), adresse("bonne"), adresse("autre")];
+    const ordonnees = await courirLesAdresses(adresses, sondeSimulee({ muette: null, bonne: 80, autre: 20 }), 300);
+    expect(ordonnees.map((entree) => entree.url)).toEqual(["bonne", "autre", "muette"]);
   });
 
   it("ne perd jamais une adresse silencieuse : elle passe derrière", async () => {

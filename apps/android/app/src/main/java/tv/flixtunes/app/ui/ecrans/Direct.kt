@@ -3,6 +3,7 @@ package tv.flixtunes.app.ui.ecrans
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -228,7 +229,7 @@ internal fun EcranDirect(
         }
 
         items(section.items, key = { it.id }) { chaine ->
-            CarteChaine(chaine, jouer) { model.basculerFavoriDirect(chaine) }
+            CarteChaine(chaine, gabarit.televiseur, jouer) { model.basculerFavoriDirect(chaine) }
         }
 
         if (section.items.isEmpty() && !section.loading) {
@@ -286,23 +287,44 @@ private fun VoletFiltre(
  * repli, donc la probabilité que la chaîne réponde.
  */
 @Composable
-private fun CarteChaine(chaine: ChaineDirect, jouer: (ChaineDirect) -> Unit, basculerFavori: () -> Unit) {
+private fun CarteChaine(
+    chaine: ChaineDirect,
+    televiseur: Boolean,
+    jouer: (ChaineDirect) -> Unit,
+    basculerFavori: () -> Unit,
+) {
     // Le libellé se résout ici : `semantics` n'est pas un composable et ne peut pas lire les ressources.
     val libelleEtoile = stringResource(
         if (chaine.favori) R.string.direct_retirer else R.string.direct_garder, chaine.nom,
     )
-    Box {
+    Box(Modifier.fillMaxWidth()) {
+        /*
+         * Toutes les cartes ont la même taille, quel que soit leur contenu.
+         *
+         * Une grille CSS étire ses cellules à la hauteur de la plus grande : c'est pourquoi le Web
+         * était déjà régulier, et pourquoi personne n'y avait rien écrit. `LazyVerticalGrid` ne le
+         * fait pas — il laisse chaque carte à la hauteur de son contenu, si bien qu'un logo absent ou
+         * un groupe non renseigné rétrécissait la sienne et faisait un damier. Le carré règle les deux
+         * à la fois : la hauteur suit la largeur de la colonne, donc toutes les cartes d'une ligne
+         * sont identiques, et le contenu se centre dedans plutôt que de la remplir.
+         *
+         * Le rapport de un pour un est celui du Web, où le squelette de chargement est déjà carré.
+         */
         Column(
             Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f)
                 .cliquableAuFocus(RayonCommande.value.toInt()) { jouer(chaine) }
                 .clip(RoundedCornerShape(RayonCommande))
                 .background(Color.White.copy(alpha = .04f))
-                .padding(vertical = 12.dp, horizontal = 8.dp),
+                .padding(vertical = 10.dp, horizontal = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
         ) {
         Text(chaine.numero?.toString() ?: "—", color = BleuClair, fontSize = 12.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(6.dp))
-        Box(Modifier.size(52.dp), contentAlignment = Alignment.Center) {
+        // 44 dp sur mobile, comme le `clamp(44px, 4vw, 64px)` du Web : au-delà, le carré déborde.
+        Box(Modifier.size(if (televiseur) 60.dp else 44.dp), contentAlignment = Alignment.Center) {
             val logo = chaine.logo
             if (logo.isNullOrBlank()) {
                 Text(chaine.nom.trim().take(1).uppercase().ifBlank { "?" },

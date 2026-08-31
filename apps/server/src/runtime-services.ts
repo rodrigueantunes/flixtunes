@@ -8,7 +8,7 @@ import { scanCoordinator } from "./scan-coordinator.js";
 import { cleanupIdleSessions, cleanupPlaybackSessions, detectFfmpegSupport } from "./playback.js";
 import { calibrateHardware, refreshTemperature } from "./capacity.js";
 import { createBackup, listBackups } from "./maintenance.js";
-import { rafraichirDirect, rafraichissementDuAuDemarrage } from "./television-direct.js";
+import { rafraichirDirect, rafraichissementDuAuDemarrage, renumeroterSiNecessaire } from "./television-direct.js";
 
 /**
  * Génération de l'agent de métadonnées.
@@ -66,6 +66,25 @@ export function startRuntimeServices(log: FastifyBaseLogger): RuntimeServices {
    * Un échec n'arrête rien : c'est un travail de fond, et une liste injoignable au démarrage le sera
    * peut-être encore à la prochaine occasion. On le journalise, et le serveur continue de servir.
    */
+  /*
+   * Les rangs des pays, si la table a changé de forme depuis la dernière version.
+   *
+   * Immédiat et non différé : c'est l'ordre de la grille, et elle peut s'ouvrir dès la première
+   * seconde. La lecture d'un réglage suffit à répondre « rien à faire » — le calcul n'a lieu qu'au
+   * premier démarrage suivant une mise à jour qui touche à la table des pays.
+   */
+  /*
+   * L'ordre des pays, puis les numéros qui doivent le suivre.
+   *
+   * Les deux ne tournent qu'après une mise à jour qui change leur convention — une lecture de réglage
+   * suffit à répondre « rien à faire ». La renumérotation, elle, réécrit une ligne par chaîne
+   * joignable : c'est cher une fois, et c'est pour cela qu'elle ne se répète pas.
+   */
+  const renumerotees = renumeroterSiNecessaire();
+  if (renumerotees) {
+    log.info({ chaines: renumerotees }, "Télévision en direct : chaînes renumérotées dans l'ordre d'affichage");
+  }
+
   if (rafraichissementDuAuDemarrage()) {
     timers.push(setTimeout(() => {
       log.info("Télévision en direct : relecture des listes au démarrage");

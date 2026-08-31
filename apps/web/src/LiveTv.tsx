@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChaineDirect, ClassementListe } from "@flixtunes/contracts";
 import { api } from "./api";
+import { lireSouvenirDirect, retenirSouvenirDirect } from "./memoire-direct";
+import { reposerDefilement } from "./defilement";
 
 /**
  * L'écran des chaînes en direct.
@@ -26,27 +28,35 @@ export interface ListeChoisissable { id: string; nom: string; classement: Classe
  *
  * Elle n'est pas décorative : c'est **la part des chaînes d'une liste qui répondent**, mesurée par le
  * script qui produit `m3u.json`. Le seuil est écrit à l'écran parce qu'une pastille seule ne dit rien
- * — et parce qu'un ❌ ne veut pas dire « morte », mais « une chaîne sur trois ».
+ * — et parce qu'un ❌ ne veut pas dire « morte », mais « une liste où l'on trouve encore ».
  */
 const FIABILITES: Array<{ classement: ClassementListe; libelle: string }> = [
   { classement: "bonne", libelle: "\u2705 75 % et plus" },
   { classement: "moyenne", libelle: "\u3030\ufe0f 50 \u00e0 74 %" },
-  { classement: "faible", libelle: "\u274c 25 \u00e0 49 %" },
-  { classement: "douteuse", libelle: "\u26a0\ufe0f non mesur\u00e9e" },
+  { classement: "douteuse", libelle: "\u26a0\ufe0f 25 \u00e0 49 %" },
+  { classement: "faible", libelle: "\u274c moins de 25 %" },
   { classement: "inconnue", libelle: "sans pastille" },
 ];
 
 export function LiveTv({ onPlay }: { onPlay: (chaine: ChaineDirect) => void }) {
-  const [saisie, setSaisie] = useState("");
-  const [recherche, setRecherche] = useState("");
+  /*
+   * Tout repart de ce que la session a retenu.
+   *
+   * Ouvrir une chaîne démonte cet écran : sans cela, le retour repartait du haut d'une grille de
+   * 79 321 chaînes, sans filtre et sans les pages déjà parcourues — après qu'on avait mis vingt
+   * secondes à trouver la sienne.
+   */
+  const souvenir = lireSouvenirDirect();
+  const [saisie, setSaisie] = useState(souvenir.recherche);
+  const [recherche, setRecherche] = useState(souvenir.recherche);
   const [listes, setListes] = useState<ListeChoisissable[]>([]);
-  const [listesChoisies, setListesChoisies] = useState<string[]>([]);
+  const [listesChoisies, setListesChoisies] = useState<string[]>(souvenir.listes);
   const [pays, setPays] = useState<Array<{ code: string; nom: string; chaines: number }>>([]);
-  const [paysChoisis, setPaysChoisis] = useState<string[]>([]);
+  const [paysChoisis, setPaysChoisis] = useState<string[]>(souvenir.pays);
   const [fiabilites, setFiabilites] = useState<Array<{ classement: ClassementListe; listes: number }>>([]);
-  const [fiabilitesChoisies, setFiabilitesChoisies] = useState<string[]>([]);
+  const [fiabilitesChoisies, setFiabilitesChoisies] = useState<string[]>(souvenir.fiabilites);
   /** Ne montrer que les chaînes retenues. Vingt sur 76 823 : c'est le vrai usage. */
-  const [favorisSeuls, setFavorisSeuls] = useState(false);
+  const [favorisSeuls, setFavorisSeuls] = useState(souvenir.favorisSeuls);
   /**
    * Écarter les chaînes dont la dernière lecture a échoué.
    *
@@ -59,8 +69,8 @@ export function LiveTv({ onPlay }: { onPlay: (chaine: ChaineDirect) => void }) {
   });
   /** La dernière chaîne regardée : un téléviseur rallume sur ce qu'on regardait. */
   const [derniere, setDerniere] = useState<ChaineDirect | null>(null);
-  const [chaines, setChaines] = useState<ChaineDirect[]>([]);
-  const [total, setTotal] = useState(0);
+  const [chaines, setChaines] = useState<ChaineDirect[]>(souvenir.chaines);
+  const [total, setTotal] = useState(souvenir.total);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState<string | null>(null);
   /** Filtre local du volet des listes : 535 lignes ne se parcourent pas à l'œil. */
@@ -74,9 +84,25 @@ export function LiveTv({ onPlay }: { onPlay: (chaine: ChaineDirect) => void }) {
     return () => clearTimeout(minuteur);
   }, [saisie]);
 
+  /*
+   * Les facettes se recomptent **sous les autres filtres**, à chaque fois qu'ils changent.
+   *
+   * Elles étaient comptées une fois pour toutes sur le corpus entier : on cochait une playlist,
+   * « Pays » promettait toujours « France 1 355 », on cliquait, et on tombait sur zéro. Chacune
+   * ignore son propre critère — sinon cocher France ne laisserait plus voir que la France.
+   *
+   * Mesuré sur les 92 204 chaînes du corpus : 18,3 ms pour les pays sous une playlist, contre 24,5 ms
+   * pour l'ancien compte global qui, lui, parcourait tout. Recompter coûte donc moins que ne pas le
+   * faire — c'est le filtre qui restreint le travail.
+   */
   useEffect(() => {
-    void api.listesLiveClient().then(setListes).catch(() => setListes([]));
-    void api.paysLive().then(setPays).catch(() => setPays([]));
+    void api.listesLiveClient({ pays: paysChoisis, fiabilites: fiabilitesChoisies, q: recherche })
+      .then(setListes).catch(() => setListes([]));
+    void api.paysLive({ listes: listesChoisies, fiabilites: fiabilitesChoisies, q: recherche })
+      .then(setPays).catch(() => setPays([]));
+  }, [fiabilitesChoisies, listesChoisies, paysChoisis, recherche]);
+
+  useEffect(() => {
     void api.fiabilitesLive().then(setFiabilites).catch(() => setFiabilites([]));
     void api.derniereChaineLive().then((reponse) => setDerniere(reponse.chaine)).catch(() => setDerniere(null));
   }, []);
@@ -90,16 +116,74 @@ export function LiveTv({ onPlay }: { onPlay: (chaine: ChaineDirect) => void }) {
     masquerMortes,
   }), [favorisSeuls, fiabilitesChoisies, listesChoisies, masquerMortes, paysChoisis, recherche]);
 
+  /**
+   * Les critères déjà servis, pour ne pas redemander ce qu'on vient de retrouver.
+   *
+   * Au retour d'une chaîne, la grille est celle qu'on avait laissée : la redemander la ferait
+   * clignoter et perdrait les pages parcourues. Tout **changement** de critère, lui, repart bien du
+   * serveur — c'est une autre grille.
+   */
+  const criteresServis = useRef(souvenir.chaines.length ? JSON.stringify(criteres) : null);
+
   useEffect(() => {
+    const empreinte = JSON.stringify(criteres);
+    if (criteresServis.current === empreinte) return;
     let annule = false;
     setChargement(true);
     setErreur(null);
     api.chainesLive({ ...criteres, offset: 0, limit: PAGE })
-      .then((page) => { if (annule) return; setChaines(page.items); setTotal(page.total); })
+      /*
+       * La marque est posée **à l'arrivée**, jamais au départ.
+       *
+       * En la posant avant la requête, le second passage du mode strict trouvait des critères déjà
+       * servis et renonçait — alors que le premier venait d'être annulé par son propre nettoyage.
+       * La grille restait à « 0 chaîne » pour de bon. Marquer ce qui est affiché, et non ce qui est
+       * demandé, décrit la seule chose dont la question dépend.
+       */
+      .then((page) => { if (annule) return; criteresServis.current = empreinte; setChaines(page.items); setTotal(page.total); })
       .catch((cause) => { if (!annule) setErreur(cause instanceof Error ? cause.message : "Chaînes indisponibles"); })
       .finally(() => { if (!annule) setChargement(false); });
     return () => { annule = true; };
   }, [criteres]);
+
+  /*
+   * Ce qu'on retient, et quand.
+   *
+   * À chaque changement plutôt qu'au démontage : un composant démonté par une navigation n'a pas
+   * toujours l'occasion de faire ses adieux, et un souvenir qui manque une fois sur dix est pire
+   * qu'aucun souvenir.
+   */
+  useEffect(() => {
+    retenirSouvenirDirect({
+      recherche, listes: listesChoisies, pays: paysChoisis, fiabilites: fiabilitesChoisies,
+      favorisSeuls, chaines, total,
+    });
+  }, [chaines, favorisSeuls, fiabilitesChoisies, listesChoisies, paysChoisis, recherche, total]);
+
+  /**
+   * Retenir où l'on en était, au moment précis où l'on part.
+   *
+   * Écouter le défilement en continu semblait plus sûr et ne l'était pas : ouvrir une chaîne
+   * remplace une grille de cent quatre-vingts cartes par un lecteur, la page passe de 4 806 à 1 682
+   * pixels, et le navigateur émet un dernier événement de recadrage — 282 au lieu de 1 500, relevé à
+   * la console. Ce dernier mot écrasait le bon. Le clic, lui, a lieu **avant** que quoi que ce soit
+   * ne bouge : c'est le seul instant où la question a une réponse juste, et il ne coûte aucun
+   * écouteur.
+   */
+  const ouvrir = useCallback((chaine: ChaineDirect) => {
+    retenirSouvenirDirect({ defilement: window.scrollY });
+    onPlay(chaine);
+  }, [onPlay]);
+
+  const defilementRepose = useRef(false);
+  useEffect(() => {
+    if (defilementRepose.current || !chaines.length) return;
+    defilementRepose.current = true;
+    const cible = souvenir.defilement;
+    // Reposée jusqu'à ce qu'elle tienne : la page n'a pas fini de grandir. Le catalogue fait de même,
+    // d'où la fonction partagée plutôt que deux boucles qui divergeraient.
+    reposerDefilement(cible);
+  }, [chaines.length, souvenir.defilement]);
 
   const suite = useCallback(async () => {
     if (chargement || chaines.length >= total) return;
@@ -274,7 +358,7 @@ export function LiveTv({ onPlay }: { onPlay: (chaine: ChaineDirect) => void }) {
       * rien — au milieu d'une recherche, elle serait un résultat qui n'en est pas un.
       */}
     {derniere && !recherche && !favorisSeuls && <button type="button" className="live-reprise"
-      onClick={() => onPlay(derniere)}>
+      onClick={() => ouvrir(derniere)}>
       <span>Reprendre</span>
       <b>{derniere.numero != null ? `${derniere.numero} · ` : ""}{derniere.nom}</b>
     </button>}
@@ -291,7 +375,7 @@ export function LiveTv({ onPlay }: { onPlay: (chaine: ChaineDirect) => void }) {
             aria-label={chaine.favori ? `Retirer ${chaine.nom} de mes chaînes` : `Garder ${chaine.nom}`}
             aria-pressed={chaine.favori === true}
             onClick={() => basculerFavori(chaine)}>{chaine.favori ? "★" : "☆"}</button>
-          <button type="button" className="live-carte" onClick={() => onPlay(chaine)}>
+          <button type="button" className="live-carte" onClick={() => ouvrir(chaine)}>
           <span className="live-numero">{chaine.numero ?? "—"}</span>
           {/*
             * Le logo est fourni par la liste, donc par un hébergeur quelconque : il manque une fois

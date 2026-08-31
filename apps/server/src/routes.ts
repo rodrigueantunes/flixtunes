@@ -41,13 +41,14 @@ import { saveProviderConfiguration } from "./provider-settings.js";
 import {
   adresseRelayee,
   estUnManifeste,
-  hoteAutorise,
   lireAdresseRelayee,
+  recupererSansSortirDuPublic,
   reecrireManifeste,
   signatureValide,
 } from "./live-relais.js";
 import { fetchWithTimeout } from "./resilience.js";
 import { enregistrerXtream, listerSources, reglerFast, retirerSource } from "./live-fournisseurs.js";
+import { sonderLesSources } from "./live-qualite.js";
 import {
   arreterRafraichissement,
   chaineDetaillee,
@@ -719,16 +720,31 @@ export async function registerRoutes(app: FastifyInstance) {
     return { chaine: derniereChaine(profile.id) };
   });
 
+  /*
+   * Les facettes comptent **sous les autres filtres actifs**, jamais sur le corpus entier.
+   *
+   * Sans cela l'écran promettait « France 1 355 » alors qu'une playlist déjà cochée n'en contenait
+   * aucune : on cliquait, on tombait sur zéro, et rien n'expliquait pourquoi. Chaque facette ignore
+   * son propre critère — sinon cocher France ne laisserait plus voir que la France.
+   */
+  const facette = (request: FastifyRequest) => {
+    const q = request.query as Record<string, string | undefined>;
+    const decouper = (valeur?: string) => (valeur ? valeur.split(",").map((e) => e.trim()).filter(Boolean) : undefined);
+    return { listes: decouper(q.listes), pays: decouper(q.pays), fiabilites: decouper(q.fiabilites), q: q.q };
+  };
+
   app.get("/api/live/pays", async (request, reply) => {
     const profile = profileFromRequest(request);
     if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
-    return listerPays();
+    const { pays: _ignore, ...autres } = facette(request);
+    return listerPays(autres);
   });
 
   app.get("/api/live/listes", async (request, reply) => {
     const profile = profileFromRequest(request);
     if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
-    return listerListesClient();
+    const { listes: _ignore, ...autres } = facette(request);
+    return listerListesClient(autres);
   });
 
   app.get("/api/live/channels", async (request, reply) => {
@@ -784,6 +800,18 @@ export async function registerRoutes(app: FastifyInstance) {
      * l'autre quand le navigateur refuse : contenu mixte, ou absence d'en-tête CORS. Signer ici plutôt
      * qu'à la demande évite d'ouvrir une route qui signerait n'importe quelle adresse.
      */
+    /*
+     * La mesure de qualité part **après** la réponse, et jamais devant.
+     *
+     * Lire les manifestes prendrait deux à cinq secondes : les attendre ferait payer à chaque
+     * ouverture le prix d'un renseignement qui ne servira qu'à la suivante. La chaîne s'ouvre donc
+     * tout de suite avec ce qu'on sait déjà, et ce qu'on apprend ici améliore le classement pour la
+     * prochaine fois. Une seule chaîne à la fois, seulement si elle a plusieurs adresses.
+     */
+    if (chaine.sources.length > 1) {
+      void sonderLesSources(request.params.id)
+        .catch((cause) => app.log.debug({ err: cause }, "Sonde de qualité des sources interrompue"));
+    }
     return { ...chaine, sources: chaine.sources.map((source) => ({ ...source, relais: adresseRelayee(source.url) })) };
   });
 
@@ -830,24 +858,34 @@ export async function registerRoutes(app: FastifyInstance) {
       // Indiscernable d'une route inexistante : un 403 confirmerait qu'une adresse existe.
       return reply.code(404).send({ message: "Adresse inconnue" });
     }
-    if (!(await hoteAutorise(new URL(cible).hostname))) {
-      return reply.code(403).send({ message: "Adresse interne refusée" });
-    }
+    /*
+     * Chaque saut est rejugé, pas seulement le premier.
+     *
+     * `hoteAutorise` seul ne suffisait pas : `fetch` suit les redirections de lui-même, si bien qu'une
+     * adresse publique redirigeant vers `192.168.x.x` faisait chercher cette page par le NAS. La
+     * fonction ci-dessous les suit à la main et rejuge l'hôte à chaque fois.
+     */
+    const suivie = await recupererSansSortirDuPublic(
+      cible,
+      { headers: { "User-Agent": "FlixTunes", ...(request.headers.range ? { Range: String(request.headers.range) } : {}) } },
+      (url, init) => fetchWithTimeout(url, init, 20_000),
+    );
+    if (!suivie) return reply.code(403).send({ message: "Adresse interne refusée" });
     try {
-      const amont = await fetchWithTimeout(cible, {
-        headers: { "User-Agent": "FlixTunes", ...(request.headers.range ? { Range: String(request.headers.range) } : {}) },
-      }, 20_000);
+      const amont = suivie.reponse;
       if (!amont.ok || !amont.body) return reply.code(502).send({ message: `Source indisponible (${amont.status})` });
 
       const type = amont.headers.get("content-type");
       // Un manifeste tient en quelques kilooctets : le lire entier pour le réécrire ne coûte rien.
       // Un segment, lui, est transmis en flux — d'où les deux chemins.
-      if ((type ?? "").toLowerCase().includes("mpegurl") || /\.m3u8(\?|$)/i.test(cible)) {
+      if ((type ?? "").toLowerCase().includes("mpegurl") || /\.m3u8(\?|$)/i.test(suivie.url)) {
         const corps = await amont.text();
         if (estUnManifeste(type, corps)) {
           return reply.header("Content-Type", "application/vnd.apple.mpegurl")
             .header("Cache-Control", "no-store")
-            .send(reecrireManifeste(corps, cible));
+            // L'adresse **d'arrivée** sert de base : un manifeste redirigé résout ses segments
+            // relatifs à partir d'elle, et non de celle qu'on avait demandée.
+            .send(reecrireManifeste(corps, suivie.url));
         }
         return reply.header("Content-Type", type ?? "application/octet-stream").send(corps);
       }

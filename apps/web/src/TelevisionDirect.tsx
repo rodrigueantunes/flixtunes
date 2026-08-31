@@ -22,15 +22,15 @@ import { FolderBrowser } from "./FolderBrowser";
  */
 
 /**
- * Ce que mesure chaque pastille : la part des flux d'une liste qui répondent, relevée par le script
- * qui produit `m3u.json`. Le seuil est écrit plutôt que sous-entendu — un ❌ n'est pas une liste
- * morte, c'est une liste sur trois chaînes utiles.
+ * Ce que mesure chaque pastille : la part des chaînes d'une liste qui répondent, relevée par le
+ * script qui produit `m3u.json`. Le seuil est écrit plutôt que sous-entendu — un ❌ n'est pas une
+ * liste morte, c'est une liste où l'on trouve encore, parfois, exactement ce qu'on cherchait.
  */
 const CLASSEMENTS: Record<ListeDirect["classement"], { libelle: string; pastille: string }> = {
-  bonne: { libelle: "75 % des flux répondent ou plus", pastille: "✅" },
-  moyenne: { libelle: "50 à 74 % des flux répondent", pastille: "〰️" },
-  faible: { libelle: "25 à 49 % des flux répondent", pastille: "❌" },
-  douteuse: { libelle: "Part non mesurée", pastille: "⚠️" },
+  bonne: { libelle: "75 % des chaînes répondent ou plus", pastille: "✅" },
+  moyenne: { libelle: "50 à 74 % des chaînes répondent", pastille: "〰️" },
+  douteuse: { libelle: "25 à 49 % des chaînes répondent", pastille: "⚠️" },
+  faible: { libelle: "Moins de 25 % des chaînes répondent", pastille: "❌" },
   inconnue: { libelle: "Sans pastille", pastille: "·" },
 };
 
@@ -241,8 +241,8 @@ export function TelevisionDirect() {
           Ajouter un portail
         </button>
         <button disabled={occupe || sources.some((source) => source.type === "fast")}
-          onClick={() => void agir(() => api.activerFast(), "Chaînes gratuites ajoutées.")}>
-          Ajouter les chaînes gratuites
+          onClick={() => void agir(() => api.activerFast(), "Chaînes ajoutées.")}>
+          Ajouter les chaînes
         </button>
       </div>
 

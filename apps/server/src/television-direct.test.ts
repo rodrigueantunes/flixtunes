@@ -14,12 +14,15 @@ import {
   listerListes,
   listerListesClient,
   listerPays,
+  reunirLesFiabilites,
   marquerFavorite,
   noterResultat,
   retenirDerniereChaine,
   parametresDirect,
   rafraichirDirect,
   rafraichissementDuAuDemarrage,
+  rangerLesPays,
+  renumeroterDansLOrdreDAffichage,
 } from "./television-direct.js";
 
 /**
@@ -60,7 +63,8 @@ beforeAll(async () => {
     "/b.m3u": [
       "#EXTM3U",
       // Même chaîne, autre écriture et autre adresse : c'est le doublon que la fusion doit réunir.
-      "#EXTINF:-1,tf1",
+      // L'écriture est ici plus longue, et la ponctuation disparaît à la normalisation : même clé.
+      "#EXTINF:-1,TF1 ++",
       "http://exemple.test/tf1-b.m3u8",
       "#EXTINF:-1,Canal+",
       "http://exemple.test/canal.m3u8",
@@ -212,10 +216,18 @@ describe("la grille", () => {
   });
 
   it("filtre par pays, sans exclure les chaînes dont on ignore le pays", () => {
-    // C'est le filtre qui règle « canal » : le mot est espagnol et portugais, et mille résultats
-    // justes ne valent pas mieux qu'aucun. Ici seule TF1 porte un `tvg-id` qui dit son pays.
-    expect(listerPays()).toEqual([{ code: "fr", nom: "France", chaines: 1 }]);
-    expect(listerChaines({ pays: ["fr"] }).items.map((chaine) => chaine.nom)).toEqual(["TF1"]);
+    /*
+     * C'est le filtre qui règle « canal » : le mot est espagnol et portugais, et mille résultats
+     * justes ne valent pas mieux qu'aucun.
+     *
+     * Seule TF1 porte un `tvg-id` qui dit son pays. Les trois autres françaises sont reconnues à
+     * leur seul nom — c'est tout l'objet du catalogue : sans lui, « M6 » et « Canal+ » restaient
+     * sans pays, donc absentes du filtre France et reléguées en fin de grille. « Canal 8 », elle,
+     * n'est toujours de nulle part, et c'est ce qu'on veut.
+     */
+    expect(listerPays()).toEqual([{ code: "fr", nom: "France", chaines: 4 }]);
+    expect(listerChaines({ pays: ["fr"] }).items.map((chaine) => chaine.nom))
+      .toEqual(["TF1", "Arte", "Canal+", "M6"]);
     // Sans pays coché, tout le monde reste visible — y compris les trois chaînes sans indice.
     expect(listerChaines({}).total).toBe(5);
   });
@@ -401,5 +413,217 @@ describe("changer de fichier de listes", () => {
 
     enregistrerParametres({ dossier });
     rmSync(autre, { recursive: true, force: true });
+  });
+});
+
+describe("l'ordre de la grille", () => {
+  it("montre la France d'abord, puis l'alphabet, puis ce qu'on ne sait pas situer", () => {
+    /*
+     * Trois chaînes posées à la main plutôt que dans les listes du jeu d'essai : celles-ci n'ont que
+     * des françaises et une sans pays, et les tests qui précèdent ont retiré les adresses de la
+     * seconde. Un ordre se vérifie sur des pays différents, sinon il ne dit rien.
+     */
+    const poser = db.prepare(`INSERT INTO live_channels (id, cle, nom, nom_recherche, nom_compact, pays, numero, adresses)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1)`);
+    poser.run("t-de", "t-de", "ZDF", "zdf", "zdf", "de", 9001);
+    poser.run("t-br", "t-br", "Globo", "globo", "globo", "br", 9002);
+    poser.run("t-nul", "t-nul", "Sans Pays", "sans pays", "sanspays", null, 9003);
+    rangerLesPays();
+
+    const noms = listerChaines({ limit: 60, offset: 0 }).items.map((chaine) => chaine.nom);
+    // La France d'abord — TF1, Arte et M6 sont les trois qui restent joignables —, puis l'ordre
+    // alphabétique des noms **français** : Allemagne avant Brésil. Et l'absence de pays ferme.
+    expect(noms.filter((nom) => ["TF1", "ZDF", "Globo", "Sans Pays"].includes(nom)))
+      .toEqual(["TF1", "ZDF", "Globo", "Sans Pays"]);
+    expect(noms[noms.length - 1]).toBe("Sans Pays");
+  });
+});
+
+describe("la numérotation, dans l'ordre où la grille se lit", () => {
+  it("donne les premiers numéros à la France, et respecte ceux posés à la main", () => {
+    /*
+     * Le numéro est le geste principal d'un téléviseur, et il ne suivait plus l'ordre affiché : sur
+     * le corpus, la chaîne 2 était ukrainienne, la 3 espagnole, et la première française arrivait au
+     * 47. Composer « 2 » tombait sur autre chose que ce qu'on voyait en haut de la grille.
+     */
+    const poser = db.prepare(`INSERT INTO live_channels (id, cle, nom, nom_recherche, nom_compact, pays, numero, numero_manuel, adresses)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`);
+    poser.run("n-de", "n-de", "Zdf", "zdf", "zdf", "de", 8001, null);
+    poser.run("n-fr1", "n-fr1", "Une Francaise", "une francaise", "unefrancaise", "fr", 8002, null);
+    poser.run("n-fr2", "n-fr2", "Autre Francaise", "autre francaise", "autrefrancaise", "fr", 8003, null);
+    // Un numéro posé à la main est une décision, pas une attribution : il ne bouge pas.
+    poser.run("n-fixe", "n-fixe", "Chaine Fixee", "chaine fixee", "chainefixee", "fr", 8004, 2);
+    rangerLesPays();
+    renumeroterDansLOrdreDAffichage();
+
+    const numero = (id: string) => (db.prepare("SELECT numero FROM live_channels WHERE id = ?")
+      .get(id) as unknown as { numero: number | null }).numero;
+    expect(numero("n-fixe")).toBe(2);
+    // Les deux françaises passent devant l'allemande, dans l'ordre alphabétique entre elles.
+    expect(numero("n-fr2")!).toBeLessThan(numero("n-fr1")!);
+    expect(numero("n-fr1")!).toBeLessThan(numero("n-de")!);
+    // Et personne ne prend le 2, qui est réservé.
+    expect(numero("n-fr1")).not.toBe(2);
+    expect(numero("n-fr2")).not.toBe(2);
+  });
+
+  it("donne à la TNT française ses numéros d'aujourd'hui", () => {
+    /*
+     * On tape 1 pour TF1 et 6 pour M6 : c'est un réflexe de trente ans, et c'est le geste que la
+     * saisie à la télécommande sert. Le plan est celui de la délibération Arcom n° 2025-06 — France 4
+     * a pris le 4 que Canal+ occupait avant son départ de la TNT.
+     *
+     * « Canal ?? » est le piège que la comparaison sur nom **compact** évite : son nom normalisé est
+     * `canal`, comme celui de Canal+, et *canal* est le mot espagnol pour « chaîne ».
+     */
+    const poser = db.prepare(`INSERT INTO live_channels (id, cle, nom, nom_recherche, nom_compact, pays, adresses)
+      VALUES (?, ?, ?, ?, ?, 'fr', ?)`);
+    poser.run("t-tf1", "t-tf1", "TF1", "tf1", "tf1", 9);
+    poser.run("t-tf1-pauvre", "t-tf1-pauvre", "TF1", "tf1", "tf1", 1);
+    poser.run("t-m6", "t-m6", "M6", "m6", "m6", 4);
+    poser.run("t-f4", "t-f4", "France 4", "france 4", "france4", 5);
+    poser.run("t-canal-faux", "t-canal-faux", "Canal ??", "canal", "canal??", 30);
+    rangerLesPays();
+    renumeroterDansLOrdreDAffichage();
+
+    const numero = (id: string) => (db.prepare("SELECT numero FROM live_channels WHERE id = ?")
+      .get(id) as unknown as { numero: number | null }).numero;
+    expect(numero("t-tf1")).toBe(1);
+    expect(numero("t-f4")).toBe(4);
+    expect(numero("t-m6")).toBe(6);
+    // Le doublon pauvre garde une place, mais pas celle-là : il n'y a qu'un numéro 1.
+    expect(numero("t-tf1-pauvre")).not.toBe(1);
+    expect(numero("t-canal-faux")).not.toBe(4);
+  });
+
+  it("range le bouquet Canal+ juste après la TNT", () => {
+    /*
+     * Canal+ a quitté la TNT — le 4 est à France 4 — mais ses chaînes restent celles qu'on cherche
+     * juste après les vingt-six premières. Et le numéro 8 reste vide plutôt que d'aller à la première
+     * chaîne venue : un numéro de TNT qui ment est pire qu'un numéro de TNT absent.
+     */
+    const poser = db.prepare(`INSERT INTO live_channels (id, cle, nom, nom_recherche, nom_compact, pays, adresses)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`);
+    poser.run("b-canal", "b-canal", "Canal+", "canal", "canal+", "fr", 4);
+    poser.run("b-sport", "b-sport", "Canal+ Sport", "canal sport", "canal+sport", "fr", 2);
+    poser.run("b-pl", "b-pl", "Canal+ Family Poland-PL", "canal family poland pl", "canal+familypoland-pl", "pl", 1);
+    rangerLesPays();
+    renumeroterDansLOrdreDAffichage();
+
+    const numero = (id: string) => (db.prepare("SELECT numero FROM live_channels WHERE id = ?")
+      .get(id) as unknown as { numero: number | null }).numero;
+    expect(numero("b-canal")).toBe(27);
+    expect(numero("b-sport")).toBe(28);
+    // La polonaise n'est pas dans le bloc français : elle est reléguée avec les siennes.
+    expect(numero("b-pl")!).toBeGreaterThan(28);
+    // Et rien n'est venu boucher le 8, que LCP n'occupe pas dans ce jeu d'essai.
+    expect(db.prepare("SELECT nom FROM live_channels WHERE numero = 8").get()).toBeUndefined();
+  });
+
+  it("rend son numéro à personne quand la chaîne n'a plus d'adresse", () => {
+    // Elle n'est pas dans la grille : lui garder une place décalerait tout le monde pour une absente.
+    db.prepare("UPDATE live_channels SET adresses = 0 WHERE id = 'n-de'").run();
+    renumeroterDansLOrdreDAffichage();
+    const restant = db.prepare("SELECT numero FROM live_channels WHERE id = 'n-de'")
+      .get() as unknown as { numero: number | null };
+    expect(restant.numero).toBeNull();
+  });
+});
+
+describe("le nom retenu entre doublons", () => {
+  it("garde le plus court, et le nom compact avec lui", () => {
+    /*
+     * Le nom affiché était gardé de la première entrée vue, le nom compact réécrit par la dernière :
+     * les deux décrivaient des entrées différentes, et « Canal+ » s'affichait « Canal ?? » parce
+     * qu'une liste avait écrit ce nom-là en premier. Le plus court est presque toujours le plus
+     * propre, et il ne dépend pas de l'ordre de lecture des listes.
+     */
+    const ligne = db.prepare("SELECT nom, nom_compact FROM live_channels WHERE cle = 'tf1'")
+      .get() as unknown as { nom: string; nom_compact: string };
+    expect(ligne.nom).toBe("TF1");
+    /*
+     * Et surtout : le nom compact vient de **la même** entrée. C'est lui qui portait la contradiction
+     * — il était réécrit par la dernière liste lue pendant que le nom restait celui de la première,
+     * si bien que « Canal+ » s'affichait « Canal ?? » avec un nom compact `canal+`.
+     */
+    expect(ligne.nom_compact).toBe("tf1");
+  });
+});
+
+describe("les facettes, comptées sous les autres filtres", () => {
+  /*
+   * Un jeu à part plutôt que celui du fichier : les tests qui précèdent ont retiré des adresses et
+   * posé des chaînes de leur côté. Une facette se vérifie sur un décor dont on connaît chaque pièce.
+   */
+  /*
+   * Ses propres listes, et non celles du jeu commun : un test précédent a remplacé le fichier de
+   * catalogue par une seule liste, et une facette se vérifie sur un décor dont on connaît les pièces.
+   */
+  const A = "facette-liste-a";
+  const B = "facette-liste-b";
+
+  beforeAll(() => {
+    db.prepare(`INSERT OR IGNORE INTO live_sources (id, type, libelle, emplacement, activee)
+      VALUES ('facette-source', 'm3u', 'Facettes', '/facettes', 1)`).run();
+    const liste = db.prepare(`INSERT OR IGNORE INTO live_playlists (id, source_id, nom, url, classement, cochee, entrees)
+      VALUES (?, 'facette-source', ?, ?, ?, 1, 10)`);
+    liste.run(A, "Facette A", "http://facette/a.m3u", "bonne");
+    liste.run(B, "Facette B", "http://facette/b.m3u", "moyenne");
+    const chaine = db.prepare(`INSERT INTO live_channels (id, cle, nom, nom_recherche, nom_compact, pays, numero, adresses)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1)`);
+    const adresse = db.prepare("INSERT INTO live_channel_urls (channel_id, url, playlist_id) VALUES (?, ?, ?)");
+    chaine.run("f-fr-a", "f-fr-a", "Facette FR A", "facette fr a", "facettefra", "fr", 7001);
+    chaine.run("f-fr-b", "f-fr-b", "Facette FR B", "facette fr b", "facettefrb", "fr", 7002);
+    chaine.run("f-de-a", "f-de-a", "Facette DE A", "facette de a", "facettedea", "de", 7003);
+    // Celle-ci n'est que dans la liste B : son pays ne doit jamais être proposé sous la liste A.
+    chaine.run("f-it-b", "f-it-b", "Facette IT B", "facette it b", "facetteitb", "it", 7004);
+    adresse.run("f-fr-a", "http://f/a1", A);
+    adresse.run("f-fr-b", "http://f/b1", B);
+    adresse.run("f-it-b", "http://f/i1", B);
+    // Celle-ci est dans les deux listes : c'est le cas qui donne son sens au « au moins une ».
+    adresse.run("f-de-a", "http://f/d1", A);
+    adresse.run("f-de-a", "http://f/d2", B);
+    db.prepare("UPDATE live_channels SET adresses = 2 WHERE id = 'f-de-a'").run();
+    reunirLesFiabilites();
+  });
+
+  it("ne compte, pour un pays, que ce que la liste cochée contient vraiment", () => {
+    /*
+     * C'était le piège : on cochait une playlist, l'écran promettait toujours « France 1 355 », on
+     * cliquait, on tombait sur zéro. Les 1 355 existent — elles ne sont simplement pas dans cette
+     * liste-là. La facette compte donc ce qu'on obtiendrait **en cochant celle-ci en plus**.
+     */
+    const franceSousA = listerPays({ listes: [A] }).find((pays) => pays.code === "fr")?.chaines ?? 0;
+    const franceSousB = listerPays({ listes: [B] }).find((pays) => pays.code === "fr")?.chaines ?? 0;
+    expect(franceSousA).toBe(listerChaines({ listes: [A], pays: ["fr"], limit: 200 }).items.length);
+    expect(franceSousB).toBe(listerChaines({ listes: [B], pays: ["fr"], limit: 200 }).items.length);
+    /*
+     * Et surtout : un pays qui n'est pas dans la liste cochée n'est plus proposé du tout. C'est le
+     * cas exact du reproche — l'Italie existe dans le corpus, elle n'est pas dans la liste A, elle
+     * n'a donc rien à faire dans un menu qui promet un résultat.
+     */
+    expect(listerPays({ listes: [A] }).map((pays) => pays.code)).not.toContain("it");
+    expect(listerPays({ listes: [B] }).map((pays) => pays.code)).toContain("it");
+  });
+
+  it("compte les listes sous le pays coché, et non leur effectif déclaré", () => {
+    for (const liste of listerListesClient({ pays: ["de"] })) {
+      expect(liste.chaines).toBe(listerChaines({ listes: [liste.id], pays: ["de"], limit: 200 }).items.length);
+    }
+  });
+
+  it("réunit les fiabilités d'une chaîne sans changer le sens du filtre", () => {
+    /*
+     * « Au moins une liste de ce niveau » : une chaîne présente dans une bonne liste **et** dans une
+     * moyenne doit apparaître dans les deux filtres, puisqu'elle est vraiment dans les deux. Prendre
+     * le meilleur classement aurait été plus simple et aurait changé la question posée.
+     */
+    const sousBonne = listerChaines({ fiabilites: ["bonne"], limit: 200 }).items.map((c) => c.nom);
+    const sousMoyenne = listerChaines({ fiabilites: ["moyenne"], limit: 200 }).items.map((c) => c.nom);
+    expect(sousBonne).toContain("Facette DE A");
+    expect(sousMoyenne).toContain("Facette DE A");
+    // Celle qui n'est que dans la liste A n'apparaît pas sous la fiabilité de la liste B.
+    expect(sousBonne).toContain("Facette FR A");
+    expect(sousMoyenne).not.toContain("Facette FR A");
   });
 });

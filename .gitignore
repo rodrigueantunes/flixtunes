@@ -50,3 +50,11 @@ apps/desktop/release/
 # Le relais vers fpm et le « ar » que `construire.mjs` compile pour empaqueter sous Windows. Deux
 # exécutables de trente lignes, refaits en une seconde à chaque construction.
 apps/desktop/outils-paquet/
+
+# Ce que `tools/tv_playlist_checker.py` dépose à côté de lui quand on le lance depuis le dépôt :
+# la mesure d'un jour, pas une source.
+tools/script.log
+tools/m3u.json
+tools/channels_status.json
+tools/token.json
+tools/github_token.txt

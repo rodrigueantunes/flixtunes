@@ -121,7 +121,8 @@ describe("decouperClassement", () => {
     expect(decouperClassement("✅ iptv-org France")).toEqual({ nom: "iptv-org France", classement: "bonne" });
     expect(decouperClassement("〰️ Free-TV France")).toEqual({ nom: "Free-TV France", classement: "moyenne" });
     expect(decouperClassement("⚠️ bililive (mursor1985/LIVE)")).toEqual({ nom: "bililive (mursor1985/LIVE)", classement: "douteuse" });
-    // ❌ ne veut pas dire « morte » : le script le pose sur 25 à 49 % de flux qui répondent.
+    // ❌ ne veut pas dire « morte » : le script le pose sous 25 % de chaînes qui répondent, et une
+    // liste n'est écrite dans le fichier que si au moins une répond.
     expect(decouperClassement("❌ france (aria-tv/aria)")).toEqual({ nom: "france (aria-tv/aria)", classement: "faible" });
   });
 

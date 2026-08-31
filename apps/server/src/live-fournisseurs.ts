@@ -126,8 +126,10 @@ export function reglerFast(actif: boolean): SourceDirect | null {
     return null;
   }
   const id = "fast-public";
-  db.prepare(`INSERT INTO live_sources (id, type, libelle, emplacement) VALUES (?, 'fast', 'Chaînes gratuites', 'public')
-    ON CONFLICT(type, emplacement) DO UPDATE SET activee = 1`).run(id);
+  // Le libellé est réécrit à chaque activation : une source enregistrée sous l'ancien nom le porterait
+  // sinon pour toujours, la ligne n'étant jamais réinsérée.
+  db.prepare(`INSERT INTO live_sources (id, type, libelle, emplacement) VALUES (?, 'fast', 'Chaînes', 'public')
+    ON CONFLICT(type, emplacement) DO UPDATE SET activee = 1, libelle = excluded.libelle`).run(id);
   return listerSources().find((source) => source.type === "fast") ?? null;
 }
 

@@ -446,6 +446,15 @@ h1, h2 { font-family: "Manrope", sans-serif; }
 .expert-controls > button, .expert-controls > .expert-actions { justify-self: start; }
 .expert-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
 .expert-actions input { flex: 1 1 12rem; min-width: 0; }
+/*
+ * Un champ large prend toute la ligne, et son bouton passe dessous.
+ *
+ * Sans cela, « Enregistrer l'emplacement » se retrouvait posé à droite du champ et centré sur sa
+ * hauteur — flottant à mi-chemin, aligné sur rien, quand « Ajouter un portail » et ses voisins
+ * reposent bien sur la ligne de leurs champs. Le champ occupe donc sa ligne entière, et le bouton
+ * repart de la marge gauche comme tous les autres.
+ */
+.expert-actions > .wide-field { flex: 1 1 100%; margin-top: 0; }
 .remote-accounts { margin-top: .4rem; }
 
 .diagnostic-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(150px,1fr)); gap: .5rem; margin: .6rem 0; }
@@ -734,6 +743,32 @@ h1, h2 { font-family: "Manrope", sans-serif; }
 .lecteur-direct-message { position: absolute; padding: var(--pas-2) var(--pas-3); border-radius: var(--rayon-commande);
   background: #000000a8; color: #dbe4f7; font-size: .9rem; }
 .lecteur-direct-message.echec { color: #ffb7c0; }
+/*
+ * Les commandes du direct : elles se montrent au geste et s'effacent d'elles-mêmes.
+ *
+ * La souris a le survol, la télécommande et le clavier n'ont rien — d'où cette classe posée par
+ * l'état, qui ouvre les deux barres à la fois. Sans elle, on ne verrait jamais la progression depuis
+ * un canapé.
+ */
+.lecteur-direct.commandes .lecteur-direct-barre { opacity: 1; }
+.lecteur-direct-sources { padding: 0; border: 0; background: none; color: inherit; font: inherit;
+  text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; }
+.lecteur-direct-sources:hover, .lecteur-direct-sources:focus-visible { color: #dbe4f7; }
+.lecteur-direct-choix { position: absolute; top: 5.4rem; left: 2rem; z-index: 2; min-width: 16rem; margin: 0;
+  padding: .4rem; list-style: none; border: 1px solid #2c4066; border-radius: 12px; background: #0b1220f2;
+  box-shadow: 0 22px 60px #000b; }
+.lecteur-direct-choix button { width: 100%; display: grid; gap: .1rem; padding: .55rem .7rem; border: 0;
+  border-radius: 9px; background: none; color: white; text-align: left; cursor: pointer; }
+.lecteur-direct-choix button:hover, .lecteur-direct-choix button:focus-visible { background: #17294a; }
+.lecteur-direct-choix button.actif { background: #1d3a66; }
+.lecteur-direct-choix small { color: var(--muted); font-size: .75rem; }
+.lecteur-direct-progression { position: absolute; inset: auto 0 0; display: flex; align-items: center;
+  gap: var(--pas-3); padding: 4rem 2rem 1.4rem; background: linear-gradient(transparent, #000d); }
+.lecteur-direct-piste { flex: 1; height: 6px; border-radius: 3px; background: #ffffff2e; cursor: pointer; }
+.lecteur-direct-piste > i { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
+.lecteur-direct-piste:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.lecteur-direct-retard { min-width: 5.5rem; color: #dbe4f7; font-size: .8rem; font-weight: 700;
+  letter-spacing: .04em; text-align: right; }
 .form-actions { display: flex; justify-content: flex-end; gap: .7rem; margin-top: 1.2rem; }
 .wide-field { display: block; margin-top: 1rem; }
 .language-field { display: block; width: min(320px, 100%); margin-top: 1rem; }

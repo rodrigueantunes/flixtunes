@@ -298,7 +298,20 @@ data class ChaineDirect(
 data class PageChaines(val items: List<ChaineDirect>, val total: Int, val offset: Int, val limit: Int)
 
 /** Une adresse d'une chaîne, et son doublon relayé par le serveur — dont Android ne se sert pas. */
-data class SourceChaine(val url: String, val succes: Int, val echecs: Int)
+/**
+ * Une adresse de la chaîne, avec ce que le serveur en sait.
+ *
+ * `hauteur` et `debit` sont lus dans le manifeste par le serveur, pas ici : c'est lui qui classe les
+ * sources, et refaire la mesure de son côté reviendrait à tenir deux avis sur la même question.
+ * `null` tant qu'elle n'a pas été sondée — la première ouverture d'une chaîne ne les connaît pas.
+ */
+data class SourceChaine(
+    val url: String,
+    val succes: Int,
+    val echecs: Int,
+    val hauteur: Int? = null,
+    val debit: Int? = null,
+)
 
 data class ChaineDetaillee(val chaine: ChaineDirect, val sources: List<SourceChaine>)
 

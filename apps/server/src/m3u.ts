@@ -23,31 +23,57 @@ export interface EntreeM3U {
 /**
  * La fiabilité d'une liste : **la part de ses chaînes qui répondent**.
  *
- * Ce n'est pas un avis, c'est une mesure. Le script qui produit `m3u.json` — `tv_playlist_checker.py`
- * — sonde chaque flux de chaque liste, puis range le résultat dans une pastille posée en tête du nom.
- * Les seuils sont les siens, lus dans son `determine_icon_action` :
+ * Ce n'est pas un avis, c'est une mesure. Le script qui produit `m3u.json` —
+ * `tools/tv_playlist_checker.py` — sonde chaque adresse de chaque liste, puis range le résultat dans
+ * une pastille posée en tête du nom. Les seuils sont les siens, lus dans son `determine_icon` :
  *
- * | Pastille | Flux qui répondent | Ce que la liste vaut |
+ * | Pastille | Chaînes joignables | Ce que la liste vaut |
  * | --- | --- | --- |
  * | ✅ | **75 % et plus** | `bonne` |
  * | 〰️ | 50 à 74 % | `moyenne` |
- * | ❌ | 25 à 49 % | `faible` — beaucoup de chaînes mortes, mais la liste est **gardée** |
- * | ⚠️ | — | `douteuse`, pastille d'une version antérieure du script |
- * | *(aucune)* | moins de 25 % | la liste n'est pas écrite dans le fichier |
+ * | ⚠️ | 25 à 49 % | `douteuse` |
+ * | ❌ | moins de 25 % | `faible` — beaucoup de chaînes mortes, mais la liste est **gardée** |
+ * | *(aucune)* | rien ne répond | la liste n'est pas écrite dans le fichier |
  *
- * **Le ❌ ne veut donc pas dire « morte »**, et c'est l'erreur que ce commentaire existe pour éviter :
- * une liste ❌ porte une chaîne utile sur trois. On la garde, on la classe, et on laisse choisir.
+ * **Le ❌ ne veut pas dire « morte »**, et c'est l'erreur que ce commentaire existe pour éviter : une
+ * liste ❌ garde des chaînes qui répondent, parfois celles qu'on cherchait. On la garde, on la
+ * classe, et on laisse choisir.
+ *
+ * Les quatre pastilles descendent du meilleur au pire. Ce n'était pas le cas avant : le script posait
+ * `⚠️` sous 25 % et `❌` de 25 à 49 %, si bien que la pire des listes portait le symbole le moins
+ * alarmant et que ce filtre les rangeait à l'envers. C'est le script qui a été corrigé, pas la
+ * lecture — **une liste étiquetée par l'ancienne version garde donc l'ancien sens jusqu'à la
+ * prochaine passe.**
+ *
+ * Le pourcentage porte sur les **chaînes fusionnées**, comme la grille : une liste qui donne deux
+ * adresses par chaîne, l'une morte et l'autre vivante, est joignable à 100 % puisque le lecteur
+ * essaie les deux.
  *
  * La pastille est retirée du nom à l'import : conservée, elle remonterait dans les recherches et dans
  * les titres affichés.
  */
 export type ClassementListe = "bonne" | "moyenne" | "douteuse" | "faible" | "inconnue";
 
+/**
+ * Un bit par classement, pour réunir en un entier les fiabilités qu'une chaîne traverse.
+ *
+ * Les valeurs sont figées : elles sont écrites en base, et les renuméroter d'une version à l'autre
+ * relirait les anciennes à l'envers.
+ */
+export const MASQUES_CLASSEMENT: Record<ClassementListe, number> = {
+  bonne: 1, moyenne: 2, douteuse: 4, faible: 8, inconnue: 16,
+};
+
+/** Le masque d'un ensemble de classements demandés, ou 0 si aucun n'est reconnu. */
+export function masqueDesClassements(classements: readonly string[]): number {
+  return classements.reduce((masque, nom) => masque | (MASQUES_CLASSEMENT[nom as ClassementListe] ?? 0), 0);
+}
+
 const PREFIXES: Array<[string, ClassementListe]> = [
   ["✅", "bonne"],      // 75 % et plus
   ["〰", "moyenne"],    // 50 à 74 %
-  ["⚠", "douteuse"],   // pastille d'une version antérieure du script
-  ["❌", "faible"],     // 25 à 49 %
+  ["⚠", "douteuse"],   // 25 à 49 %
+  ["❌", "faible"],     // moins de 25 %
 ];
 
 /**

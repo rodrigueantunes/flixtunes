@@ -210,6 +210,21 @@
   <string name="direct_source_essai">Source %1$d sur %2$d…</string>
   <string name="direct_aucune_source">Aucune source ne répond pour cette chaîne.</string>
   <string name="direct_numero_saisi">Chaîne %1$s</string>
+  <!-- La barre du direct : ce qu'elle montre tient dans la fenêtre que la chaîne publie encore. -->
+  <string name="direct_en_direct">EN DIRECT</string>
+  <string name="direct_retard">− %1$s</string>
+  <string name="direct_revenir_direct">Revenir au direct</string>
+  <string name="direct_pause">Mettre en pause</string>
+  <string name="direct_reprendre_lecture">Reprendre</string>
+  <string name="direct_fin_fenetre">Fin de la fenêtre : retour au direct.</string>
+  <!-- Le retard pris de nous-mêmes après des blocages répétés : il s'annonce, sinon il inquiète. -->
+  <string name="direct_securite">+%1$d s de sécurité</string>
+  <string name="direct_sources_titre">Sources</string>
+  <string name="direct_source_rang">Source %1$d</string>
+  <string name="direct_source_recommandee">Source %1$d · recommandée</string>
+  <string name="direct_source_definition">%1$dp</string>
+  <string name="direct_source_debit">%1$dp · %2$s Mb/s</string>
+  <string name="direct_source_inconnue">Non mesurée</string>
   <string name="erreur_serveur_introuvable">Serveur FlixTunes introuvable</string>
   <string name="erreur_pin">Code PIN incorrect</string>
   <string name="erreur_session_expiree">Session du profil expirée, saisissez de nouveau le PIN</string>

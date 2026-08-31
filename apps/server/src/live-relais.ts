@@ -112,6 +112,53 @@ export async function hoteAutorise(hote: string): Promise<boolean> {
   return autorise;
 }
 
+/** Ce qu'une récupération surveillée rend : la réponse, et l'adresse **finale** qui l'a donnée. */
+export interface ReponseSuivie { reponse: Response; url: string }
+
+/** Au-delà, ce n'est plus une redirection, c'est une boucle. */
+const SAUTS_MAX = 5;
+
+/**
+ * Aller chercher une adresse **en vérifiant chaque saut**, et non seulement le premier.
+ *
+ * C'est le trou que cette fonction bouche. `hoteAutorise` juge l'hôte qu'on lui donne ; `fetch`, lui,
+ * suit les redirections tout seul, sans rien demander à personne. Une entrée de liste sur un hébergeur
+ * public parfaitement légitime qui répond `302 → http://192.168.1.1/` faisait donc chercher cette
+ * page **par le NAS**, avec son accès au réseau local, et en renvoyait le corps au client. Le fichier
+ * de listes vient d'Internet et compte quatre-vingt-dix mille adresses écrites par cinq cents auteurs :
+ * c'est exactement la situation qui fabrique une faille de ce genre.
+ *
+ * Interdire les redirections n'était pas une option — les CDN en font à chaque segment. On les suit
+ * donc à la main, en rejugeant l'hôte à chaque fois, et l'on rend **l'adresse d'arrivée** : un
+ * manifeste redirigé résout ses segments relatifs à partir d'elle, pas de celle qu'on avait demandée.
+ * Le relais utilisait l'adresse de départ, ce qui cassait discrètement les listes redirigées.
+ *
+ * `autorise` et `recuperer` sont injectables pour les tests : sonder de vraies redirections
+ * demanderait un hôte public, et une suite de tests qui dépend d'Internet ment un jour sur deux.
+ */
+export async function recupererSansSortirDuPublic(
+  url: string,
+  init: RequestInit,
+  recuperer: (url: string, init: RequestInit) => Promise<Response>,
+  autorise: (hote: string) => Promise<boolean> = hoteAutorise,
+): Promise<ReponseSuivie | null> {
+  let courante = url;
+  for (let saut = 0; saut <= SAUTS_MAX; saut += 1) {
+    let hote: string;
+    try { hote = new URL(courante).hostname; } catch { return null; }
+    if (!(await autorise(hote))) return null;
+
+    // `manual` est le cœur de l'affaire : sans lui, `fetch` suivrait sans nous consulter.
+    const reponse = await recuperer(courante, { ...init, redirect: "manual" });
+    if (![301, 302, 303, 307, 308].includes(reponse.status)) return { reponse, url: courante };
+
+    const destination = reponse.headers.get("location");
+    if (!destination) return { reponse, url: courante };
+    try { courante = new URL(destination, courante).href; } catch { return null; }
+  }
+  return null;
+}
+
 /** Pour les tests : oublier ce qui a été jugé. */
 export function oublierLesHotes(): void {
   hotesJuges.clear();

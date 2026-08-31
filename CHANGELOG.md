@@ -1,5 +1,122 @@
 # Journal des versions
 
+## 0.5.7.r3 — le lecteur du direct : la meilleure source, la barre, et la télécommande
+
+*Trois demandes, un audit et une mesure avant d'écrire : `docs/CHANTIER_LIVE_TV_R3.md`. La contrainte
+de la r2 tient toujours — ne rien dégrader de la grille à 0,07 ms.*
+
+- **La mesure qui commande tout le reste.** Une barre de progression sur un direct ne montre que ce
+  que l'hébergeur publie encore derrière le bord. Soixante chaînes françaises sondées, treize
+  manifestes lisibles : **fenêtre médiane de 61 s**, 92 % entre 30 s et 2 min, et une exception à
+  **quatre heures** — Arte et ses 1 875 segments. Segments de **8 s**. Deux conséquences : la barre
+  affiche la fenêtre **réelle** de chaque chaîne et non une échelle inventée, et comme on se cale
+  trois segments derrière le bord, il reste **≈ 37 s de marge** — c'est tout ce qu'on peut dépenser en
+  stabilité.
+- **La meilleure source, trouvée et mise par défaut.** Le repli savait écarter ce qui ne répond pas ;
+  il ne voyait pas qu'une adresse donne du 480p quand sa voisine donne la même chaîne en 1080p. La
+  réponse est dans le manifeste — `RESOLUTION`, `BANDWIDTH` —, et **un navigateur ne peut pas la
+  lire** : sans en-tête CORS, il n'a droit ni au corps ni au code de la réponse. C'est donc le serveur
+  qui mesure, une fois par semaine et **après avoir répondu**, pour ne jamais retarder l'ouverture
+  d'une chaîne. Vérifié sur le corpus : les douze adresses d'Arte se rangent désormais derrière
+  `artesimulcast.akamaized.net`, **720p à 3,15 Mb/s**, au lieu d'une adresse IP tirée au hasard.
+- **La course ne reclasse plus ce que le serveur a mesuré.** Elle rendait l'ordre d'*arrivée* : une
+  source en 480p qui répond en 20 ms passait devant la même chaîne en 1080p qui répond en 200 ms. Elle
+  ne répond plus qu'à une seule question — *qui est joignable* — et conserve le classement pour le
+  reste.
+- **Les autres sources restent à portée.** « source 1/2 » devient cliquable et ouvre la liste, avec la
+  définition et le débit de chacune ; touche **verte** sur Android TV. Une source choisie à la main ne
+  compte pas comme un échec pour celle qu'on quitte : elle n'est pas morte, on lui en préfère une
+  autre, et inscrire une opinion dans le classement le fausserait.
+- **La barre de progression, et la pause avec elle.** Elle montre la fenêtre publiée, le retard sur le
+  direct — « − 0:31 » — et un bouton pour le rejoindre. Elle s'efface après trois secondes et demie et
+  revient au moindre geste. Sous deux segments de fenêtre, **elle ne s'affiche pas** : un décor qui ne
+  répond pas est pire que pas de barre. Mettre en pause un direct, c'est reculer dans la fenêtre : on
+  laisse faire, et l'on rejoint le direct avant de tomber par l'arrière plutôt que de figer l'image
+  sans rien dire.
+- **La stabilité, quatre corrections.** `lowLatencyMode` était allumé alors qu'**aucune** des chaînes
+  mesurées ne publie de segments partiels : il ne faisait que serrer la marge, il est éteint. Une
+  erreur fatale de *média* se répare maintenant sur place — deux tentatives — au lieu de couper
+  l'image et d'inscrire un échec pour un segment abîmé. Trois blocages en deux minutes font reculer le
+  lecteur de deux segments dans les 37 s de marge, en le disant : « +16 s de sécurité ». Et côté
+  Android, le lecteur était construit **nu** : il reçoit enfin un tampon (15 s avant de démarrer,
+  60 s en réserve) et une `LiveConfiguration` qui l'autorise à jouer entre 0,97× et 1,03× — il
+  **glisse** vers sa cible au lieu de se figer puis de sauter.
+- **La télécommande, revue pour Android TV.** Croix haut/bas : chaîne +/−. Croix gauche/droite et les
+  touches de transport : reculer et avancer de dix secondes. OK ou lecture/pause : la pause. Verte :
+  les sources. Les chiffres composent toujours un numéro. **La flèche gauche ne fait plus « chaîne
+  précédente »** — elle recule dans la fenêtre, une barre sans flèches pour la parcourir n'aurait servi
+  à rien ; il reste `LAST_CHANNEL` et `MEDIA_PREVIOUS`, et le bouton ⇄ de la barre.
+- **Les cartes de chaînes ont toutes la même taille sur Android.** Une grille CSS étire ses cellules à
+  la hauteur de la plus grande — c'est pourquoi le Web était déjà régulier et que personne n'y avait
+  rien écrit. `LazyVerticalGrid` ne le fait pas : un logo absent ou un groupe non renseigné rétrécissait
+  la carte et faisait un damier. Elles sont maintenant carrées, comme le squelette de chargement du
+  Web, et leur contenu se centre dedans.
+- **Une redirection contournait la garde anti-SSRF du relais, et je l'avais recopiée.** `hoteAutorise`
+  résout le nom et refuse les adresses privées — mais **seulement pour le premier hôte**, et `fetch`
+  suit les redirections tout seul. Une entrée de liste sur un hébergeur public répondant
+  `302 → http://192.168.1.1/` faisait donc chercher cette page **par le NAS**, avec son accès au
+  réseau local, et en renvoyait le corps au client. Le fichier de listes vient d'Internet et compte
+  92 204 adresses écrites par cinq cents auteurs. Les redirections sont maintenant suivies à la main,
+  l'hôte rejugé à chaque saut, cinq sauts au plus. Interdire les redirections n'était pas une option :
+  les CDN en font à chaque segment. **Défaut présent depuis la r1**, et redoublé le jour même par la
+  sonde de qualité.
+- **Le même correctif répare un bug silencieux** : le relais réécrivait les manifestes en prenant
+  l'adresse **de départ** comme base, alors qu'un manifeste redirigé résout ses segments relatifs
+  depuis l'adresse **d'arrivée**. Les listes redirigées cassaient sans qu'on sache pourquoi.
+- **Les numéros suivent enfin ce qu'on voit, et la TNT a retrouvé les siens.** La grille commençait par
+  la France depuis la r2, mais les numéros restaient dans l'ordre alphabétique mondial : la chaîne 2
+  était « 1+1 Ukraina », la 3 « 24 Horas », et la première française arrivait au 47. Or **le numéro est
+  le geste principal d'un téléviseur**. Une renumérotation unique les range dans l'ordre d'affichage,
+  et **la TNT française reprend ses numéros de toujours** — vérifié sur le corpus : 1 TF1, 2 France 2,
+  3 France 3, 4 Canal+, 5 France 5, 6 M6, 7 Arte, 15 BFM TV, 26 LCI. Les numéros posés à la main sont
+  préservés et retirés du tirage : ce sont des décisions, pas des attributions.
+- **La table de la TNT compare des noms *compacts*, ponctuation gardée** — et ce n'est pas un détail :
+  la première écriture comparait des noms normalisés, où « Canal+ » devient `canal`, et le 4 s'est posé
+  sur une chaîne du corpus littéralement nommée « Canal ?? ». C'est le même piège que la recherche,
+  *canal* étant le mot espagnol pour « chaîne ». Le `+` gardé le règle ; les espaces retirés réunissent
+  au passage « BFM TV » et « BFMTV ».
+- **Ce que la renumérotation coûte** : 3,0 s pour 92 204 chaînes sur ce poste, **une seule fois**, au
+  premier démarrage suivant la mise à jour — une empreinte en réglage l'empêche de se répéter. La
+  promesse tient toujours : un numéro attribué ne bouge plus. Ce qui a changé, c'est la convention, et
+  une convention se change une fois. Sur le NAS ce sera plus lent, et cela reste à mesurer là-bas.
+- **Les compteurs des filtres se croisent enfin.** Ils étaient calculés une fois pour toutes sur le
+  corpus entier : on cochait une playlist, le menu « Pays » promettait toujours « France 1 355 », on
+  cliquait, on tombait sur zéro. Rien ne s'était annulé — ces 1 355 chaînes existent, elles n'étaient
+  simplement pas dans cette liste-là —, mais l'écran avait menti, et comme **74 % des chaînes n'ont
+  aucun pays**, ce vide était le cas courant. Chaque facette compte désormais ce qu'on obtiendrait en
+  la cochant **en plus** des autres, et ignore son propre critère. Vérifié : 60 pays proposés sans
+  filtre, **14** sous une playlist donnée, France absente — et la grille confirme zéro.
+- **Et recompter coûte moins que ne pas le faire.** 18,3 ms pour les pays sous une playlist, contre
+  24,5 ms pour l'ancien compte global qui, lui, parcourait tout : c'est le filtre qui réduit le
+  travail. La fiabilité, elle, restait à 182 ms — les classements d'une chaîne sont donc réunis en un
+  entier calculé au rafraîchissement, ce qui ramène ce compte à **24,8 ms**.
+- **Le même raccourci, mauvais à deux mètres de là.** Ce masque semblait devoir servir aussi au filtre
+  de la grille. Mesuré : **111 ms contre 0,2 ms**. L'`EXISTS` laisse SQLite parcourir l'index dans
+  l'ordre et s'arrêter à la soixantième ligne ; le masque, absent de cet index, l'oblige à tout
+  regarder. Excellent pour compter, mauvais pour paginer — la grille garde donc sa forme d'avant.
+- **Le catalogue garde ses filtres au retour d'un film**, comme le direct depuis la r2 : ouvrir une
+  fiche démontait `CatalogPage` et ses `useState` — tri, filtre, recherche, décennie, genres, lettre
+  de l'index, défilement. Même remède, une mémoire de session **sans péremption** — un film dure une
+  heure et demie quand le cache du catalogue oublie au bout de cinq minutes —, tenue **par sorte**
+  pour que les films et les séries ne se souviennent pas ensemble.
+- **« Canal+ » ne s'affiche plus « Canal ?? ».** Le nom affiché était gardé de la première entrée vue
+  tandis que le nom compact était réécrit par la dernière : les deux décrivaient des entrées
+  différentes. Ils suivent maintenant le même choix — **le nom le plus court**, presque toujours le
+  plus propre, et qui ne dépend pas de l'ordre de lecture des listes.
+- **La numérotation de la TNT était celle d'avant.** Le plan a été refait par la délibération Arcom
+  n° 2025-06 — Canal+, C8 et NRJ 12 ont quitté la TNT, T18 et Novo 19 y sont entrées, et tout s'est
+  décalé. La table a été **relevée sur la liste publiée plutôt que reconstituée de mémoire** : une
+  numérotation nationale fausse a l'air d'une autorité, ce qui la rend pire que pas de table du tout.
+  1 TF1, 4 France 4, 8 LCP, 12 Gulli, 15 LCI, 18 T18, 25 RMC Life, 26 Paris Première.
+- **Le bouquet Canal+ prend le bloc juste après**, à partir de 27 : il a quitté la TNT mais reste ce
+  qu'on cherche juste après elle, et non noyé au milieu de quatre-vingt-dix mille chaînes. Les numéros
+  1 à 26 restent à la TNT même absente du corpus — un numéro de TNT vide vaut mieux qu'un qui ment.
+- **Le nom est lu pour un pays avant qu'on se fie à la marque** : « Canal+ Family Poland-PL » et
+  « Canal+ Sport 2 HD PL » se retrouvaient françaises et remontaient dans le bloc français de la
+  grille, ce qui est le contraire du service rendu.
+- 873 tests serveur, 271 tests Web, le Kotlin compile. Vérifié à l'écran : Arte en 1080p, « − 0:31 »
+  sur la barre, la liste des deux sources, la pause et le retour au direct.
+
 ## 0.5.7.r2 — mes chaînes, la course, et la chaîne d'avant
 
 *La suite du direct, cinq points du §4 de `docs/CHANTIER_LIVE_TV_SUITE.md`. Le guide des programmes
@@ -47,7 +164,64 @@ en est écarté à la demande. La contrainte tenue de bout en bout : ne rien dé
 - **La chaîne d'avant s'oubliait en fermant le lecteur**, et c'est exactement le moment où elle sert :
   on regarde A, on revient à la grille, on ouvre B — « précédente » ne renvoyait alors nulle part.
   Elle est retenue à l'**ouverture** d'une chaîne, que le lecteur soit encore là ou non.
-- 849 tests serveur, 261 tests Web, le Kotlin compile. Vérifié à l'écran : l'étoile bascule et le
+- **La grille garde ses filtres quand on revient d'une chaîne.** Ouvrir une chaîne remplace tout
+  l'écran par le lecteur : la grille était démontée, et avec elle la recherche, les cases cochées et
+  les pages déjà parcourues. On repartait donc du haut de 79 321 chaînes après avoir mis vingt
+  secondes à trouver la sienne. Une mémoire de session la restitue à l'identique, défilement compris.
+  Elle **ne périme pas**, contrairement au cache du catalogue qui oublie au bout de cinq minutes : on
+  regarde une chaîne bien plus longtemps que cela, et ce qui est retenu n'est pas une donnée du
+  serveur mais un choix de la personne. Elle s'efface au changement de profil — les favorites sont à
+  lui. Android n'avait pas ce défaut : ses filtres vivent dans le modèle, qui survit au lecteur.
+- **Le défilement se note au clic, pas au départ.** Première écriture : un écouteur de défilement,
+  et une position perdue quand même. La console a donné la raison — démonter cent quatre-vingts
+  cartes fait passer la page de 4 806 à 1 682 pixels, le navigateur recadre le défilement et émet un
+  dernier événement à 282 qui écrasait le 1 500 qu'on venait de retenir. Le clic a lieu avant que
+  quoi que ce soit ne bouge : c'est le seul instant où la réponse est juste, et il ne coûte aucun
+  écouteur. La position est ensuite reposée **jusqu'à ce qu'elle tienne**, parce qu'au premier essai
+  la page n'est pas encore assez haute pour qu'on puisse y descendre.
+- **La grille commence par la France, puis suit l'alphabet.** Elle était rangée par numéro, c'est-à-dire
+  dans l'ordre alphabétique mondial : la chaîne n°1 s'appelait « Ashoka Tv ». Les pays viennent
+  maintenant en tête de tri, la France d'abord, les autres dans l'ordre de leur nom français, et ce
+  qu'on ne sait pas situer ferme la marche.
+- **Et pour les situer, on reconnaît les françaises à leur nom.** Les trois indices existants — le
+  `tvg-id`, le drapeau, le nom du pays dans le groupe — laissent les deux tiers du corpus sans pays,
+  dont des « M6 HD » et des « Canal+ Sport » qui ne peuvent venir d'ailleurs. Une table de chaînes et
+  de familles les rattrape, en dépouillant le nom **une couche de décoration à la fois** : « France 2 »
+  doit trouver sa réponse avant qu'on ne lui retire son « France », là où « FRANCE TF1 HD » ne la
+  trouve qu'après. Elle ne conclut jamais contre une déclaration — une « Canal+ Sport » qui annonce
+  `.pl` reste polonaise — et refuse ce qui porte le même nom dans quinze pays : ni Eurosport, ni beIN.
+- **Un index partiel, sans quoi ce nouvel ordre coûtait cent cinquante fois plus cher.** Mesuré sur
+  80 000 lignes : `adresses > 0` est une inégalité, elle épuise le pouvoir d'ordonner de l'index, et
+  SQLite retombait sur un tri complet de la table — 8,8 ms la première page, 17,1 ms la centième,
+  contre 0,06 ms avant. La condition est passée dans l'index lui-même, qui ne contient plus que les
+  chaînes joignables, dans l'ordre où on les lit : **0,04 ms**, et 0,12 ms à la centième page. Le rang
+  du pays est un entier rangé en base et non un `CASE` calculé au tri, pour la même raison. Revérifié
+  ensuite sur les 79 966 chaînes réelles : 0,07 ms la première page, 0,19 ms la centième, contre
+  0,06 ms pour l'ancien ordre. La grille reste ce qu'elle était.
+- **Le script qui produit `m3u.json` est entré dans le dépôt**, sous `tools/tv_playlist_checker.py`,
+  et cinq écarts avec ce que FlixTunes affiche ont été corrigés. **Les pastilles étaient dans le
+  désordre** : `⚠️` marquait les listes sous 25 % et `❌` celles de 25 à 49 %, si bien que la pire
+  portait le symbole le moins alarmant et que le filtre de fiabilité les rangeait à l'envers. Elles
+  descendent maintenant ✅ 〰️ ⚠️ ❌. **Le pourcentage comptait des flux quand la grille montre des
+  chaînes** : une liste qui donne deux adresses par chaîne, l'une morte et l'autre vivante, était
+  mesurée à 50 % alors qu'on y voit 100 % de joignables — le lecteur les essaie toutes. Il porte donc
+  sur les chaînes fusionnées, avec la même clé que le serveur. **Les transports illisibles pesaient
+  dans le total** alors que FlixTunes les écarte à l'import : 1 347 entrées `rtp`/`rtsp`/`rtmp` sur le
+  corpus mesuré, qui faisaient passer pour mauvaise une liste dont il ne garde que la partie lisible.
+  **Le nom se coupait à la première virgule**, y compris celle d'un `tvg-name="Ciné, Polar"`, et
+  **les entrées sans nom** entraient dans le compte sans jamais entrer dans la grille. Le format du
+  fichier ne bouge pas — « nom » : « adresse » —, TvPourTous continue de le lire. Une variable
+  `FLIXTUNES_M3U_DIR` dépose au passage une copie dans le dossier que FlixTunes surveille.
+- **Rien de tout cela ne coûte à FlixTunes** : le script tourne ailleurs, et ce qui a changé côté
+  application est du texte — la table des pastilles, quatre libellés, l'ordre d'affichage des bandes.
+  Aucune requête, aucun index, aucun travail supplémentaire au démarrage. La grille reste à 0,07 ms.
+- **Deux retouches d'écran.** « Enregistrer l'emplacement » flottait à droite du champ, centré sur sa
+  hauteur et aligné sur rien, quand « Ajouter un portail » repose bien sur la ligne de ses champs :
+  le champ large prend maintenant sa ligne entière et le bouton repart de la marge gauche, comme les
+  autres. Et les listes publiques s'appellent **« Chaînes »**, sans « gratuites » — le nom est réécrit
+  au démarrage pour les installations qui les avaient déjà ajoutées, sans quoi l'ancien serait resté
+  jusqu'à ce qu'on les retire et les remette.
+- 856 tests serveur, 266 tests Web, le Kotlin compile. Vérifié à l'écran : l'étoile bascule et le
   filtre passe de 79 321 chaînes à une seule, « Reprendre 47 · Arte » revient après lecture, et le
   bouton « Revenir à… » n'apparaît qu'une fois deux chaînes vues.
 - **Le guide des programmes est écarté**, à la demande. Ce qui a été mesuré reste écrit dans le

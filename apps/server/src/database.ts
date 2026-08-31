@@ -552,6 +552,48 @@ function ensureLiveChannelColumn(name: string, definition: string) {
 }
 ensureLiveChannelColumn("pays", "TEXT");
 /**
+ * Le rang du pays dans la grille — la France d'abord, puis l'alphabet.
+ *
+ * Un entier plutôt qu'un `CASE` au moment du tri, pour que l'`ORDER BY` continue de suivre un index :
+ * c'est ce qui garde la grille à 0,4 ms sur 76 899 chaînes. Sa valeur se calcule au rafraîchissement,
+ * et se rattrape au démarrage si la table des pays a changé de forme entre deux versions.
+ *
+ * `999` par défaut, c'est-à-dire « pas de pays, en fin de grille » : une base existante affichera son
+ * ordre d'avant jusqu'au premier calcul, jamais un ordre faux.
+ */
+ensureLiveChannelColumn("rang_pays", "INTEGER NOT NULL DEFAULT 999");
+
+/**
+ * Ce que vaut une adresse, et non plus seulement si elle répond.
+ *
+ * Le classement des adresses ne connaissait que les échecs et les succès — de quoi écarter une source
+ * morte, de quoi rien dire entre une source en 480p et la même chaîne en 1080p. La définition et le
+ * débit sont lus dans le manifeste par `live-qualite.ts`, à l'ouverture d'une chaîne et une fois par
+ * semaine. `sonde_le` retient la date, faute de quoi une adresse qui ne déclare rien serait resondée
+ * à chaque ouverture.
+ */
+function ensureLiveUrlColumn(name: string, definition: string) {
+  const columns = db.prepare("PRAGMA table_info(live_channel_urls)").all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === name)) db.exec(`ALTER TABLE live_channel_urls ADD COLUMN ${name} ${definition}`);
+}
+ensureLiveUrlColumn("hauteur", "INTEGER");
+ensureLiveUrlColumn("debit", "INTEGER");
+ensureLiveUrlColumn("sonde_le", "TEXT");
+
+/**
+ * Les fiabilités d'une chaîne, réunies en un seul entier.
+ *
+ * Une chaîne traverse jusqu'à dix listes, de qualités différentes, et le filtre demande « au moins
+ * une liste de ce niveau ». Cela s'écrivait par un `EXISTS` corrélé sur les 118 335 adresses —
+ * mesuré à **190 ms** dès qu'on comptait les pays sous une fiabilité, contre 24 ms sans. Un bit par
+ * classement rend la même réponse par un `ET` binaire, sur une seule table.
+ *
+ * Ce n'est pas le classement *meilleur* ni *pire* : ce sont **tous** ceux qu'elle porte. Prendre le
+ * meilleur aurait changé le sens du filtre — une chaîne présente dans une bonne liste et dans une
+ * mauvaise doit apparaître dans les deux, puisqu'elle est vraiment dans les deux.
+ */
+ensureLiveChannelColumn("classements", "INTEGER NOT NULL DEFAULT 0");
+/**
  * Le nom **compact** : sans accents, sans espaces, mais **avec sa ponctuation**.
  *
  * Il sert la recherche littérale : « canal + » doit trouver « Canal+ » et « CANAL+ EN CLAIR », et
@@ -589,9 +631,12 @@ db.exec(`
 /**
  * Le ❌ des listes ne voulait pas dire ce qu'on croyait.
  *
- * Il était enregistré `morte` ; le script qui produit `m3u.json` le pose en réalité sur les listes
- * dont **25 à 49 %** des flux répondent — une liste sur trois chaînes utiles, qu'on garde. La valeur
- * s'appelle donc `faible`, et l'ancienne contrainte `CHECK` refuserait la nouvelle.
+ * Il était enregistré `morte` ; le script qui produit `m3u.json` le posait en réalité sur les listes
+ * dont **25 à 49 %** des flux répondaient — une liste sur trois chaînes utiles, qu'on garde. La
+ * valeur s'appelle donc `faible`, et l'ancienne contrainte `CHECK` refuserait la nouvelle.
+ *
+ * Le script a depuis été corrigé — `❌` marque maintenant les listes sous 25 %, voir `m3u.ts` — mais
+ * le nom `faible` reste juste, et c'est tout ce que cette migration avait à réparer.
  *
  * Une base créée avant ce jour porte l'ancienne contrainte : on refait la table. Elle est reconstruite
  * de bout en bout à chaque rafraîchissement — c'est le fichier de listes qui fait foi —, donc rien
@@ -621,7 +666,32 @@ if (schemaListes && !schemaListes.sql.includes("'faible'")) {
     UPDATE live_channels SET adresses = 0;
   `);
 }
+/*
+ * Les listes publiques s'appelaient « Chaînes gratuites ».
+ *
+ * Le libellé est écrit à l'activation et jamais réécrit ensuite : sans cette ligne, une installation
+ * qui les a déjà ajoutées garderait l'ancien nom jusqu'à ce qu'on les retire et les remette. La table
+ * des sources compte trois lignes — le coût est celui d'une phrase.
+ */
+db.exec("UPDATE live_sources SET libelle = 'Chaînes' WHERE type = 'fast' AND libelle = 'Chaînes gratuites'");
 db.exec("CREATE INDEX IF NOT EXISTS idx_live_channels_pays ON live_channels(pays, numero)");
+/*
+ * L'index du parcours, dans l'ordre exact du tri de la grille — et **partiel**, ce qui fait tout.
+ *
+ * La première écriture mettait `adresses` en tête, comme l'index qu'elle remplaçait. Mesuré sur
+ * 80 000 lignes, le résultat était sans appel : `adresses > 0` est une inégalité, elle épuise le
+ * pouvoir d'ordonner de l'index, et SQLite retombait sur un tri complet de la table — 8,8 ms pour la
+ * première page et 17,1 ms pour la centième, contre 0,06 ms auparavant. Cent cinquante fois plus
+ * cher, pour un changement d'ordre.
+ *
+ * La condition passe donc dans l'index lui-même : il ne contient que les chaînes joignables, dans
+ * l'ordre où on veut les lire. SQLite le parcourt et s'arrête à la soixantième ligne — 0,04 ms, et
+ * 0,12 ms à la centième page. C'est l'ordre voulu **et** la performance d'avant.
+ */
+// La première écriture, sur les bases qui l'ont connue le temps d'une journée de chantier.
+db.exec("DROP INDEX IF EXISTS idx_live_channels_ordre");
+db.exec(`CREATE INDEX IF NOT EXISTS idx_live_channels_grille_pays
+  ON live_channels(rang_pays, pays, numero) WHERE adresses > 0`);
 
 /**
  * L'index de recherche des chaînes — et pourquoi il n'est pas un `LIKE` de plus.

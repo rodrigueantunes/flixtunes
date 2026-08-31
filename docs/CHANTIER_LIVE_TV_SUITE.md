@@ -210,6 +210,21 @@ reviendra.
 Aucun de ces cinq points ne touche à la requête de la grille : la performance est conservée par
 construction, et l'étoile est lue en une fois pour la page plutôt que ligne à ligne.
 
+**Ajouté ensuite, hors des six points** — deux gênes rapportées à l'usage :
+
+- **La grille garde ses filtres au retour d'une chaîne.** Une mémoire de session sans péremption,
+  `apps/web/src/memoire-direct.ts` : recherche, cases cochées, pages parcourues, défilement. Deux
+  pièges relevés à la console avant d'y arriver. Le mode strict de React annulait le premier
+  chargement quand la marque « déjà servi » était posée au départ de la requête plutôt qu'à son
+  arrivée — la grille restait à « 0 chaîne ». Et un écouteur de défilement retenait le recadrage du
+  navigateur au démontage (282 au lieu de 1 500) : c'est au clic qu'on note, avant que la page ne
+  rétrécisse. Android n'a pas ce défaut, ses filtres vivant dans `MainViewModel`.
+- **L'ordre de la grille : la France, puis l'alphabet.** Un quatrième indice de pays reconnaît les
+  chaînes françaises à leur seul nom (**1 081 → 1 337**, +256 sur le corpus réel), et le rang du pays
+  est rangé en base pour que le tri suive un index. Mesure sur 79 966 chaînes : 0,07 ms la première
+  page, 0,19 ms la centième — l'index **partiel** `WHERE adresses > 0` fait toute la différence,
+  puisque sans lui SQLite retombait sur un tri complet à 8,8 ms.
+
 **Un second lot, à décider** : le sondage au focus, le choix de la qualité, les pistes audio.
 
 **À trancher avant de commencer :**

@@ -3,8 +3,8 @@ import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import type { ChaineDirect, ChaineDirectDetaillee, ClassementListe, EtatDirect, ListeDirect, PageChaines, ParametresDirect, SourceChaine } from "@flixtunes/contracts";
 import { db, getSetting, setSetting } from "./database.js";
-import { analyserM3U, cleDeChaine, lireCatalogueM3U, lisibleParNosLecteurs } from "./m3u.js";
-import { nomDuPays, paysDeLaChaine } from "./pays.js";
+import { MASQUES_CLASSEMENT, analyserM3U, cleDeChaine, lireCatalogueM3U, lisibleParNosLecteurs, masqueDesClassements } from "./m3u.js";
+import { RANG_INCONNU, RANG_SANS_PAYS, empreinteDesRangs, nomDuPays, numerosTnt, paysDeLaChaine, rangsDesPays } from "./pays.js";
 import { listerSources, listesDeLaSource, type SourceDirect } from "./live-fournisseurs.js";
 import { fetchWithTimeout } from "./resilience.js";
 import { normaliseForSearch } from "./search-normalise.js";
@@ -326,6 +326,8 @@ export async function rafraichirDirect(): Promise<EtatDirect> {
        WHERE p.cochee = 0 OR s.activee = 0)`).run();
 
     recompterLesAdresses();
+    rangerLesPays();
+    reunirLesFiabilites();
     numeroterLesNouvelles();
     reconstruireIndexRecherche();
     derniereDuree = Math.round((Date.now() - debut) / 100) / 10;
@@ -407,7 +409,17 @@ function ecrireLaListe(playlistId: string, texte: string): { retenues: number; e
       logo = COALESCE(live_channels.logo, excluded.logo),
       groupe = COALESCE(live_channels.groupe, excluded.groupe),
       tvg_id = COALESCE(live_channels.tvg_id, excluded.tvg_id),
-      nom_compact = excluded.nom_compact,
+      -- Le nom **le plus court** l'emporte, et les deux colonnes suivent le même choix.
+      --
+      -- Le nom affiche etait garde de la premiere entree vue tandis que le nom compact etait reecrit
+      -- par la derniere : les deux decrivaient des entrees differentes, et « Canal+ » s'affichait
+      -- « Canal ?? » parce qu'une liste avait ecrit ce nom-la en premier. Le plus court est presque
+      -- toujours le plus propre — « TF1 » plutot que « TF1 FHD [1080p-…] » — et il ne depend pas de
+      -- l'ordre de lecture des listes, donc il ne change pas d'un rafraichissement a l'autre.
+      nom = CASE WHEN length(excluded.nom) < length(live_channels.nom)
+        THEN excluded.nom ELSE live_channels.nom END,
+      nom_compact = CASE WHEN length(excluded.nom) < length(live_channels.nom)
+        THEN excluded.nom_compact ELSE live_channels.nom_compact END,
       -- Le premier pays trouve gagne : une meme chaine peut figurer dans une liste qui le declare
       -- et dans dix qui n'en disent rien, et les secondes ne doivent pas effacer la premiere.
       pays = COALESCE(live_channels.pays, excluded.pays),
@@ -467,6 +479,191 @@ function recompterLesAdresses(): void {
     db.exec("ROLLBACK");
     throw cause;
   }
+}
+
+/**
+ * Réunir en un entier les fiabilités que chaque chaîne traverse.
+ *
+ * Recalculé en une passe après le rafraîchissement, comme le rang des pays et pour la même raison :
+ * une valeur dérivée rangée en colonne se lit par un `ET` binaire, là où la calculer au vol demandait
+ * un `EXISTS` corrélé sur 118 335 adresses — 190 ms mesurées pour compter les pays sous une fiabilité.
+ */
+export function reunirLesFiabilites(): number {
+  const branches = Object.entries(MASQUES_CLASSEMENT)
+    .map(([nom, masque]) => `WHEN '${nom}' THEN ${masque}`).join(" ");
+  const calcul = `(SELECT COALESCE(SUM(masque), 0) FROM
+    (SELECT DISTINCT CASE p.classement ${branches} ELSE 0 END AS masque
+     FROM live_channel_urls u JOIN live_playlists p ON p.id = u.playlist_id
+     WHERE u.channel_id = live_channels.id))`;
+  return Number(db.prepare(`UPDATE live_channels SET classements = ${calcul}
+    WHERE adresses > 0 AND classements <> ${calcul}`).run().changes ?? 0);
+}
+
+/**
+ * L'expression qui donne son rang à un pays, en SQL.
+ *
+ * Elle est construite depuis la table des pays plutôt qu'écrite à la main : une table et son ordre
+ * tenus à deux endroits, c'est la garantie qu'ils divergeront un jour. `CASE pays WHEN …` ne rencontre
+ * jamais `NULL` — aucune comparaison n'est vraie avec lui —, si bien que l'absence de pays tombe
+ * d'elle-même dans le dernier rang.
+ */
+function expressionDuRang(): string {
+  const branches = [...rangsDesPays()].map(([code, rang]) => `WHEN '${code}' THEN ${rang}`).join(" ");
+  return `CASE pays ${branches} ELSE (CASE WHEN pays IS NULL THEN ${RANG_SANS_PAYS} ELSE ${RANG_INCONNU} END) END`;
+}
+
+/**
+ * Ranger les pays : une passe, et seulement sur ce qui change.
+ *
+ * Le rang ne se calcule pas à l'insertion, parce que le pays retenu n'est pas toujours celui qu'on
+ * vient d'écrire — l'`ON CONFLICT` garde le premier trouvé, et une chaîne traverse dix listes. Le
+ * calculer après coup, depuis la colonne `pays` telle qu'elle est vraiment, est à la fois plus simple
+ * et impossible à désynchroniser.
+ *
+ * Le `WHERE` n'est pas une coquetterie : sans lui, chaque rafraîchissement réécrirait 76 899 lignes
+ * pour n'en changer aucune, et le journal de la base grossirait d'autant à chaque passe.
+ */
+export function rangerLesPays(): number {
+  const rang = expressionDuRang();
+  const change = db.prepare(`UPDATE live_channels SET rang_pays = ${rang} WHERE rang_pays <> (${rang})`).run();
+  setSetting("live.rangs", empreinteDesRangs());
+  return Number(change.changes ?? 0);
+}
+
+/**
+ * Rattraper les rangs quand la table des pays a changé de forme.
+ *
+ * Ajouter un pays décale tous ceux qui le suivent : les rangs en base deviennent faux, et la grille
+ * mélangerait les pays jusqu'au prochain rafraîchissement complet — c'est-à-dire des minutes plus
+ * tard, et seulement si quelqu'un en demande un. La comparaison d'empreintes coûte une lecture de
+ * réglage au démarrage ; elle ne recalcule que le jour d'une mise à jour.
+ */
+export function rattraperLesRangs(): number {
+  if (getSetting("live.rangs") === empreinteDesRangs()) return 0;
+  return rangerLesPays();
+}
+
+/** La forme de numérotation en vigueur. La changer déclenche une renumérotation, une fois. */
+const NUMEROTATION = "tnt-2025-canal-v1";
+
+/** Le dernier numéro du plan national. Ce qui suit commence après lui, jamais dedans. */
+const DERNIER_NUMERO_TNT = 26;
+
+/**
+ * Renuméroter dans l'ordre où la grille se lit — la France d'abord, puis l'alphabet des pays.
+ *
+ * **Le numéro est le geste principal d'un téléviseur**, et il ne correspondait plus à rien. Les
+ * numéros avaient été attribués dans l'ordre alphabétique mondial, avant que la grille ne se range
+ * par pays : mesuré sur le corpus, la chaîne 2 était « 1+1 Ukraina », la 3 « 24 Horas », et la
+ * première française arrivait au 47. Composer « 2 » sur la télécommande tombait sur une chaîne
+ * ukrainienne, et rien à l'écran ne l'expliquait.
+ *
+ * **Une seule fois, et jamais à chaque rafraîchissement.** La promesse tient toujours : un numéro
+ * attribué ne bouge plus. Ce qui bouge ici, c'est la convention elle-même, et une convention se
+ * change une fois — d'où l'empreinte rangée en réglage, qui empêche la passe de se répéter. Les
+ * numéros posés à la main sont préservés et leurs valeurs retirées du tirage : ce sont des décisions,
+ * pas des attributions.
+ *
+ * Les chaînes sans adresse perdent leur numéro et le retrouveront en réapparaissant : elles ne sont
+ * pas dans la grille, et leur garder une place reviendrait à décaler tout le monde pour des absentes.
+ */
+export function renumeroterDansLOrdreDAffichage(): number {
+  const manuels = new Set<number>();
+  for (const ligne of db.prepare("SELECT numero_manuel FROM live_channels WHERE numero_manuel IS NOT NULL")
+    .all() as unknown as Array<{ numero_manuel: number }>) {
+    manuels.add(ligne.numero_manuel);
+  }
+  const aRanger = db.prepare(`SELECT id FROM live_channels WHERE adresses > 0 AND numero_manuel IS NULL
+    ORDER BY rang_pays, pays, nom_recherche`).all() as unknown as Array<{ id: string }>;
+
+  /*
+   * La TNT d'abord, l'alphabet ensuite.
+   *
+   * Ranger la France en tête ne suffisait pas : la chaîne 1 s'appelait « 20 Minutes TV ». Personne ne
+   * compose un numéro au hasard — on tape 1 pour TF1, 6 pour M6 —, et c'est exactement le geste que la
+   * saisie à la télécommande sert. Le corpus donne souvent plusieurs chaînes du même nom : on retient
+   * **celle qui a le plus d'adresses**, qui est presque toujours la vraie, et de loin la plus jouable.
+   */
+  const parNom = db.prepare(`SELECT id FROM live_channels WHERE nom_compact = ? AND adresses > 0
+    AND numero_manuel IS NULL ORDER BY adresses DESC LIMIT 1`);
+  const tnt = new Map<string, number>();
+  for (const [nom, numero] of numerosTnt()) {
+    if (manuels.has(numero) || [...tnt.values()].includes(numero)) continue;
+    const trouvee = parNom.get(nom) as unknown as { id: string } | undefined;
+    if (trouvee && !tnt.has(trouvee.id)) tnt.set(trouvee.id, numero);
+  }
+  /*
+   * Le bouquet Canal+ juste après la TNT, à la demande.
+   *
+   * Canal+ a quitté la TNT — le 4 est à France 4 — mais ses chaînes restent celles qu'on cherche
+   * juste après les vingt-six premières, et pas noyées au milieu de quatre-vingt-dix mille. Elles
+   * prennent donc le bloc suivant, entre elles dans l'ordre alphabétique, la chaîne mère en tête.
+   *
+   * Le préfixe est comparé sur le nom **compact**, ponctuation gardée : `canal+` ne ramasse pas les
+   * mille « Canal 8 » hispanophones. Et le filtre sur le pays fait le reste — depuis que le suffixe
+   * de nom est lu, « Canal+ Family Poland-PL » est polonaise et n'entre plus dans le bloc français.
+   */
+  const bouquet = db.prepare(`SELECT id FROM live_channels
+    WHERE adresses > 0 AND numero_manuel IS NULL AND pays = 'fr' AND nom_compact LIKE 'canal+%'
+    ORDER BY length(nom_recherche), nom_recherche`).all() as unknown as Array<{ id: string }>;
+  const rangsBouquet = new Map<string, number>();
+  let apresTnt = DERNIER_NUMERO_TNT + 1;
+  for (const chaine of bouquet) {
+    if (tnt.has(chaine.id)) continue;
+    while (manuels.has(apresTnt)) apresTnt += 1;
+    rangsBouquet.set(chaine.id, apresTnt);
+    apresTnt += 1;
+  }
+
+  /*
+   * Les vingt-six premiers numéros restent à la TNT, même absente du corpus.
+   *
+   * Sans cela, le remplissage alphabétique venait boucher les trous : le 8 est allé à « 20 Minutes
+   * TV » faute de LCP dans les listes. Un numéro de TNT vide vaut mieux qu'un numéro de TNT qui ment.
+   */
+  const reserves = new Set<number>([...manuels, ...tnt.values(), ...rangsBouquet.values()]);
+
+  const pose = db.prepare("UPDATE live_channels SET numero = ? WHERE id = ?");
+  let curseur = apresTnt;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    /*
+     * Tout est vidé avant d'être reposé, et c'est obligatoire : `numero` est unique, et réécrire
+     * ligne à ligne ferait entrer en collision la valeur qu'on pose et celle qu'on n'a pas encore
+     * retirée. Une passe pour libérer, une passe pour attribuer.
+     */
+    db.exec("UPDATE live_channels SET numero = NULL WHERE numero_manuel IS NULL");
+    db.exec("UPDATE live_channels SET numero = numero_manuel WHERE numero_manuel IS NOT NULL");
+    for (const [id, numero] of tnt) pose.run(numero, id);
+    for (const [id, numero] of rangsBouquet) pose.run(numero, id);
+    for (const chaine of aRanger) {
+      if (tnt.has(chaine.id) || rangsBouquet.has(chaine.id)) continue;
+      while (reserves.has(curseur)) curseur += 1;
+      pose.run(curseur, chaine.id);
+      curseur += 1;
+    }
+    setSetting("live.numerotation", NUMEROTATION);
+    db.exec("COMMIT");
+  } catch (cause) {
+    db.exec("ROLLBACK");
+    throw cause;
+  }
+  return aRanger.length;
+}
+
+/**
+ * Renuméroter si la convention a changé depuis la dernière fois — et sinon, ne rien faire.
+ *
+ * La lecture d'un réglage suffit à répondre « rien à faire ». La passe elle-même ne tourne qu'une
+ * fois, au premier démarrage suivant la mise à jour, et écrit alors autant de lignes qu'il y a de
+ * chaînes joignables. C'est cher une fois ; ce serait insupportable à chaque rafraîchissement, et
+ * c'est bien pourquoi ça n'y est pas.
+ */
+export function renumeroterSiNecessaire(): number {
+  if (getSetting("live.numerotation") === NUMEROTATION) return 0;
+  // Les rangs d'abord : renuméroter dans un ordre qui n'est pas encore calculé donnerait l'ancien.
+  rattraperLesRangs();
+  return renumeroterDansLOrdreDAffichage();
 }
 
 /**
@@ -655,6 +852,15 @@ export function listerChaines(requete: RequeteChaines = {}): PageChaines {
    * fiable » est ce qu'on veut dire, alors qu'exiger que **toutes** le soient écarterait les chaînes
    * les mieux servies — celles justement qu'on reprend partout, y compris dans de mauvaises listes.
    */
+  /*
+   * Ici l'`EXISTS` reste, et c'est une mesure qui l'a décidé.
+   *
+   * Le masque binaire posé pour les facettes semblait devoir servir aussi à la grille — une colonne
+   * plutôt qu'une sous-requête. Mesuré sur les 92 204 chaînes du corpus : **111 ms contre 0,2 ms**.
+   * L'`EXISTS` laisse SQLite parcourir l'index de la grille dans l'ordre et s'arrêter à la
+   * soixantième ligne, en vérifiant chaque candidate au passage ; le masque, absent de cet index,
+   * l'oblige à tout regarder. Le même raccourci est excellent pour compter et mauvais pour paginer.
+   */
   if (requete.fiabilites?.length) {
     conditions.push(`EXISTS (SELECT 1 FROM live_channel_urls u JOIN live_playlists p ON p.id = u.playlist_id
       WHERE u.channel_id = c.id AND p.classement IN (${requete.fiabilites.map(() => "?").join(", ")}))`);
@@ -687,7 +893,7 @@ export function listerChaines(requete: RequeteChaines = {}): PageChaines {
   const tri = saisie
     ? `CASE WHEN c.nom_recherche = ? THEN 0 WHEN c.nom_recherche LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END,
        c.adresses DESC, length(c.nom_recherche), c.numero`
-    : "c.numero";
+    : "c.rang_pays, c.pays, c.numero";
   const parametresTri: unknown[] = saisie
     ? [normaliseForSearch(saisie), `${normaliseForSearch(saisie).replaceAll("%", "\\%").replaceAll("_", "\\_")}%`]
     : [];
@@ -753,8 +959,22 @@ export function chaineDetaillee(id: string): ChaineDirectDetaillee | null {
   const chaine = db.prepare(`SELECT id, nom, numero, logo, groupe, etat, adresses FROM live_channels WHERE id = ?`)
     .get(id) as unknown as ChaineDirect | undefined;
   if (!chaine) return null;
-  const sources = db.prepare(`SELECT url, succes, echecs FROM live_channel_urls WHERE channel_id = ?
-    ORDER BY echecs ASC, succes DESC, url`).all(id) as unknown as SourceChaine[];
+  /*
+   * L'ordre des sources, du meilleur au pire, et dans cet ordre de priorité :
+   *
+   * 1. **les échecs**, parce qu'une source qui ne marche pas n'a pas de qualité ;
+   * 2. **la définition**, mesurée dans le manifeste — c'est elle qui distingue deux sources vivantes,
+   *    et le client n'a aucun moyen de la connaître lui-même : sans en-tête CORS, un navigateur ne
+   *    peut pas lire un manifeste ;
+   * 3. **le débit**, qui départage deux variantes de même hauteur ;
+   * 4. **les succès**, ce qui a effectivement marché quand on regardait.
+   *
+   * `DESC` range les inconnues en dernier sous SQLite : une adresse jamais sondée passe donc derrière
+   * une adresse mesurée, ce qui est exactement le comportement voulu — on préfère ce qu'on sait.
+   */
+  const sources = db.prepare(`SELECT url, succes, echecs, hauteur, debit FROM live_channel_urls
+    WHERE channel_id = ?
+    ORDER BY echecs ASC, hauteur DESC, debit DESC, succes DESC, url`).all(id) as unknown as SourceChaine[];
   return { ...chaine, sources };
 }
 
@@ -884,19 +1104,63 @@ export function etatClient(): { disponible: boolean; chaines: number; rafraichie
  * Les chaînes dont on ignore le pays n'y figurent pas, et n'en sont pas exclues pour autant : elles
  * restent visibles tant qu'aucun pays n'est coché.
  */
-export function listerPays(): Array<{ code: string; nom: string; chaines: number }> {
-  const lignes = db.prepare(`SELECT pays AS code, COUNT(*) AS chaines FROM live_channels
-    WHERE adresses > 0 AND pays IS NOT NULL GROUP BY pays ORDER BY chaines DESC LIMIT 60`)
-    .all() as unknown as Array<{ code: string; chaines: number }>;
+/**
+ * Les critères qui pèsent sur une facette — tous sauf elle-même.
+ *
+ * Une facette compte ce qu'on obtiendrait **en la cochant en plus de ce qui l'est déjà**. S'y inclure
+ * elle-même n'aurait aucun sens : cocher France ferait alors afficher « France 1 355 » et rien d'autre.
+ */
+export interface CriteresFacette {
+  listes?: string[];
+  pays?: string[];
+  fiabilites?: string[];
+  q?: string;
+}
+
+/**
+ * Les pays présents, comptés **sous les autres filtres actifs**.
+ *
+ * Ils étaient comptés sur le corpus entier : on cochait une playlist, l'écran promettait toujours
+ * « France 1 355 », on cliquait, et on tombait sur zéro. Rien ne s'était annulé — ces 1 355 chaînes
+ * existent, elles ne sont simplement pas dans cette liste-là —, mais l'écran avait menti. Et comme
+ * **74 % des chaînes n'ont aucun pays**, ce vide était le cas courant.
+ *
+ * Le compte part des **adresses** quand une liste est cochée, et non des chaînes : mesuré sur le
+ * corpus, 18,3 ms contre 163,6 ms pour la forme qui parcourait toutes les chaînes — et même moins que
+ * les 24,5 ms de l'ancien compte global, qui, lui, les parcourait toutes sans exception.
+ */
+export function listerPays(criteres: CriteresFacette = {}): Array<{ code: string; nom: string; chaines: number }> {
+  const conditions = ["c.adresses > 0", "c.pays IS NOT NULL"];
+  const params: unknown[] = [];
+  if (criteres.fiabilites?.length) {
+    conditions.push("(c.classements & ?) <> 0");
+    params.push(masqueDesClassements(criteres.fiabilites));
+  }
+  const compact = criteres.q?.trim() ? compacterNom(criteres.q) : "";
+  if (compact) {
+    conditions.push("c.nom_compact LIKE ? ESCAPE '\'");
+    params.push(`%${compact.replaceAll("\\", "\\\\").replaceAll("%", "\%").replaceAll("_", "\_")}%`);
+  }
+
+  const requete = criteres.listes?.length
+    ? `SELECT c.pays AS code, COUNT(DISTINCT c.id) AS chaines
+       FROM live_channel_urls u JOIN live_channels c ON c.id = u.channel_id
+       WHERE u.playlist_id IN (${criteres.listes.map(() => "?").join(", ")}) AND ${conditions.join(" AND ")}
+       GROUP BY c.pays ORDER BY chaines DESC LIMIT 60`
+    : `SELECT c.pays AS code, COUNT(*) AS chaines FROM live_channels c
+       WHERE ${conditions.join(" AND ")} GROUP BY c.pays ORDER BY chaines DESC LIMIT 60`;
+  const tous = criteres.listes?.length ? [...criteres.listes, ...params] : params;
+  const lignes = db.prepare(requete).all(...tous as never[]) as unknown as Array<{ code: string; chaines: number }>;
   return lignes.map((ligne) => ({ ...ligne, nom: nomDuPays(ligne.code) }));
 }
 
 /**
  * Les fiabilités présentes, avec le nombre de listes de chacune.
  *
- * C'est une mesure, pas un avis : le script qui produit `m3u.json` sonde tous les flux de chaque liste
- * et range le résultat en quatre bandes — 75 % et plus, 50 à 74 %, 25 à 49 %, et le reste. Pouvoir
- * s'en tenir à la première, c'est écarter d'un geste les listes où une chaîne sur deux ne répond pas.
+ * C'est une mesure, pas un avis : le script qui produit `m3u.json` sonde toutes les adresses de
+ * chaque liste et range le résultat en quatre bandes — 75 % de chaînes joignables et plus, 50 à 74 %,
+ * 25 à 49 %, moins de 25 %. Pouvoir s'en tenir à la première, c'est écarter d'un geste les listes où
+ * une chaîne sur deux ne répond pas.
  */
 export function listerFiabilites(): Array<{ classement: ClassementListe; listes: number }> {
   return db.prepare(`SELECT p.classement, COUNT(*) AS listes FROM live_playlists p
@@ -906,11 +1170,41 @@ export function listerFiabilites(): Array<{ classement: ClassementListe; listes:
 }
 
 /** Les listes que l'on regarde, telles qu'un client les propose à cocher — comme les genres. */
-export function listerListesClient(): Array<{ id: string; nom: string; classement: ClassementListe; chaines: number }> {
-  return db.prepare(`SELECT p.id, p.nom, p.classement, p.entrees AS chaines FROM live_playlists p
-    JOIN live_sources s ON s.id = p.source_id
-    WHERE p.cochee = 1 AND s.activee = 1 AND p.entrees > 0 ORDER BY p.nom COLLATE NOCASE`)
-    .all() as unknown as Array<{ id: string; nom: string; classement: ClassementListe; chaines: number }>;
+export function listerListesClient(criteres: CriteresFacette = {}): Array<{ id: string; nom: string; classement: ClassementListe; chaines: number }> {
+  const filtres: string[] = [];
+  const params: unknown[] = [];
+  if (criteres.pays?.length) {
+    filtres.push(`c.pays IN (${criteres.pays.map(() => "?").join(", ")})`);
+    params.push(...criteres.pays);
+  }
+  if (criteres.fiabilites?.length) {
+    filtres.push("(c.classements & ?) <> 0");
+    params.push(masqueDesClassements(criteres.fiabilites));
+  }
+  const compact = criteres.q?.trim() ? compacterNom(criteres.q) : "";
+  if (compact) {
+    filtres.push("c.nom_compact LIKE ? ESCAPE '\'");
+    params.push(`%${compact.replaceAll("\\", "\\\\").replaceAll("%", "\%").replaceAll("_", "\_")}%`);
+  }
+
+  /*
+   * Sans autre filtre, le compte reste celui que la liste déclare — il est déjà rangé, et le
+   * recalculer coûterait une jointure sur 118 335 adresses pour la même réponse.
+   */
+  if (!filtres.length) {
+    return db.prepare(`SELECT p.id, p.nom, p.classement, p.entrees AS chaines FROM live_playlists p
+      JOIN live_sources s ON s.id = p.source_id
+      WHERE p.cochee = 1 AND s.activee = 1 AND p.entrees > 0 ORDER BY p.nom COLLATE NOCASE`)
+      .all() as unknown as Array<{ id: string; nom: string; classement: ClassementListe; chaines: number }>;
+  }
+  // Mesuré à 8,3 ms sous un pays : la jointure part des adresses, qui portent déjà l'index qu'il faut.
+  return db.prepare(`SELECT p.id, p.nom, p.classement, COUNT(DISTINCT c.id) AS chaines
+    FROM live_playlists p JOIN live_sources s ON s.id = p.source_id
+    JOIN live_channel_urls u ON u.playlist_id = p.id
+    JOIN live_channels c ON c.id = u.channel_id
+    WHERE p.cochee = 1 AND s.activee = 1 AND c.adresses > 0 AND ${filtres.join(" AND ")}
+    GROUP BY p.id ORDER BY p.nom COLLATE NOCASE`)
+    .all(...params as never[]) as unknown as Array<{ id: string; nom: string; classement: ClassementListe; chaines: number }>;
 }
 
 /* ------------------------------------------------------------------------ */

@@ -1106,6 +1106,15 @@ export interface SourceChaine {
   succes: number;
   echecs: number;
   /**
+   * La hauteur de la meilleure variante déclarée par le manifeste, en pixels.
+   *
+   * `null` quand l'adresse n'a pas encore été sondée, ou quand elle ne déclare pas de variantes. Elle
+   * sert à choisir entre deux sources vivantes : c'est le seul écart que le repli ne sait pas voir.
+   */
+  hauteur?: number | null;
+  /** Le débit de cette variante, en bits par seconde. */
+  debit?: number | null;
+  /**
    * La même adresse, mais relayée par le serveur.
    *
    * Elle n'est pas le chemin normal : un navigateur essaie l'adresse directe d'abord, et n'y revient

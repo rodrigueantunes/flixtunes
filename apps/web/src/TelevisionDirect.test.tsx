@@ -112,9 +112,9 @@ describe("le réglage de la télévision en direct", () => {
     await waitFor(() => expect((document.querySelector("input[type=password]") as HTMLInputElement).value).toBe(""));
   });
 
-  it("propose les chaînes gratuites, qui ne demandent aucun réglage", async () => {
+  it("propose des chaînes qui ne demandent aucun réglage", async () => {
     render(<TelevisionDirect />);
-    fireEvent.click(await screen.findByRole("button", { name: "Ajouter les chaînes gratuites" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Ajouter les chaînes" }));
     await waitFor(() => expect(apiMock.activerFast).toHaveBeenCalled());
   });
 
