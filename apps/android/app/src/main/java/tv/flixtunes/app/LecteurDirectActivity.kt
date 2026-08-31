@@ -622,7 +622,23 @@ class LecteurDirectActivity : ComponentActivity() {
         }
         Box(Modifier.fillMaxSize().background(Color.Black)) {
             AndroidView(
-                factory = { PlayerView(contexte).apply { useController = false; player = lecteur } },
+                /*
+                 * `keepScreenOn` : le téléviseur s'endormait pendant qu'on regardait.
+                 *
+                 * Android ne déduit pas d'une vidéo qui joue qu'il faut garder l'écran allumé — il
+                 * faut le lui dire, et le lecteur de la médiathèque le fait depuis toujours. Celui
+                 * du direct ne le faisait pas : rien ne touchait la télécommande pendant qu'une
+                 * chaîne passait, la minuterie d'inactivité arrivait au bout, et l'écran s'éteignait
+                 * au milieu d'une émission. C'est le cas d'usage le plus normal qui soit, et
+                 * précisément celui qu'un essai de dix minutes au bureau ne rencontre jamais.
+                 */
+                factory = {
+                    PlayerView(contexte).apply {
+                        useController = false
+                        keepScreenOn = true
+                        player = lecteur
+                    }
+                },
                 modifier = Modifier.fillMaxSize(),
             )
             /*

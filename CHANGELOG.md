@@ -1,5 +1,17 @@
 # Journal des versions
 
+## 0.5.7.r5 — le téléviseur s'endormait pendant qu'on regardait
+
+- **Une seule ligne manquait, et c'est la plus visible de toutes.** Android ne déduit pas d'une vidéo
+  qui joue qu'il faut garder l'écran allumé : il faut le lui dire. Le lecteur de la médiathèque le
+  fait depuis toujours — `keepScreenOn = true` sur sa vue —, celui du direct ne l'a **jamais** fait.
+  Rien ne touchant la télécommande pendant qu'une chaîne passe, la minuterie d'inactivité arrivait au
+  bout et l'écran s'éteignait au milieu d'une émission.
+- **C'est le cas d'usage le plus normal qui soit**, et précisément celui qu'aucun de mes essais ne
+  pouvait rencontrer : un lecteur qu'on ouvre trente secondes pour vérifier une correction ne dort
+  jamais. Il a fallu une soirée devant un vrai téléviseur pour qu'il se voie.
+- 876 tests serveur, 271 tests Web, le Kotlin compile, lint passe.
+
 ## 0.5.7.r4 — ce que le téléviseur a montré
 
 *Cinq retours d'un essai sur téléviseur, et deux défauts trouvés en les corrigeant. Aucun ne se voyait
