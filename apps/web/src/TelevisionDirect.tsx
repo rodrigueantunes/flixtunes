@@ -139,7 +139,7 @@ export function TelevisionDirect() {
   if (!parametres || !etat) return null;
 
   return (
-    <section className="expert-controls" aria-labelledby="live-title">
+    <section className="expert-controls live-reglages" aria-labelledby="live-title">
       <div className="scan-center-heading">
         <div><span className="eyebrow">Télévision en direct</span><h3 id="live-title">Chaînes en direct</h3></div>
         <small>{etat.configure ? `${nombre(etat.chaines)} chaîne${etat.chaines > 1 ? "s" : ""}` : "Aucune source réglée"}</small>

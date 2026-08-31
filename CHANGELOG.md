@@ -1,5 +1,43 @@
 # Journal des versions
 
+## 0.5.7.r6 — la télécommande, la source qui hoquette, et le cadre oublié
+
+*Six retours d'un second essai au salon. Deux d'entre eux étaient des fonctions inaccessibles plutôt
+que des défauts d'affichage : elles existaient, on ne pouvait simplement pas les atteindre.*
+
+- **On ne pouvait pas changer de source du tout.** La liste n'était atteignable que par la touche
+  **verte** — convention des boîtiers, absente des télécommandes Android TV. La fonction existait
+  depuis la r3 et personne ne pouvait l'ouvrir. **La croix haut/bas l'ouvre et la parcourt
+  maintenant, et ne change plus de chaîne** : P+/P−, les touches de page et les chiffres s'en
+  chargeaient déjà, à trois endroits pour un seul geste, pendant que le choix de source n'en avait
+  aucun.
+- **Une source qui hoquette est maintenant abandonnée.** Reculer de seize secondes après trois
+  blocages ne suffisait pas — relevé sur TF1, dont la première adresse sautait de partout alors
+  qu'elle répondait très bien. Une seconde série de blocages fait donc passer à la suivante, en le
+  disant. Elle n'est **pas** rapportée comme morte : elle ne l'est pas, et inscrire un échec pour une
+  source qui répond fausserait le classement avec une opinion.
+- **Le bouton lecture/pause basculait tout seul.** Il suivait `isPlaying`, qui tombe à faux à chaque
+  rechargement du tampon : l'icône changeait plusieurs fois par minute sans que personne n'ait touché
+  à rien, et il fallait appuyer deux fois pour repartir. Il suit désormais `playWhenReady` — ce qu'on
+  a demandé au lecteur, et non ce qu'il est en train de faire.
+- **L'image se coupait au bout d'un moment, l'application restant en pause derrière.** Il n'y avait
+  que la mise en pause à l'arrière-plan, jamais la reprise : une veille du téléviseur, une
+  notification, un dialogue du système arrêtaient la chaîne et rien ne la relançait. Elle repart au
+  retour au premier plan, **au bord du direct** — reprendre où l'on s'était arrêté ferait démarrer
+  avec le retard de toute l'absence.
+- **Les barres du système restaient sur l'image sur téléphone.** Le lecteur de la médiathèque les
+  masque depuis toujours ; celui du direct ne le faisait pas. Même fonction, même appel : l'heure et
+  les trois boutons ne se posent plus sur la chaîne.
+- **La barre de progression restait collée à gauche.** Elle se calculait depuis `currentPosition`, qui
+  se compte à partir du début de la période et non de la fenêtre glissante : sur les flux à longue
+  fenêtre elle ne bougeait jamais. Elle se lit maintenant du **retard sur le direct**, qui est déjà ce
+  qu'affiche le « − 0:31 » à côté d'elle.
+- **Le cadre oublié.** La section « Télévision en direct » des réglages était posée à nu contre les
+  bords, quand les fournisseurs de métadonnées et le diagnostic sont des cartes rentrées de 1,5 rem :
+  l'écran paraissait dépareillé à l'endroit exact où arrivait la nouveauté, et ses boutons, sans cadre
+  autour, plus anciens que ceux d'à côté. Elle reprend le cadre de sa voisine, tel quel.
+- 876 tests serveur, 271 tests Web, le Kotlin compile, lint passe.
+
 ## 0.5.7.r5 — le téléviseur s'endormait pendant qu'on regardait
 
 - **Une seule ligne manquait, et c'est la plus visible de toutes.** Android ne déduit pas d'une vidéo

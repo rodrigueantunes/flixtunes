@@ -319,10 +319,33 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
             if (maintenant - dernierGeste.current < 4_000) return;
             blocages.current = [...blocages.current, maintenant]
               .filter((instant) => maintenant - instant < MEMOIRE_BLOCAGES_MS);
-            if (blocages.current.length >= BLOCAGES_AVANT_RECUL && hls.config.liveSyncDurationCount < 5) {
+            if (blocages.current.length < BLOCAGES_AVANT_RECUL) return;
+            blocages.current = [];
+            if (hls.config.liveSyncDurationCount < 5) {
+              // Premier avertissement : on recule, on ne change rien d'autre.
               hls.config.liveSyncDurationCount = 5;
-              blocages.current = [];
               setSecurite(2 * Math.round(hls.levels[hls.currentLevel]?.details?.targetduration ?? SEGMENT_TYPE_S));
+              return;
+            }
+            /*
+             * **Deuxième série de blocages : la source est en cause, pas la marge.**
+             *
+             * Reculer de deux segments n'a pas suffi — relevé sur TF1, dont la première adresse
+             * sautait de partout alors qu'elle répondait très bien. Une source qui hoquette encore
+             * après qu'on lui a donné toute la marge disponible ne se rattrapera pas ; la suivante,
+             * elle, est déjà connue et n'a pas été essayée.
+             *
+             * Elle n'est **pas** rapportée comme morte : elle ne l'est pas. Inscrire un échec pour une
+             * source qui répond fausserait le classement avec une opinion.
+             */
+            if (rangRef.current + 1 < Math.min(adresses.length, REPLIS)) {
+              const prochain = rangRef.current + 1;
+              essai.current = null;
+              rangRef.current = prochain;
+              setSecurite(0);
+              setParRelais(false);
+              setMessage(`Source instable, passage à la ${prochain + 1}…`);
+              setRang(prochain);
             }
             return;
           }

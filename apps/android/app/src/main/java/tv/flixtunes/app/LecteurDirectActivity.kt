@@ -238,15 +238,36 @@ class LecteurDirectActivity : ComponentActivity() {
                     if (maintenant - dernierGeste < REPIT_APRES_GESTE_MS) return
                     blocages = blocages.filter { maintenant - it < MEMOIRE_BLOCAGES_MS }.toMutableList()
                     blocages.add(maintenant)
-                    if (blocages.size >= BLOCAGES_AVANT_RECUL && securite == 0) {
+                    if (blocages.size < BLOCAGES_AVANT_RECUL) return
+                    blocages.clear()
+                    if (securite == 0) {
+                        // Premier avertissement : on recule, on ne change rien d'autre.
                         securite = RECUL_S
-                        blocages.clear()
                         jouerRang(reprendre = false)
+                        return
+                    }
+                    /*
+                     * **Deuxième série de blocages : la source est en cause, pas la marge.**
+                     *
+                     * Reculer de seize secondes n'a pas suffi — relevé sur TF1, dont la première
+                     * adresse sautait de partout alors qu'elle répondait très bien. Une source qui
+                     * hoquette encore après qu'on lui a donné toute la marge disponible ne se
+                     * rattrapera pas ; la suivante, elle, est déjà connue et n'a pas été essayée.
+                     *
+                     * Elle n'est **pas** rapportée comme morte : elle ne l'est pas. Inscrire un échec
+                     * pour une source qui répond fausserait le classement avec une opinion.
+                     */
+                    if (rang + 1 < adresses.size) {
+                        message = getString(R.string.direct_source_instable, rang + 2)
+                        essai = null
+                        reparations = 0
+                        rang += 1
+                        securite = 0
+                        jouerRang()
                     }
                 }
 
                 override fun onIsPlayingChanged(joue: Boolean) {
-                    enPause = !joue
                     if (!joue) return
                     /*
                      * L'accalmie commence quand l'image arrive, pas à la première touche.
@@ -263,6 +284,15 @@ class LecteurDirectActivity : ComponentActivity() {
             })
         }
 
+        /*
+         * Les barres du système n'ont rien à faire par-dessus une chaîne.
+         *
+         * Le lecteur de la médiathèque les masque depuis toujours ; celui du direct ne le faisait pas,
+         * et sur téléphone l'heure, la batterie et les trois boutons restaient posés sur l'image.
+         * `masquerBarresSysteme` est l'endroit unique où ce réglage vit — le recopier ici l'aurait
+         * fait diverger à la première retouche.
+         */
+        masquerBarresSysteme()
         onBackPressedDispatcher.addCallback(this, fermerLeChoix)
         setContent { ThemeFlixTunes { Ecran() } }
         ouvrir(chaineId)
@@ -470,10 +500,22 @@ class LecteurDirectActivity : ComponentActivity() {
             precedente?.let { ouvrir(it) }
             return true
         }
-        if (code == KeyEvent.KEYCODE_CHANNEL_UP || code == KeyEvent.KEYCODE_PAGE_UP ||
-            code == KeyEvent.KEYCODE_DPAD_UP) { voisine(1); return true }
-        if (code == KeyEvent.KEYCODE_CHANNEL_DOWN || code == KeyEvent.KEYCODE_PAGE_DOWN ||
-            code == KeyEvent.KEYCODE_DPAD_DOWN) { voisine(-1); return true }
+        /*
+         * **La croix haut/bas navigue, elle ne change plus de chaîne.**
+         *
+         * Elle faisait P+/P− depuis la r2, faute de touche de chaîne sur beaucoup de boîtiers. Mais
+         * la liste des sources, elle, n'était atteignable que par la touche **verte** — que les
+         * télécommandes Android TV n'ont pas. Le choix de source était donc inaccessible sur le seul
+         * appareil où il compte vraiment, pendant que deux autres touches faisaient déjà le travail
+         * du changement de chaîne. La croix ouvre et parcourt la liste ; P+/P− et les chiffres
+         * changent de chaîne.
+         */
+        if (code == KeyEvent.KEYCODE_CHANNEL_UP || code == KeyEvent.KEYCODE_PAGE_UP) { voisine(1); return true }
+        if (code == KeyEvent.KEYCODE_CHANNEL_DOWN || code == KeyEvent.KEYCODE_PAGE_DOWN) { voisine(-1); return true }
+        if (code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN) {
+            if (adresses.size > 1) { choixIndex = rang; montrerLesSources(true) }
+            return true
+        }
         // Reculer et avancer : la croix horizontale et les touches de transport disent la même chose.
         if (code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_MEDIA_REWIND) { sauter(-SAUT_MS); return true }
         if (code == KeyEvent.KEYCODE_DPAD_RIGHT || code == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD) { sauter(SAUT_MS); return true }
@@ -602,7 +644,15 @@ class LecteurDirectActivity : ComponentActivity() {
                     retardMs = if (decalage == androidx.media3.common.C.TIME_UNSET) {
                         (fenetreMs - positionMs).coerceAtLeast(0)
                     } else decalage
-                    enPause = !joueur.isPlaying
+                    /*
+                     * L'icône suit **l'intention**, pas l'état instantané.
+                     *
+                     * `isPlaying` tombe à faux à chaque rechargement du tampon : le bouton basculait
+                     * donc sur « lecture » plusieurs fois par minute alors que personne n'avait mis
+                     * en pause, et il fallait appuyer deux fois pour repartir. `playWhenReady` dit ce
+                     * qu'on a demandé au lecteur, et ne bouge que lorsqu'on le lui demande.
+                     */
+                    enPause = !joueur.playWhenReady
                     /*
                      * Sortir de la fenêtre par l'arrière : on rattrape avant que l'image ne se fige.
                      *
@@ -697,7 +747,19 @@ class LecteurDirectActivity : ComponentActivity() {
              */
             if (commandesVisibles) {
                 val fenetreUtile = fenetreMs > FENETRE_MINIMALE_MS
-                val avance = if (fenetreUtile) (positionMs.toFloat() / fenetreMs.toFloat()).coerceIn(0f, 1f) else 0f
+                /*
+                 * L'avancement se calcule depuis le **retard sur le direct**, et non depuis la
+                 * position dans la fenêtre.
+                 *
+                 * `currentPosition` se compte à partir du début de la période, qui n'est pas le début
+                 * de la fenêtre glissante : sur les flux à longue fenêtre, la barre restait collée à
+                 * gauche en permanence alors que l'image était bien au bord du direct. Le décalage,
+                 * lui, dit exactement ce qu'on veut montrer — de combien on est derrière —, et c'est
+                 * déjà lui qu'affiche le « − 0:31 » à côté.
+                 */
+                val avance = if (fenetreUtile) {
+                    ((fenetreMs - retardMs).toFloat() / fenetreMs.toFloat()).coerceIn(0f, 1f)
+                } else 0f
                 val auDirect = retardMs <= MARGE_DIRECT_MS
                 Row(
                     Modifier.align(Alignment.BottomCenter).fillMaxWidth()
@@ -806,15 +868,48 @@ class LecteurDirectActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Le plein écran se redemande à chaque retour de focus.
+     *
+     * Une notification, un changement d'application, un balayage depuis le bord : chacun ramène les
+     * barres, et rien ne les renvoie de lui-même. Le lecteur de la médiathèque fait exactement cela.
+     */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) masquerBarresSysteme()
+    }
+
     /** Un retard se lit en minutes et secondes, jamais en millisecondes. */
     private fun horodatage(ms: Long): String {
         val total = (ms / 1000.0).roundToInt().coerceAtLeast(0)
         return "%d:%02d".format(total / 60, total % 60)
     }
 
+    /**
+     * Mise en pause quand l'écran passe à l'arrière-plan, **reprise quand il revient**.
+     *
+     * Il n'y avait que la pause : une veille du téléviseur, une notification plein écran, un dialogue
+     * du système suffisaient à arrêter la chaîne, et rien ne la relançait — l'image se coupait au bout
+     * d'un moment et l'application restait en pause derrière, exactement ce qui a été relevé au salon.
+     * On note donc si l'on jouait, et on repart de là.
+     */
+    private var jouaitAvantArret = false
+
     override fun onStop() {
         super.onStop()
+        jouaitAvantArret = lecteur?.playWhenReady == true
         lecteur?.pause()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (jouaitAvantArret) {
+            jouaitAvantArret = false
+            // Rejoindre le bord : le flux a continué sans nous, reprendre où l'on s'était arrêté
+            // ferait démarrer avec le retard de toute l'absence.
+            lecteur?.seekToDefaultPosition()
+            lecteur?.play()
+        }
     }
 
     override fun onDestroy() {

@@ -427,6 +427,18 @@ h1, h2 { font-family: "Manrope", sans-serif; }
    — d'autant plus gênant que ce sont précisément les commandes qu'on cherche quand on agrandit. */
 .catalog-controls input, .catalog-controls select { min-height: 32px; }
 .catalog-controls input { min-width: min(260px, 55vw); }
+/*
+ * La télévision en direct prend le même cadre que ses voisines.
+ *
+ * Elle était posée à nu — `.expert-controls` n'a ni marge, ni bord, ni fond — pendant que les
+ * fournisseurs de métadonnées et le diagnostic sont des cartes rentrées de 1,5 rem. L'écran paraissait
+ * donc dépareillé à l'endroit exact où arrivait la nouveauté, et ses boutons, sans cadre autour, plus
+ * anciens que ceux d'à côté. Le cadre est repris tel quel de `.provider-setup` : deux blocs de même
+ * nature, même traitement.
+ */
+.live-reglages { margin: 1rem 1.5rem 0; padding: 1rem; border: 1px solid rgba(95, 161, 255, .24);
+  border-radius: 18px; background: rgba(12, 19, 36, .88); }
+.live-reglages > .scan-center-heading:first-child { margin-top: 0; }
 .diagnostics-panel { margin: .7rem 1.5rem 0; padding: .7rem 1rem; border-radius: var(--rayon-panneau); background: rgba(255,255,255,.035); }
 /*
  * Les réglages détaillés, qui n'avaient aucune mise en forme.

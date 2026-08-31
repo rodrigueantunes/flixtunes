@@ -225,6 +225,8 @@
   <string name="direct_source_definition">%1$dp</string>
   <string name="direct_source_debit">%1$dp · %2$s Mb/s</string>
   <string name="direct_source_inconnue">Non mesurée</string>
+  <!-- La source répond mais hoquette : on passe à la suivante en le disant, sans la déclarer morte. -->
+  <string name="direct_source_instable">Source instable, passage à la %1$d…</string>
   <string name="erreur_serveur_introuvable">Serveur FlixTunes introuvable</string>
   <string name="erreur_pin">Code PIN incorrect</string>
   <string name="erreur_session_expiree">Session du profil expirée, saisissez de nouveau le PIN</string>
