@@ -158,12 +158,16 @@ class LecteurDirectActivity : ComponentActivity() {
     /** Réparations tentées sur l'adresse en cours : une seule, après quoi la source est bien en cause. */
     private var reparations = 0
     /**
-     * Quand on a demandé quelque chose au lecteur pour la dernière fois.
+     * Jusqu'à quand on ne compte aucun blocage.
      *
-     * Ouvrir, sauter, reprendre : chacun de ces gestes recharge le tampon, et le compter comme un
-     * hoquet faisait reculer le lecteur alors que tout allait bien.
+     * Ouvrir, sauter, reprendre rechargent le tampon, et les compter comme des hoquets faisait
+     * reculer le lecteur alors que tout allait bien. Le recul lui-même reprépare le flux : le juger
+     * pendant qu'il se remplit reviendrait à le condamner pour le remède qu'on vient de lui donner.
      */
-    private var dernierGeste = 0L
+    private var silenceJusqua = 0L
+    /** Depuis quand on est sur cette source : on ne zappe pas une chaîne qui vient de démarrer. */
+    private var depuisSource = 0L
+    private var surveillanceBlocage: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -234,19 +238,40 @@ class LecteurDirectActivity : ComponentActivity() {
                      * flèches en deux minutes suffisaient à déclencher le recul. On ignore donc ce
                      * qui suit de près une action délibérée.
                      */
-                    if (etat != Player.STATE_BUFFERING || message != null) return
+                    if (etat != Player.STATE_BUFFERING) { surveillanceBlocage?.cancel(); return }
+                    if (message != null) return
+                    // Une image figée trop longtemps n'attend pas d'être comptée.
+                    surveillerLeBlocage()
                     val maintenant = System.currentTimeMillis()
-                    if (maintenant - dernierGeste < REPIT_APRES_GESTE_MS) return
+                    if (maintenant < silenceJusqua) return
+                    /*
+                     * **Les deux réactions n'ont pas le même prix, elles n'ont donc pas la même
+                     * patience.**
+                     *
+                     * Reculer ne coûte que du retard : c'est invisible, ça répare la plupart des
+                     * bégaiements, et ça doit donc arriver **vite** — trois rechargements suffisent,
+                     * rafale comprise. Changer de source coupe l'image : cela doit rester un dernier
+                     * mot, et se mériter.
+                     *
+                     * D'où deux comptages. Le premier prend tout ; le second n'accepte que des
+                     * incidents **espacés d'au moins dix secondes** — un mauvais passage de vingt
+                     * secondes produit six rechargements d'affilée, et les compter séparément
+                     * abandonnait une chaîne qui fonctionne pour une minute difficile.
+                     */
+                    if (securite == 0) {
+                        blocages = blocages.filter { maintenant - it < MEMOIRE_BLOCAGES_MS }.toMutableList()
+                        blocages.add(maintenant)
+                        if (blocages.size < BLOCAGES_AVANT_RECUL) return
+                        reagirALInstabilite()
+                        return
+                    }
+
+                    if (maintenant - (blocages.lastOrNull() ?: 0L) < INTERVALLE_MIN_BLOCAGE_MS) return
                     blocages = blocages.filter { maintenant - it < MEMOIRE_BLOCAGES_MS }.toMutableList()
                     blocages.add(maintenant)
                     if (blocages.size < BLOCAGES_AVANT_RECUL) return
-                    blocages.clear()
-                    if (securite == 0) {
-                        // Premier avertissement : on recule, on ne change rien d'autre.
-                        securite = RECUL_S
-                        jouerRang(reprendre = false)
-                        return
-                    }
+                    // Jamais avant une minute sur la source : le repli doit rester un dernier mot.
+                    if (maintenant - depuisSource < TEMPS_MIN_SUR_SOURCE_MS) return
                     /*
                      * **Deuxième série de blocages : la source est en cause, pas la marge.**
                      *
@@ -258,14 +283,7 @@ class LecteurDirectActivity : ComponentActivity() {
                      * Elle n'est **pas** rapportée comme morte : elle ne l'est pas. Inscrire un échec
                      * pour une source qui répond fausserait le classement avec une opinion.
                      */
-                    if (rang + 1 < adresses.size) {
-                        message = getString(R.string.direct_source_instable, rang + 2)
-                        essai = null
-                        reparations = 0
-                        rang += 1
-                        securite = 0
-                        jouerRang()
-                    }
+                    reagirALInstabilite()
                 }
 
                 override fun onIsPlayingChanged(joue: Boolean) {
@@ -380,7 +398,8 @@ class LecteurDirectActivity : ComponentActivity() {
         val source = adresses.getOrNull(rang) ?: run { echec = true; message = getString(R.string.direct_aucune_source); return }
         if (reprendre) essai = source
         // Préparer un flux remplit le tampon : c'est un geste, pas un hoquet.
-        dernierGeste = System.currentTimeMillis()
+        silenceJusqua = System.currentTimeMillis() + REPIT_APRES_GESTE_MS
+        depuisSource = System.currentTimeMillis()
         lecteur?.apply {
             /*
              * La cible de retard : trois segments derrière le bord, comme le veut HLS, plus la
@@ -579,7 +598,7 @@ class LecteurDirectActivity : ComponentActivity() {
      */
     private fun sauter(deltaMs: Long) {
         val joueur = lecteur ?: return
-        dernierGeste = System.currentTimeMillis()
+        silenceJusqua = System.currentTimeMillis() + REPIT_APRES_GESTE_MS
         val duree = joueur.duration
         if (duree <= 0) return
         joueur.seekTo(minOf(duree - 1_000, maxOf(2_000, joueur.currentPosition + deltaMs)))
@@ -588,7 +607,7 @@ class LecteurDirectActivity : ComponentActivity() {
 
     /** Revenir au bord du flux — la seule position qui mérite le mot « direct ». */
     private fun rejoindreDirect() {
-        dernierGeste = System.currentTimeMillis()
+        silenceJusqua = System.currentTimeMillis() + REPIT_APRES_GESTE_MS
         lecteur?.seekToDefaultPosition()
         lecteur?.play()
         reveiller()
@@ -604,7 +623,7 @@ class LecteurDirectActivity : ComponentActivity() {
      */
     private fun basculerPause() {
         val joueur = lecteur ?: return
-        dernierGeste = System.currentTimeMillis()
+        silenceJusqua = System.currentTimeMillis() + REPIT_APRES_GESTE_MS
         if (joueur.isPlaying) joueur.pause() else joueur.play()
         reveiller()
     }
@@ -626,6 +645,49 @@ class LecteurDirectActivity : ComponentActivity() {
         echec = false
         message = getString(R.string.direct_source_essai, index + 1, adresses.size)
         jouerRang()
+    }
+
+    /**
+     * Ce qu'on fait quand la source ne tient pas : reculer, puis changer.
+     *
+     * Un seul endroit décide, appelé par les deux chemins — les bégaiements comptés, et le blocage
+     * prolongé qui n'attend pas d'être compté.
+     */
+    private fun reagirALInstabilite() {
+        blocages.clear()
+        if (securite == 0) {
+            securite = RECUL_S
+            // Le recul reprépare le flux : le juger pendant qu'il se remplit reviendrait à le
+            // condamner pour le remède qu'on vient de lui donner.
+            silenceJusqua = System.currentTimeMillis() + REPIT_APRES_RECUL_MS
+            jouerRang(reprendre = false)
+            return
+        }
+        if (rang + 1 < adresses.size) {
+            message = getString(R.string.direct_source_instable, rang + 2)
+            essai = null
+            reparations = 0
+            rang += 1
+            securite = 0
+            jouerRang()
+        }
+    }
+
+    /**
+     * Le blocage **prolongé** : celui qui n'a pas à être compté.
+     *
+     * Bégayer et s'être arrêté ne sont pas la même chose. Une image qui hoquette se regarde encore, et
+     * abandonner la chaîne pour cela serait perdre ce qui marche ; une image figée depuis huit
+     * secondes n'est plus une image, et attendre le troisième incident espacé reviendrait à rester
+     * une minute devant un écran noir. Le compte patient garde les bégaiements ; ceci prend les arrêts.
+     */
+    private fun surveillerLeBlocage() {
+        surveillanceBlocage?.cancel()
+        surveillanceBlocage = lifecycleScope.launch {
+            delay(BLOCAGE_PROLONGE_MS)
+            val joueur = lecteur ?: return@launch
+            if (joueur.playbackState == Player.STATE_BUFFERING && joueur.playWhenReady) reagirALInstabilite()
+        }
     }
 
     /** La chaîne voisine, par numéro. P+ et P− d'un téléviseur. */
@@ -977,5 +1039,35 @@ class LecteurDirectActivity : ComponentActivity() {
          * Au-delà, un rechargement est bien un hoquet de la source.
          */
         private const val REPIT_APRES_GESTE_MS = 4_000L
+
+        /**
+         * Le répit accordé au recul de sécurité avant de le juger.
+         *
+         * Reculer reprépare le flux, qui se remplit pendant plusieurs secondes. Compter ces
+         * rechargements-là revenait à condamner la source pour le remède qu'on venait de lui donner.
+         */
+        private const val REPIT_APRES_RECUL_MS = 30_000L
+
+        /** Deux blocages plus rapprochés que cela sont le même incident, pas deux. */
+        private const val INTERVALLE_MIN_BLOCAGE_MS = 10_000L
+
+        /**
+         * Le temps minimal passé sur une source avant d'envisager la suivante.
+         *
+         * Sans lui, une minute difficile au démarrage suffisait à abandonner une chaîne qui marche.
+         * Avec l'espacement des incidents, il faut désormais **six blocages étalés sur au moins une
+         * minute et vingt secondes** pour changer de source : c'est un problème installé, plus une
+         * mauvaise passe.
+         */
+        private const val TEMPS_MIN_SUR_SOURCE_MS = 60_000L
+
+        /**
+         * Au-delà, l'image n'est plus une image : on n'attend pas d'avoir compté.
+         *
+         * Huit secondes couvrent le rechargement d'un segment de 8 s, qui est la médiane du corpus.
+         * En deçà on serait trop nerveux ; au-delà on regarderait un écran figé en se demandant si
+         * l'application est morte.
+         */
+        private const val BLOCAGE_PROLONGE_MS = 8_000L
     }
 }

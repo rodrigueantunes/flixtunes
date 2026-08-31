@@ -11,11 +11,22 @@ que des défauts d'affichage : elles existaient, on ne pouvait simplement pas le
   maintenant, et ne change plus de chaîne** : P+/P−, les touches de page et les chiffres s'en
   chargeaient déjà, à trois endroits pour un seul geste, pendant que le choix de source n'en avait
   aucun.
-- **Une source qui hoquette est maintenant abandonnée.** Reculer de seize secondes après trois
-  blocages ne suffisait pas — relevé sur TF1, dont la première adresse sautait de partout alors
-  qu'elle répondait très bien. Une seconde série de blocages fait donc passer à la suivante, en le
-  disant. Elle n'est **pas** rapportée comme morte : elle ne l'est pas, et inscrire un échec pour une
-  source qui répond fausserait le classement avec une opinion.
+- **Une source qui hoquette est maintenant abandonnée — mais pas n'importe quand.** Reculer de seize
+  secondes après trois blocages ne suffisait pas, relevé sur TF1 dont la première adresse sautait de
+  partout alors qu'elle répondait très bien. Une seconde série fait donc passer à la suivante. Elle
+  n'est **pas** rapportée comme morte : elle ne l'est pas, et inscrire un échec pour une source qui
+  répond fausserait le classement avec une opinion.
+- **Deux réactions, deux patiences — parce qu'elles n'ont pas le même prix.** Reculer ne coûte que du
+  retard : c'est invisible, ça répare la plupart des bégaiements, et cela reste **rapide** — trois
+  rechargements suffisent, rafale comprise. Changer de source coupe l'image : il faut désormais trois
+  incidents **espacés d'au moins dix secondes**, une minute passée sur la source, et le recul a trente
+  secondes pour faire ses preuves avant d'être jugé. Sans cet espacement, un mauvais passage de vingt
+  secondes produisait six rechargements d'affilée et faisait zapper une chaîne qui fonctionne.
+- **Et une image figée n'attend pas d'être comptée.** Bégayer et s'être arrêté ne sont pas la même
+  chose : une image qui hoquette se regarde encore, une image figée depuis **huit secondes** n'est
+  plus une image. Attendre le troisième incident espacé aurait voulu dire rester une minute devant un
+  écran noir. Le compte patient garde les bégaiements, ce chemin-là prend les arrêts — c'est ce qui
+  évite à la fois de perdre une chaîne qui marche et d'attendre devant une qui ne marche plus.
 - **Le bouton lecture/pause basculait tout seul.** Il suivait `isPlaying`, qui tombe à faux à chaque
   rechargement du tampon : l'icône changeait plusieurs fois par minute sans que personne n'ait touché
   à rien, et il fallait appuyer deux fois pour repartir. Il suit désormais `playWhenReady` — ce qu'on

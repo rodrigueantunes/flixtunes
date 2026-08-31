@@ -63,6 +63,30 @@ const REPOS_BARRE_MS = 3_500;
 const MEMOIRE_BLOCAGES_MS = 120_000;
 const BLOCAGES_AVANT_RECUL = 3;
 
+/**
+ * Ce qui empêche d'abandonner trop vite une chaîne qui fonctionne.
+ *
+ * Un mauvais passage de vingt secondes produit six rechargements d'affilée : les compter séparément
+ * faisait franchir les deux seuils en une fois. Deux blocages rapprochés sont donc le même incident ;
+ * le recul a trente secondes pour faire ses preuves avant d'être jugé ; et l'on ne change jamais de
+ * source dans la première minute. Il faut désormais **six incidents étalés sur au moins une minute et
+ * vingt secondes** — un problème installé, plus une mauvaise passe.
+ */
+const INTERVALLE_MIN_BLOCAGE_MS = 10_000;
+const REPIT_APRES_RECUL_MS = 30_000;
+const TEMPS_MIN_SUR_SOURCE_MS = 60_000;
+
+/**
+ * Au-delà, l'image n'est plus une image : on n'attend pas d'avoir compté.
+ *
+ * Bégayer et s'être arrêté ne sont pas la même chose. Une image qui hoquette se regarde encore, et
+ * abandonner la chaîne pour cela serait perdre ce qui marche ; une image figée depuis huit secondes
+ * n'est plus une image, et attendre le troisième incident espacé reviendrait à rester une minute
+ * devant un écran noir. Huit secondes couvrent le rechargement d'un segment, qui dure 8 s de médiane
+ * sur le corpus.
+ */
+const IMAGE_FIGEE_MS = 8_000;
+
 /** Au-delà de deux segments, une fenêtre mérite une barre. En deçà, elle ne promettrait rien. */
 const FENETRE_MINIMALE_S = 2 * SEGMENT_TYPE_S;
 
@@ -121,7 +145,9 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
    * Les compter revenait à se punir soi-même — trois flèches en deux minutes suffisaient à faire
    * reculer le lecteur alors que tout allait bien.
    */
-  const dernierGeste = useRef(0);
+  const silenceJusqua = useRef(0);
+  /** Depuis quand on est sur cette source : on ne zappe pas une chaîne qui vient de démarrer. */
+  const depuisSource = useRef(0);
 
   useEffect(() => {
     let annule = false;
@@ -159,6 +185,14 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
     })();
     return () => { annule = true; };
   }, [chaine.id]);
+
+  /**
+   * Ce qu'on fait quand la source ne tient pas : reculer, puis changer.
+   *
+   * Un seul endroit décide, appelé par les deux chemins — les bégaiements comptés, et l'image figée
+   * qui n'attend pas d'être comptée.
+   */
+  const reagirALInstabilite = useRef<() => void>(() => undefined);
 
   /** Une chaîne neuve repart au bord : le retard de sécurité était celui de la précédente. */
   useEffect(() => {
@@ -250,7 +284,8 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
     const source = relayer ? entree.relais! : entree.url;
     essai.current = entree.url;
     // Ouvrir un flux remplit le tampon : c'est un geste, pas un hoquet.
-    dernierGeste.current = Date.now();
+    silenceJusqua.current = Date.now() + 4_000;
+    depuisSource.current = Date.now();
     let annule = false;
     let minuteur = 0;
     let reparations = 0;
@@ -298,6 +333,34 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
           maxBufferLength: 30, liveSyncDurationCount: 3, capLevelToPlayerSize: false,
         });
         hlsRef.current = hls;
+        /*
+         * La réaction à l'instabilité, en un seul endroit.
+         *
+         * Deux chemins y mènent : les bégaiements comptés patiemment, et l'image figée que le relevé
+         * détecte sans rien compter. Reculer d'abord — c'est invisible et ça répare la plupart des
+         * cas —, changer de source ensuite, et jamais l'inverse.
+         */
+        reagirALInstabilite.current = () => {
+          blocages.current = [];
+          if (hls.config.liveSyncDurationCount < 5) {
+            hls.config.liveSyncDurationCount = 5;
+            silenceJusqua.current = Date.now() + REPIT_APRES_RECUL_MS;
+            setSecurite(2 * Math.round(hls.levels[hls.currentLevel]?.details?.targetduration ?? SEGMENT_TYPE_S));
+            return;
+          }
+          if (rangRef.current + 1 >= Math.min(adresses.length, REPLIS)) return;
+          /*
+           * Elle n'est **pas** rapportée comme morte : elle ne l'est pas. Inscrire un échec pour une
+           * source qui répond fausserait le classement avec une opinion.
+           */
+          const prochain = rangRef.current + 1;
+          essai.current = null;
+          rangRef.current = prochain;
+          setSecurite(0);
+          setParRelais(false);
+          setMessage(`Source instable, passage à la ${prochain + 1}…`);
+          setRang(prochain);
+        };
         hls.loadSource(source);
         hls.attachMedia(element);
         hls.on(HlsClass.Events.MANIFEST_PARSED, () => { void element.play().catch(() => undefined); });
@@ -315,38 +378,41 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
            */
           if (donnees.details === HlsClass.ErrorDetails.BUFFER_STALLED_ERROR) {
             const maintenant = Date.now();
-            // Quatre secondes de répit : ce qui recharge juste après un geste vient de nous.
-            if (maintenant - dernierGeste.current < 4_000) return;
-            blocages.current = [...blocages.current, maintenant]
-              .filter((instant) => maintenant - instant < MEMOIRE_BLOCAGES_MS);
-            if (blocages.current.length < BLOCAGES_AVANT_RECUL) return;
-            blocages.current = [];
+            // Ce qui recharge pendant le répit vient de nous : une ouverture, un saut, un recul.
+            if (maintenant < silenceJusqua.current) return;
+            /*
+             * **Les deux réactions n'ont pas le même prix, elles n'ont donc pas la même patience.**
+             *
+             * Reculer ne coûte que du retard : c'est invisible, ça répare la plupart des bégaiements,
+             * et ça doit donc arriver **vite** — trois rechargements suffisent, rafale comprise.
+             * Changer de source coupe l'image : cela reste un dernier mot, et se mérite.
+             */
+            const compter = () => {
+              blocages.current = [...blocages.current, maintenant]
+                .filter((instant) => maintenant - instant < MEMOIRE_BLOCAGES_MS);
+              return blocages.current.length >= BLOCAGES_AVANT_RECUL;
+            };
+
             if (hls.config.liveSyncDurationCount < 5) {
-              // Premier avertissement : on recule, on ne change rien d'autre.
-              hls.config.liveSyncDurationCount = 5;
-              setSecurite(2 * Math.round(hls.levels[hls.currentLevel]?.details?.targetduration ?? SEGMENT_TYPE_S));
+              if (!compter()) return;
+              reagirALInstabilite.current();
               return;
             }
+
             /*
-             * **Deuxième série de blocages : la source est en cause, pas la marge.**
+             * Le second comptage n'accepte que des incidents **espacés d'au moins dix secondes** : un
+             * mauvais passage de vingt secondes produit six rechargements d'affilée, et les compter
+             * séparément abandonnait une chaîne qui fonctionne pour une minute difficile.
              *
-             * Reculer de deux segments n'a pas suffi — relevé sur TF1, dont la première adresse
-             * sautait de partout alors qu'elle répondait très bien. Une source qui hoquette encore
-             * après qu'on lui a donné toute la marge disponible ne se rattrapera pas ; la suivante,
-             * elle, est déjà connue et n'a pas été essayée.
-             *
-             * Elle n'est **pas** rapportée comme morte : elle ne l'est pas. Inscrire un échec pour une
-             * source qui répond fausserait le classement avec une opinion.
+             * Reculer n'a pas suffi — relevé sur TF1, dont la première adresse sautait de partout
+             * alors qu'elle répondait très bien —, mais une source qui bégaie se regarde encore : le
+             * repli reste un dernier mot, jamais avant une minute passée dessus.
              */
-            if (rangRef.current + 1 < Math.min(adresses.length, REPLIS)) {
-              const prochain = rangRef.current + 1;
-              essai.current = null;
-              rangRef.current = prochain;
-              setSecurite(0);
-              setParRelais(false);
-              setMessage(`Source instable, passage à la ${prochain + 1}…`);
-              setRang(prochain);
-            }
+            const dernier = blocages.current[blocages.current.length - 1] ?? 0;
+            if (maintenant - dernier < INTERVALLE_MIN_BLOCAGE_MS) return;
+            if (!compter()) return;
+            if (maintenant - depuisSource.current < TEMPS_MIN_SUR_SOURCE_MS) return;
+            reagirALInstabilite.current();
             return;
           }
           if (!donnees.fatal) return;
@@ -404,7 +470,21 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
   useEffect(() => {
     const element = videoRef.current;
     if (!element) return;
+    let derniereImage = { temps: element.currentTime, instant: Date.now() };
     const relever = () => {
+      /*
+       * L'image avance-t-elle encore ? C'est la seule question qui distingue un bégaiement d'un arrêt.
+       *
+       * `paused` ne suffit pas : un flux qui recharge sans fin n'est pas en pause, il est bloqué. On
+       * regarde donc le temps de lecture lui-même, qui ne ment pas.
+       */
+      const maintenant = Date.now();
+      if (element.paused || element.currentTime !== derniereImage.temps) {
+        derniereImage = { temps: element.currentTime, instant: maintenant };
+      } else if (maintenant - derniereImage.instant > IMAGE_FIGEE_MS) {
+        derniereImage = { temps: element.currentTime, instant: maintenant };
+        reagirALInstabilite.current();
+      }
       if (!element.seekable.length) { setFenetre(null); return; }
       const debut = element.seekable.start(0);
       const fin = element.seekable.end(element.seekable.length - 1);
@@ -422,7 +502,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
   const rejoindreDirect = useCallback(() => {
     const element = videoRef.current;
     if (!element?.seekable.length) return;
-    dernierGeste.current = Date.now();
+    silenceJusqua.current = Date.now() + 4_000;
     element.currentTime = element.seekable.end(element.seekable.length - 1) - 1;
     void element.play().catch(() => undefined);
   }, []);
@@ -437,7 +517,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
   const sauter = useCallback((secondes: number) => {
     const element = videoRef.current;
     if (!element?.seekable.length) return;
-    dernierGeste.current = Date.now();
+    silenceJusqua.current = Date.now() + 4_000;
     const debut = element.seekable.start(0) + 2;
     const fin = element.seekable.end(element.seekable.length - 1) - 1;
     element.currentTime = Math.min(fin, Math.max(debut, element.currentTime + secondes));
@@ -456,7 +536,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
   const basculerPause = useCallback(() => {
     const element = videoRef.current;
     if (!element) return;
-    dernierGeste.current = Date.now();
+    silenceJusqua.current = Date.now() + 4_000;
     if (element.paused) void element.play().catch(() => undefined);
     else element.pause();
     setBarreVisible(true);
