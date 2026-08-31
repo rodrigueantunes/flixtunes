@@ -118,7 +118,18 @@ de la r2 tient toujours — ne rien dégrader de la grille à 0,07 ms.*
   `KEYCODE_BACK` — et lint a refusé la construction, à juste titre : sur un téléphone récent le geste
   de retour ne l'envoie plus du tout. Il passe par `OnBackPressedDispatcher`, où un rappel actif
   seulement quand la liste est ouverte la ferme, et laisse sinon le retour fermer le lecteur.
-- 873 tests serveur, 271 tests Web, le Kotlin compile, lint passe. Vérifié à l'écran : Arte en 1080p, « − 0:31 »
+- **Les zones réservées, parce que le fichier de listes est refait chaque jour.** Une numérotation
+  posée une fois puis complétée au fil de l'eau se dégrade toute seule : T18 absente le jour de la
+  pose recevait le numéro 92 205 en arrivant le lendemain, et le plan national devenait faux sans que
+  personne ne s'en aperçoive. Le plan garde donc **1 à 26 même vides**, le bouquet Canal+ **27 à 199**
+  — cinquante-sept chaînes mesurées, de la place pour trois fois plus —, et tout le reste commence à
+  **200**. Une chaîne qui arrive demain trouve la place qui lui revient, sans qu'aucun numéro déjà
+  attribué ne bouge : les deux promesses tiennent ensemble.
+- **Et une liste ne peut plus s'attribuer un numéro du plan national.** Le `tvg-chno` reste la seule
+  information explicite qu'une liste donne et il est toujours respecté — mais hors des zones
+  réservées. Le corpus compte des dizaines de chaînes qui s'annoncent « 1 » : la première arrivée
+  volait celui de TF1, pour une déclaration que personne n'a vérifiée.
+- 876 tests serveur, 271 tests Web, le Kotlin compile, lint passe. Vérifié à l'écran : Arte en 1080p, « − 0:31 »
   sur la barre, la liste des deux sources, la pause et le retour au direct.
 
 ## 0.5.7.r2 — mes chaînes, la course, et la chaîne d'avant

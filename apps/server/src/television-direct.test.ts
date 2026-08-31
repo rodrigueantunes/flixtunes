@@ -22,6 +22,7 @@ import {
   rafraichirDirect,
   rafraichissementDuAuDemarrage,
   rangerLesPays,
+  numeroterLesNouvelles,
   renumeroterDansLOrdreDAffichage,
 } from "./television-direct.js";
 
@@ -226,8 +227,12 @@ describe("la grille", () => {
      * n'est toujours de nulle part, et c'est ce qu'on veut.
      */
     expect(listerPays()).toEqual([{ code: "fr", nom: "France", chaines: 4 }]);
+    /*
+     * L'ordre est celui des numéros, et les numéros sont ceux du plan national : TF1 en 1, M6 en 6,
+     * Arte en 7, et Canal+ dans la zone du bouquet à partir de 27. Ce n'est plus l'alphabet.
+     */
     expect(listerChaines({ pays: ["fr"] }).items.map((chaine) => chaine.nom))
-      .toEqual(["TF1", "Arte", "Canal+", "M6"]);
+      .toEqual(["TF1", "M6", "Arte", "Canal+"]);
     // Sans pays coché, tout le monde reste visible — y compris les trois chaînes sans indice.
     expect(listerChaines({}).total).toBe(5);
   });
@@ -625,5 +630,56 @@ describe("les facettes, comptées sous les autres filtres", () => {
     // Celle qui n'est que dans la liste A n'apparaît pas sous la fiabilité de la liste B.
     expect(sousBonne).toContain("Facette FR A");
     expect(sousMoyenne).not.toContain("Facette FR A");
+  });
+});
+
+describe("les listes changent chaque jour", () => {
+  /*
+   * C'est la contrainte qui commande toute la numérotation : le fichier est refait quotidiennement,
+   * des chaînes apparaissent et d'autres s'en vont. Une numérotation posée une fois puis complétée au
+   * fil de l'eau se dégrade toute seule — et le plan national devient faux sans que ça se voie.
+   */
+  it("garde sa place à une chaîne de la TNT arrivée le lendemain", () => {
+    const poser = db.prepare(`INSERT INTO live_channels (id, cle, nom, nom_recherche, nom_compact, pays, adresses)
+      VALUES (?, ?, ?, ?, ?, 'fr', 1)`);
+    // Le décor du jour : pas de T18 dans les listes, le 18 reste donc vide après la renumérotation.
+    poser.run("j-autre", "j-autre", "Une Autre", "une autre", "uneautre");
+    rangerLesPays();
+    renumeroterDansLOrdreDAffichage();
+    expect(db.prepare("SELECT nom FROM live_channels WHERE numero = 18").get()).toBeUndefined();
+
+    // Le lendemain, la liste apporte T18. Elle doit trouver le 18 libre, et le prendre.
+    poser.run("j-t18", "j-t18", "T18", "t18", "t18");
+    rangerLesPays();
+    numeroterLesNouvelles();
+    const t18 = db.prepare("SELECT numero FROM live_channels WHERE id = 'j-t18'")
+      .get() as unknown as { numero: number };
+    expect(t18.numero).toBe(18);
+  });
+
+  it("refuse à une liste de s'attribuer un numéro du plan national", () => {
+    /*
+     * Le corpus compte des dizaines de chaînes qui s'annoncent « 1 » par leur `tvg-chno`. La première
+     * arrivée volerait celui de TF1, et la promesse de la télécommande tomberait pour une déclaration
+     * que personne n'a vérifiée. Le souhait reste respecté, mais hors des zones réservées.
+     */
+    db.prepare(`INSERT INTO live_channels (id, cle, nom, nom_recherche, nom_compact, pays, numero_souhaite, adresses)
+      VALUES ('j-menteuse', 'j-menteuse', 'Menteuse', 'menteuse', 'menteuse', 'fr', 3, 1)`).run();
+    rangerLesPays();
+    numeroterLesNouvelles();
+    const menteuse = db.prepare("SELECT numero FROM live_channels WHERE id = 'j-menteuse'")
+      .get() as unknown as { numero: number };
+    expect(menteuse.numero).toBeGreaterThanOrEqual(200);
+  });
+
+  it("place une Canal+ nouvelle dans la zone du bouquet, pas à la fin", () => {
+    db.prepare(`INSERT INTO live_channels (id, cle, nom, nom_recherche, nom_compact, pays, adresses)
+      VALUES ('j-canal', 'j-canal', 'Canal+ Tard', 'canal tard', 'canal+tard', 'fr', 1)`).run();
+    rangerLesPays();
+    numeroterLesNouvelles();
+    const tardive = db.prepare("SELECT numero FROM live_channels WHERE id = 'j-canal'")
+      .get() as unknown as { numero: number };
+    expect(tardive.numero).toBeGreaterThanOrEqual(27);
+    expect(tardive.numero).toBeLessThanOrEqual(199);
   });
 });

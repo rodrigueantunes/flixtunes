@@ -544,10 +544,25 @@ export function rattraperLesRangs(): number {
 }
 
 /** La forme de numérotation en vigueur. La changer déclenche une renumérotation, une fois. */
-const NUMEROTATION = "tnt-2025-canal-v1";
+const NUMEROTATION = "zones-2025-v1";
 
-/** Le dernier numéro du plan national. Ce qui suit commence après lui, jamais dedans. */
+/**
+ * Les trois zones de la numérotation, et pourquoi elles sont **réservées** et non simplement remplies.
+ *
+ * Le fichier de listes est refait **chaque jour** : des chaînes apparaissent, d'autres s'en vont. Une
+ * numérotation posée une fois puis complétée au fil de l'eau se dégradait donc toute seule — T18
+ * absente le jour de la pose recevait le numéro 92 205 en arrivant le lendemain, et le plan national
+ * devenait faux sans que personne ne s'en aperçoive.
+ *
+ * Les zones règlent cela sans jamais déplacer un numéro déjà attribué, ce qui reste la promesse : le
+ * plan national garde 1 à 26 **même vides**, le bouquet Canal+ garde 27 à 199 — cinquante-sept
+ * chaînes mesurées, de la place pour trois fois plus —, et tout le reste commence à 200. Une chaîne
+ * qui arrive demain trouve donc la place qui lui revient, si elle est encore libre.
+ */
 const DERNIER_NUMERO_TNT = 26;
+const DEBUT_BOUQUET = 27;
+const FIN_BOUQUET = 199;
+const DEBUT_LIBRE = 200;
 
 /**
  * Renuméroter dans l'ordre où la grille se lit — la France d'abord, puis l'alphabet des pays.
@@ -607,12 +622,14 @@ export function renumeroterDansLOrdreDAffichage(): number {
     WHERE adresses > 0 AND numero_manuel IS NULL AND pays = 'fr' AND nom_compact LIKE 'canal+%'
     ORDER BY length(nom_recherche), nom_recherche`).all() as unknown as Array<{ id: string }>;
   const rangsBouquet = new Map<string, number>();
-  let apresTnt = DERNIER_NUMERO_TNT + 1;
+  let placeBouquet = DEBUT_BOUQUET;
   for (const chaine of bouquet) {
     if (tnt.has(chaine.id)) continue;
-    while (manuels.has(apresTnt)) apresTnt += 1;
-    rangsBouquet.set(chaine.id, apresTnt);
-    apresTnt += 1;
+    while (manuels.has(placeBouquet)) placeBouquet += 1;
+    // Un bouquet plus gros que sa zone déborde dans le remplissage général plutôt que d'écraser 200.
+    if (placeBouquet > FIN_BOUQUET) break;
+    rangsBouquet.set(chaine.id, placeBouquet);
+    placeBouquet += 1;
   }
 
   /*
@@ -624,7 +641,7 @@ export function renumeroterDansLOrdreDAffichage(): number {
   const reserves = new Set<number>([...manuels, ...tnt.values(), ...rangsBouquet.values()]);
 
   const pose = db.prepare("UPDATE live_channels SET numero = ? WHERE id = ?");
-  let curseur = apresTnt;
+  let curseur = DEBUT_LIBRE;
   db.exec("BEGIN IMMEDIATE");
   try {
     /*
@@ -679,32 +696,60 @@ export function numeroterLesNouvelles(): number {
   for (const ligne of db.prepare("SELECT numero FROM live_channels WHERE numero IS NOT NULL").all() as unknown as Array<{ numero: number }>) {
     pris.add(ligne.numero);
   }
-  const aNumeroter = db.prepare(`SELECT id, numero_souhaite FROM live_channels
-    WHERE numero IS NULL AND adresses > 0 ORDER BY nom_recherche`).all() as unknown as Array<{ id: string; numero_souhaite: number | null }>;
+  const aNumeroter = db.prepare(`SELECT id, numero_souhaite, nom_compact, pays FROM live_channels
+    WHERE numero IS NULL AND adresses > 0 ORDER BY nom_recherche`)
+    .all() as unknown as Array<{ id: string; numero_souhaite: number | null; nom_compact: string | null; pays: string | null }>;
   if (!aNumeroter.length) return 0;
 
+  const tnt = new Map(numerosTnt().map(([nom, numero]) => [nom, numero]));
+  const attribue = new Map<string, number>();
+
   /**
-   * **Les souhaits d'abord, le remplissage ensuite** — et l'ordre entre les deux n'est pas un détail.
+   * **Le plan national d'abord**, parce que le fichier de listes change chaque jour.
    *
-   * En une seule passe par ordre alphabétique, « Arte » prenait le 1 avant que « TF1 » n'arrive avec
-   * son `tvg-chno="1"` : le seul numéro que la liste donnait explicitement était le seul à ne pas
-   * être respecté. Sur un corpus où 87 % des entrées n'en portent aucun, laisser l'alphabet écraser
-   * les 13 % restants revenait à jeter la seule information fiable qu'on ait.
+   * T18 absente aujourd'hui arrive demain : sans cette passe, elle recevrait le numéro 92 205 et le
+   * plan serait faux pour toujours. Les zones réservées existent pour qu'une chaîne trouve la place
+   * qui lui revient le jour où elle se présente — c'est le seul moyen de tenir à la fois « un numéro
+   * ne bouge plus » et « la 18, c'est T18 ».
    */
-  const souhaits = new Map<string, number>();
+  for (const chaine of aNumeroter) {
+    const numero = chaine.nom_compact ? tnt.get(chaine.nom_compact) : undefined;
+    if (numero != null && !pris.has(numero)) { pris.add(numero); attribue.set(chaine.id, numero); }
+  }
+
+  /** Puis le bouquet Canal+, dans sa zone, tant qu'elle a de la place. */
+  let placeBouquet = DEBUT_BOUQUET;
+  for (const chaine of aNumeroter) {
+    if (attribue.has(chaine.id)) continue;
+    if (chaine.pays !== "fr" || !chaine.nom_compact?.startsWith("canal+")) continue;
+    while (pris.has(placeBouquet) && placeBouquet <= FIN_BOUQUET) placeBouquet += 1;
+    if (placeBouquet > FIN_BOUQUET) break;
+    pris.add(placeBouquet);
+    attribue.set(chaine.id, placeBouquet);
+  }
+
+  /**
+   * **Puis les souhaits des listes, et seulement hors des zones réservées.**
+   *
+   * Le `tvg-chno` reste la seule information explicite qu'une liste donne, et il est respecté — mais
+   * il ne peut plus prendre un numéro du plan national. Le corpus compte des dizaines de chaînes qui
+   * s'annoncent « 1 » : la première arrivée volerait celui de TF1, et la promesse de la télécommande
+   * tomberait pour une déclaration que personne n'a vérifiée.
+   */
   for (const chaine of aNumeroter) {
     const souhait = chaine.numero_souhaite;
-    if (souhait == null || pris.has(souhait)) continue;
+    if (attribue.has(chaine.id) || souhait == null) continue;
+    if (souhait < DEBUT_LIBRE || pris.has(souhait)) continue;
     pris.add(souhait);
-    souhaits.set(chaine.id, souhait);
+    attribue.set(chaine.id, souhait);
   }
 
   const pose = db.prepare("UPDATE live_channels SET numero = ? WHERE id = ?");
-  let curseur = 1;
+  let curseur = DEBUT_LIBRE;
   db.exec("BEGIN IMMEDIATE");
   try {
     for (const chaine of aNumeroter) {
-      let numero = souhaits.get(chaine.id);
+      let numero = attribue.get(chaine.id);
       if (numero == null) {
         while (pris.has(curseur)) curseur += 1;
         numero = curseur;
