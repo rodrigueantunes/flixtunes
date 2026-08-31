@@ -3,6 +3,7 @@ package tv.flixtunes.app
 import android.annotation.SuppressLint
 import android.os.Bundle
 import android.view.KeyEvent
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
@@ -293,6 +294,17 @@ class LecteurDirectActivity : ComponentActivity() {
          * fait diverger à la première retouche.
          */
         masquerBarresSysteme()
+        /*
+         * Le drapeau de fenêtre **en plus** de celui de la vue, et ce n'est pas une ceinture de trop.
+         *
+         * La r5 posait `keepScreenOn` sur la vue du lecteur, comme le fait la médiathèque. Sur un vrai
+         * téléviseur, la mise en veille est quand même survenue au bout de quelques minutes : le
+         * verrou porté par une vue dépend de son attachement et de sa visibilité, et une vue posée
+         * dans un `AndroidView` de Compose n'offre pas les mêmes garanties qu'un arbre de vues
+         * ordinaire. Le drapeau de fenêtre, lui, tient tant que l'activité est au premier plan, et
+         * c'est le chemin que la documentation d'Android recommande.
+         */
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         onBackPressedDispatcher.addCallback(this, fermerLeChoix)
         setContent { ThemeFlixTunes { Ecran() } }
         ouvrir(chaineId)

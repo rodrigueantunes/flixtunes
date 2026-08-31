@@ -164,7 +164,8 @@ export function TelevisionDirect() {
           onClick={() => void agir(() => api.rafraichirLive(), "Rafraîchissement lancé.")}>
           ↻ Relire les listes
         </button>
-        {etat.enCours && <button disabled={occupe} onClick={() => void agir(() => api.arreterLive())}>Arrêter</button>}
+        {etat.enCours && <button className="secondary" disabled={occupe}
+          onClick={() => void agir(() => api.arreterLive())}>Arrêter</button>}
       </div>
 
       {/*
@@ -174,6 +175,15 @@ export function TelevisionDirect() {
         * fenêtre de parcours puis saisir « m3u.json » à la main revenait à faire à moitié le travail
         * que cette fenêtre existe pour faire. Elle descend maintenant jusqu'au fichier.
         */}
+      {/*
+        * Les boutons portent `secondary`, et ce n'est pas décoratif.
+        *
+        * Un `<button>` nu ne reçoit ici **aucun style** : la règle qui donne aux commandes leur
+        * hauteur de 48 points, leur fond et leur rayon ne vise que `.primary`, `.secondary` et deux
+        * conteneurs nommés. Les miens tombaient donc sur le bouton par défaut du navigateur, au
+        * milieu d'un écran où tous les autres sont dessinés — d'où l'impression d'anciens boutons
+        * revenus. On rejoint la famille existante plutôt que d'ajouter une règle de plus.
+        */}
       <div className="expert-actions">
         <label className="wide-field"><span>Fichier des listes, sur le serveur</span>
           <div className="path-input-row">
@@ -182,7 +192,8 @@ export function TelevisionDirect() {
             <button type="button" onClick={() => setParcourt(true)}>Parcourir le serveur</button>
           </div>
         </label>
-        <button disabled={occupe} onClick={() => void agir(() => enregistrerChemin(chemin), "Emplacement enregistré.")}>
+        <button className="secondary" disabled={occupe}
+          onClick={() => void agir(() => enregistrerChemin(chemin), "Emplacement enregistré.")}>
           Enregistrer l’emplacement
         </button>
       </div>
@@ -233,14 +244,14 @@ export function TelevisionDirect() {
             */}
           <input type="password" value={motDePasse} onChange={(event) => setMotDePasse(event.target.value)} autoComplete="new-password" />
         </label>
-        <button disabled={occupe || !hote.trim() || !utilisateur.trim() || !motDePasse}
+        <button className="secondary" disabled={occupe || !hote.trim() || !utilisateur.trim() || !motDePasse}
           onClick={() => void agir(async () => {
             await api.ajouterXtream(hote.trim(), utilisateur.trim(), motDePasse);
             setMotDePasse("");
           }, "Portail enregistré.")}>
           Ajouter un portail
         </button>
-        <button disabled={occupe || sources.some((source) => source.type === "fast")}
+        <button className="secondary" disabled={occupe || sources.some((source) => source.type === "fast")}
           onClick={() => void agir(() => api.activerFast(), "Chaînes ajoutées.")}>
           Ajouter les chaînes
         </button>

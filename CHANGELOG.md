@@ -36,6 +36,20 @@ que des défauts d'affichage : elles existaient, on ne pouvait simplement pas le
   bords, quand les fournisseurs de métadonnées et le diagnostic sont des cartes rentrées de 1,5 rem :
   l'écran paraissait dépareillé à l'endroit exact où arrivait la nouveauté, et ses boutons, sans cadre
   autour, plus anciens que ceux d'à côté. Elle reprend le cadre de sa voisine, tel quel.
+- **Les boutons du direct n'appartenaient à aucune famille.** La règle qui donne aux commandes leur
+  hauteur de 48 points, leur fond et leur rayon ne vise que `.primary`, `.secondary` et deux
+  conteneurs nommés : les miens tombaient donc sur le bouton par défaut du navigateur, au milieu d'un
+  écran où tous les autres sont dessinés. Ils rejoignent la famille existante plutôt que d'ajouter
+  une règle de plus.
+- **Et le cadre choisi était le mauvais.** La section emprunte le vocabulaire du **centre d'analyse**
+  — son en-tête, ses lanceurs, d'où viennent l'interrupteur et « Relire les listes » —, mais je lui
+  avais donné la carte plate des fournisseurs de métadonnées : un intérieur de centre d'analyse dans
+  un cadre qui n'en était pas un. Elle prend maintenant celui dont elle parle déjà la langue.
+- **L'écran est retenu au niveau de la fenêtre, et plus seulement de la vue.** La r5 posait
+  `keepScreenOn` sur la vue du lecteur ; sur un vrai téléviseur, la veille est quand même survenue au
+  bout de quelques minutes. Un verrou porté par une vue dépend de son attachement et de sa
+  visibilité — et une vue posée dans un `AndroidView` de Compose n'offre pas les garanties d'un arbre
+  de vues ordinaire. Le drapeau de fenêtre tient tant que l'activité est au premier plan.
 - 876 tests serveur, 271 tests Web, le Kotlin compile, lint passe.
 
 ## 0.5.7.r5 — le téléviseur s'endormait pendant qu'on regardait

@@ -428,16 +428,20 @@ h1, h2 { font-family: "Manrope", sans-serif; }
 .catalog-controls input, .catalog-controls select { min-height: 32px; }
 .catalog-controls input { min-width: min(260px, 55vw); }
 /*
- * La télévision en direct prend le même cadre que ses voisines.
+ * La télévision en direct prend le cadre du **centre d'analyse**, et pas un autre.
  *
- * Elle était posée à nu — `.expert-controls` n'a ni marge, ni bord, ni fond — pendant que les
- * fournisseurs de métadonnées et le diagnostic sont des cartes rentrées de 1,5 rem. L'écran paraissait
- * donc dépareillé à l'endroit exact où arrivait la nouveauté, et ses boutons, sans cadre autour, plus
- * anciens que ceux d'à côté. Le cadre est repris tel quel de `.provider-setup` : deux blocs de même
- * nature, même traitement.
+ * Elle était posée à nu : `.expert-controls` n'a ni marge, ni bord, ni fond, quand tous les blocs
+ * voisins sont des cartes rentrées de 1,5 rem. L'écran paraissait donc dépareillé à l'endroit exact
+ * où arrivait la nouveauté.
+ *
+ * Le cadre choisi est celui de `.scan-center` parce que cette section emprunte déjà **son
+ * vocabulaire** — `scan-center-heading` pour son titre, `scan-launchers` pour ses commandes, d'où
+ * viennent l'interrupteur et le bouton « Relire les listes ». Lui donner le cadre plat des
+ * fournisseurs de métadonnées, comme je l'avais fait d'abord, mettait un intérieur de centre
+ * d'analyse dans une carte qui n'en était pas une : les deux moitiés ne se répondaient pas.
  */
-.live-reglages { margin: 1rem 1.5rem 0; padding: 1rem; border: 1px solid rgba(95, 161, 255, .24);
-  border-radius: 18px; background: rgba(12, 19, 36, .88); }
+.live-reglages { margin: 1rem 1.5rem 0; padding: 1rem; border: 1px solid rgba(96, 145, 255, .25);
+  border-radius: 18px; background: linear-gradient(135deg, rgba(28, 70, 165, .22), rgba(9, 14, 28, .8)); }
 .live-reglages > .scan-center-heading:first-child { margin-top: 0; }
 .diagnostics-panel { margin: .7rem 1.5rem 0; padding: .7rem 1rem; border-radius: var(--rayon-panneau); background: rgba(255,255,255,.035); }
 /*
