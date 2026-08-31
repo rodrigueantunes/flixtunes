@@ -45,6 +45,20 @@ export function LiveTv({ onPlay }: { onPlay: (chaine: ChaineDirect) => void }) {
   const [paysChoisis, setPaysChoisis] = useState<string[]>([]);
   const [fiabilites, setFiabilites] = useState<Array<{ classement: ClassementListe; listes: number }>>([]);
   const [fiabilitesChoisies, setFiabilitesChoisies] = useState<string[]>([]);
+  /** Ne montrer que les chaînes retenues. Vingt sur 76 823 : c'est le vrai usage. */
+  const [favorisSeuls, setFavorisSeuls] = useState(false);
+  /**
+   * Écarter les chaînes dont la dernière lecture a échoué.
+   *
+   * Retenu d'une fois sur l'autre parce que c'est une préférence, pas un filtre qu'on repose à chaque
+   * visite — et retenu **ici** plutôt qu'au serveur : c'est une façon de regarder, propre à l'écran
+   * qu'on a devant soi, et un aller-retour de plus au chargement ne se justifierait pas.
+   */
+  const [masquerMortes, setMasquerMortes] = useState(() => {
+    try { return window.localStorage.getItem("flixtunes.direct.masquerMortes") === "1"; } catch { return false; }
+  });
+  /** La dernière chaîne regardée : un téléviseur rallume sur ce qu'on regardait. */
+  const [derniere, setDerniere] = useState<ChaineDirect | null>(null);
   const [chaines, setChaines] = useState<ChaineDirect[]>([]);
   const [total, setTotal] = useState(0);
   const [chargement, setChargement] = useState(true);
@@ -64,6 +78,7 @@ export function LiveTv({ onPlay }: { onPlay: (chaine: ChaineDirect) => void }) {
     void api.listesLiveClient().then(setListes).catch(() => setListes([]));
     void api.paysLive().then(setPays).catch(() => setPays([]));
     void api.fiabilitesLive().then(setFiabilites).catch(() => setFiabilites([]));
+    void api.derniereChaineLive().then((reponse) => setDerniere(reponse.chaine)).catch(() => setDerniere(null));
   }, []);
 
   const criteres = useMemo(() => ({
@@ -71,7 +86,9 @@ export function LiveTv({ onPlay }: { onPlay: (chaine: ChaineDirect) => void }) {
     listes: listesChoisies,
     pays: paysChoisis,
     fiabilites: fiabilitesChoisies,
-  }), [fiabilitesChoisies, listesChoisies, paysChoisis, recherche]);
+    favoris: favorisSeuls,
+    masquerMortes,
+  }), [favorisSeuls, fiabilitesChoisies, listesChoisies, masquerMortes, paysChoisis, recherche]);
 
   useEffect(() => {
     let annule = false;
@@ -117,6 +134,21 @@ export function LiveTv({ onPlay }: { onPlay: (chaine: ChaineDirect) => void }) {
     return { retenues: retenues.slice(0, 120), restantes: Math.max(0, retenues.length - 120) };
   }, [filtreListes, listes]);
 
+  /**
+   * L'étoile bascule tout de suite à l'écran, et se confirme ensuite.
+   *
+   * Attendre le serveur pour repeindre une étoile ferait clignoter la grille sur un geste qui ne
+   * peut presque pas échouer. En cas de refus, on remet l'étoile comme elle était — l'inverse d'un
+   * état inventé qui resterait faux.
+   */
+  const basculerFavori = (chaine: ChaineDirect) => {
+    const voulu = !chaine.favori;
+    setChaines((precedentes) => precedentes.map((autre) => autre.id === chaine.id ? { ...autre, favori: voulu } : autre));
+    void api.favoriLive(chaine.id, voulu).catch(() => {
+      setChaines((precedentes) => precedentes.map((autre) => autre.id === chaine.id ? { ...autre, favori: !voulu } : autre));
+    });
+  };
+
   const bascule = (valeur: string, choisis: string[], poser: (suivants: string[]) => void) => {
     poser(choisis.includes(valeur) ? choisis.filter((autre) => autre !== valeur) : [...choisis, valeur]);
   };
@@ -134,6 +166,25 @@ export function LiveTv({ onPlay }: { onPlay: (chaine: ChaineDirect) => void }) {
         <label><span>Rechercher</span>
           <input value={saisie} onChange={(event) => setSaisie(event.target.value)} placeholder="Rechercher une chaîne" />
         </label>
+        {/*
+          * Deux interrupteurs plutôt que deux volets : ils n'ont qu'un état, et ce sont les deux
+          * qu'on actionne le plus. Les mettre dans un volet à déplier coûterait deux gestes pour un.
+          */}
+        <fieldset className="genre-filter">
+          <legend>Affichage</legend>
+          <label className="genre-choice">
+            <input type="checkbox" checked={favorisSeuls} onChange={() => setFavorisSeuls((valeur) => !valeur)} />
+            <span>★ Mes chaînes</span>
+          </label>
+          <label className="genre-choice">
+            <input type="checkbox" checked={masquerMortes} onChange={() => setMasquerMortes((valeur) => {
+              const suivant = !valeur;
+              try { window.localStorage.setItem("flixtunes.direct.masquerMortes", suivant ? "1" : "0"); } catch { /* Un navigateur qui refuse le stockage garde le réglage pour la session. */ }
+              return suivant;
+            })} />
+            <span>Masquer celles qui n’ont pas répondu</span>
+          </label>
+        </fieldset>
         {/*
           * Le pays, et c'est **le** filtre qui manquait.
           *
@@ -215,10 +266,32 @@ export function LiveTv({ onPlay }: { onPlay: (chaine: ChaineDirect) => void }) {
 
     {erreur && <p className="catalog-error" role="alert">{erreur}</p>}
 
+    {/*
+      * Reprendre là où l'on s'était arrêté.
+      *
+      * C'est ce que fait un téléviseur qu'on rallume, et la chaîne est retenue par le serveur : on la
+      * retrouve depuis le téléphone comme depuis le salon. Elle ne s'affiche que si l'on ne cherche
+      * rien — au milieu d'une recherche, elle serait un résultat qui n'en est pas un.
+      */}
+    {derniere && !recherche && !favorisSeuls && <button type="button" className="live-reprise"
+      onClick={() => onPlay(derniere)}>
+      <span>Reprendre</span>
+      <b>{derniere.numero != null ? `${derniere.numero} · ` : ""}{derniere.nom}</b>
+    </button>}
+
     {chaines.length ? <>
       <div className="live-grille">
-        {chaines.map((chaine) => <button type="button" key={chaine.id} className="live-carte"
-          onClick={() => onPlay(chaine)}>
+        {chaines.map((chaine) => <div key={chaine.id} className="live-carte-enveloppe">
+          {/*
+            * L'étoile est un bouton à part, et non un coin de la carte : cliquer une carte ouvre la
+            * chaîne, et rien ne doit rendre ce geste hésitant. Elle porte son propre libellé pour
+            * qui n'a que la voix.
+            */}
+          <button type="button" className={`live-etoile${chaine.favori ? " retenue" : ""}`}
+            aria-label={chaine.favori ? `Retirer ${chaine.nom} de mes chaînes` : `Garder ${chaine.nom}`}
+            aria-pressed={chaine.favori === true}
+            onClick={() => basculerFavori(chaine)}>{chaine.favori ? "★" : "☆"}</button>
+          <button type="button" className="live-carte" onClick={() => onPlay(chaine)}>
           <span className="live-numero">{chaine.numero ?? "—"}</span>
           {/*
             * Le logo est fourni par la liste, donc par un hébergeur quelconque : il manque une fois
@@ -234,7 +307,8 @@ export function LiveTv({ onPlay }: { onPlay: (chaine: ChaineDirect) => void }) {
             {chaine.groupe ?? "Sans bouquet"}
             {chaine.adresses > 1 ? ` · ${chaine.adresses} sources` : ""}
           </small>
-        </button>)}
+          </button>
+        </div>)}
       </div>
       {restantes > 0 && <div className="catalog-more" ref={sentinelle}>
         <button type="button" onClick={() => void suite()} disabled={chargement}>

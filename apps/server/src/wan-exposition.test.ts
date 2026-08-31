@@ -40,6 +40,9 @@ const REFUS_ASSUMES = new Set([
   "GET /api/live", "GET /api/live/listes", "GET /api/live/pays", "GET /api/live/fiabilites",
   "GET /api/live/channels",
   "GET /api/live/channels/:id", "POST /api/live/channels/:id/resultat", "GET /api/live/numero",
+  // L'étoile et la dernière chaîne suivront la grille : elles n'ont de sens que devant une grille
+  // qu'on affiche, et la grille elle-même attend encore d'être éprouvée à distance.
+  "PUT /api/live/channels/:id/favori", "DELETE /api/live/channels/:id/favori", "GET /api/live/derniere",
   // Le relais suivra la grille : il n'a de sens que pour un navigateur qui affiche déjà des chaînes.
   "GET /api/live/relais",
   "GET /api/scans", "POST /api/scans", "GET /api/scans/skipped",

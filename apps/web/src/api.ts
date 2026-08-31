@@ -30,6 +30,7 @@ import type {
   ProfileInput,
   ScanJob,
   ScanRequest,
+  ChaineDirect,
   ChaineDirectDetaillee,
   ClassementListe,
   EtatDirect,
@@ -284,13 +285,19 @@ export const api = {
   activerFast: () => request<{ source: SourceDirect | null }>("/system/live/sources",
     { method: "POST", body: JSON.stringify({ type: "fast" }) }),
   retirerSourceLive: (id: string) => request<void>(`/system/live/sources/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  favoriLive: (id: string, favori: boolean) => request<void>(
+    `/live/channels/${encodeURIComponent(id)}/favori`, { method: favori ? "PUT" : "DELETE" },
+  ),
+  derniereChaineLive: () => request<{ chaine: ChaineDirect | null }>("/live/derniere"),
   chainesLive: (requete: { q?: string; listes?: string[]; pays?: string[]; fiabilites?: string[];
-    offset?: number; limit?: number } = {}) => {
+    favoris?: boolean; masquerMortes?: boolean; offset?: number; limit?: number } = {}) => {
     const parametres = new URLSearchParams();
     if (requete.q) parametres.set("q", requete.q);
     if (requete.listes?.length) parametres.set("listes", requete.listes.join(","));
     if (requete.pays?.length) parametres.set("pays", requete.pays.join(","));
     if (requete.fiabilites?.length) parametres.set("fiabilites", requete.fiabilites.join(","));
+    if (requete.favoris) parametres.set("favoris", "1");
+    if (requete.masquerMortes) parametres.set("masquerMortes", "1");
     if (requete.offset) parametres.set("offset", String(requete.offset));
     if (requete.limit) parametres.set("limit", String(requete.limit));
     return request<PageChaines>(`/live/channels?${parametres.toString()}`);

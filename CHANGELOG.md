@@ -1,5 +1,59 @@
 # Journal des versions
 
+## 0.5.7.r2 — mes chaînes, la course, et la chaîne d'avant
+
+*La suite du direct, cinq points du §4 de `docs/CHANTIER_LIVE_TV_SUITE.md`. Le guide des programmes
+en est écarté à la demande. La contrainte tenue de bout en bout : ne rien dégrader de la grille à
+0,4 ms.*
+
+- **Un chiffre a recadré tout le reste.** Les 57 % de doublons étaient vrais des *entrées* et
+  trompeurs sur les *chaînes* : **seules 16,7 % en ont plus d'une**. Cinq sur six n'ont qu'une seule
+  adresse, et aucun repli ne les sauvera. C'est ce qui a fait porter l'effort sur ce qui sert le plus
+  — retrouver les siennes, et démarrer vite quand il y a le choix.
+- **La course.** Les adresses d'une chaîne sont désormais sondées **en même temps**, et l'ordre des
+  réponses devient l'ordre d'essai. Avant, on essayait la première, on attendait douze secondes, puis
+  la deuxième : une chaîne à trois adresses dont les deux premières sont mortes mettait jusqu'à
+  trente-six secondes à démarrer, c'est-à-dire qu'on avait changé de chaîne avant. Elle coûte **zéro**
+  au NAS — ces requêtes partent du client — et ne jette aucune adresse : une silencieuse passe
+  derrière, jamais à la poubelle.
+- **Le navigateur sonde en `no-cors`, Android en clair.** Une requête ordinaire vers un hébergeur sans
+  en-tête CORS est refusée par le navigateur — c'est le mur que le relais existe pour contourner. Une
+  requête opaque, elle, **aboutit** quand l'hôte répond et **échoue** quand il n'y a personne : c'est
+  exactement la distinction qui compte, puisque les adresses mortes du corpus sortent en
+  `ERR_NAME_NOT_RESOLVED`. Android n'a pas ce mur : sa sonde lit le vrai code HTTP.
+- **Mes chaînes.** Une étoile sur chaque carte, un filtre pour n'afficher qu'elles. Vingt chaînes sur
+  79 321, c'est le vrai usage d'une grille pareille. Elles sont **par profil**, comme la liste
+  d'envies — ce ne sont pas les mêmes vingt pour tout le monde. L'étoile se repeint avant la réponse
+  du serveur, et revient comme elle était s'il refuse : attendre ferait clignoter la grille sur un
+  geste qui ne peut presque pas échouer.
+- **Reprendre la dernière chaîne.** Elle est retenue par le serveur, pas par le client : un téléviseur
+  qu'on rallume retrouve ce qu'on regardait, même si on l'avait quitté depuis le téléphone. Elle
+  n'est enregistrée qu'une fois le flux **effectivement joué**, pas à l'ouverture d'une adresse dont
+  on ignore encore si elle répondra.
+- **La chaîne d'avant, sur une touche.** L'aller-retour entre deux chaînes sans repasser par la
+  grille — le second geste d'un téléviseur, après le numéro. `LAST_CHANNEL` et la flèche gauche sur
+  Android, `P` au clavier, un bouton dans la barre du lecteur Web.
+- **Masquer celles qui n'ont pas répondu**, et **éteint par défaut** : « morte » n'est pas un verdict,
+  c'est ce que la dernière lecture a appris, et une chaîne muette hier soir répond peut-être ce matin.
+- **La télécommande interceptait trop tard, et je l'ai vu avant vous.** La saisie du numéro passait
+  par `onKeyDown`, appelé seulement **après** que l'arbre de vues a décliné la touche — or il y a un
+  `PlayerView` et le focus de Compose par-dessus, tous deux capables d'avaler un chiffre. Le lecteur
+  de la médiathèque avait déjà tranché dans l'autre sens, avec la raison écrite dans son code :
+  `dispatchKeyEvent` intercepte **avant** l'arbre. Et la croix haut/bas fait maintenant P+/P−, parce
+  que beaucoup de boîtiers Android TV n'ont aucune touche de chaîne.
+- **L'ordre des paramètres SQL suit le texte, pas le code.** Le `?` de l'étoile est dans le `SELECT` :
+  il devait passer avant ceux de la jointure et du filtre. Trouvé en écrivant, avant qu'il ne rende
+  des étoiles au hasard.
+- **La chaîne d'avant s'oubliait en fermant le lecteur**, et c'est exactement le moment où elle sert :
+  on regarde A, on revient à la grille, on ouvre B — « précédente » ne renvoyait alors nulle part.
+  Elle est retenue à l'**ouverture** d'une chaîne, que le lecteur soit encore là ou non.
+- 849 tests serveur, 261 tests Web, le Kotlin compile. Vérifié à l'écran : l'étoile bascule et le
+  filtre passe de 79 321 chaînes à une seule, « Reprendre 47 · Arte » revient après lecture, et le
+  bouton « Revenir à… » n'apparaît qu'une fois deux chaînes vues.
+- **Le guide des programmes est écarté**, à la demande. Ce qui a été mesuré reste écrit dans le
+  chantier : 685 chaînes françaises sur 1 081 portent un `tvg-id`, et les guides des chaînes gratuites
+  pèsent 0,36 et 0,20 Mio. Le jour où la question revient, le chiffre est là.
+
 ## 0.5.7.r1 — la télévision en direct
 
 *Chantier découpé en sept étapes, livrées ensemble. Le plan, ses mesures et les huit décisions qui

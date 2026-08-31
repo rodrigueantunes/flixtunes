@@ -5,12 +5,13 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import type { ChaineDirect } from "@flixtunes/contracts";
 
 const chaines: ChaineDirect[] = [
-  { id: "c1", nom: "TF1", numero: 1, logo: "http://logo/tf1.png", groupe: "Généralistes", pays: "fr", etat: "bonne", adresses: 3 },
-  { id: "c2", nom: "Arte", numero: 2, logo: null, groupe: "Généralistes", pays: "fr", etat: "inconnue", adresses: 1 },
+  { id: "c1", nom: "TF1", numero: 1, logo: "http://logo/tf1.png", groupe: "Généralistes", pays: "fr", etat: "bonne", adresses: 3, favori: false },
+  { id: "c2", nom: "Arte", numero: 2, logo: null, groupe: "Généralistes", pays: "fr", etat: "inconnue", adresses: 1, favori: true },
 ];
 
 const { apiMock } = vi.hoisted(() => ({ apiMock: {
   chainesLive: vi.fn(), listesLiveClient: vi.fn(), paysLive: vi.fn(), fiabilitesLive: vi.fn(),
+  favoriLive: vi.fn(), derniereChaineLive: vi.fn(),
 } }));
 vi.mock("./api", () => ({ api: apiMock }));
 
@@ -27,6 +28,8 @@ beforeEach(() => {
     { id: "l1", nom: "iptv-org France", classement: "bonne", chaines: 193 },
     { id: "l2", nom: "ParaTV", classement: "moyenne", chaines: 88 },
   ]);
+  apiMock.favoriLive.mockResolvedValue(undefined);
+  apiMock.derniereChaineLive.mockResolvedValue({ chaine: null });
   apiMock.fiabilitesLive.mockResolvedValue([
     { classement: "bonne", listes: 260 },
     { classement: "faible", listes: 76 },
@@ -92,10 +95,45 @@ describe("la grille des chaînes", () => {
     expect(screen.getByLabelText("❌ 25 à 49 % (76)")).toBeInTheDocument();
   });
 
+  it("garde une chaîne d'un clic, et repeint l'étoile sans attendre le serveur", async () => {
+    // Attendre le serveur pour repeindre une étoile ferait clignoter la grille sur un geste qui ne
+    // peut presque pas échouer.
+    render(<LiveTv onPlay={() => undefined} />);
+    const etoile = await screen.findByLabelText("Garder TF1");
+    fireEvent.click(etoile);
+    expect(await screen.findByLabelText("Retirer TF1 de mes chaînes")).toBeInTheDocument();
+    expect(apiMock.favoriLive).toHaveBeenCalledWith("c1", true);
+  });
+
+  it("remet l'étoile comme elle était si le serveur refuse", async () => {
+    apiMock.favoriLive.mockRejectedValue(new Error("refus"));
+    render(<LiveTv onPlay={() => undefined} />);
+    fireEvent.click(await screen.findByLabelText("Garder TF1"));
+    // Un état inventé qui resterait faux serait pire que l'attente qu'on a évitée.
+    expect(await screen.findByLabelText("Garder TF1")).toBeInTheDocument();
+  });
+
+  it("n'affiche que les chaînes retenues quand on le demande", async () => {
+    render(<LiveTv onPlay={() => undefined} />);
+    fireEvent.click(await screen.findByLabelText("★ Mes chaînes"));
+    await waitFor(() => expect(apiMock.chainesLive).toHaveBeenCalledWith(expect.objectContaining({ favoris: true })));
+  });
+
+  it("propose de reprendre la dernière chaîne, et pas au milieu d'une recherche", async () => {
+    apiMock.derniereChaineLive.mockResolvedValue({ chaine: { ...chaines[0]!, nom: "M6", numero: 6 } });
+    const joue = vi.fn();
+    render(<LiveTv onPlay={joue} />);
+    fireEvent.click(await screen.findByText("Reprendre"));
+    expect(joue).toHaveBeenCalledWith(expect.objectContaining({ nom: "M6" }));
+
+    fireEvent.change(screen.getByPlaceholderText("Rechercher une chaîne"), { target: { value: "arte" } });
+    await waitFor(() => expect(screen.queryByText("Reprendre")).not.toBeInTheDocument());
+  });
+
   it("rend la chaîne choisie à l'appelant", async () => {
     const joue = vi.fn();
     render(<LiveTv onPlay={joue} />);
-    fireEvent.click((await screen.findByText("TF1")).closest("button")!);
+    fireEvent.click((await screen.findByText("TF1")).closest("button.live-carte")!);
     expect(joue).toHaveBeenCalledWith(expect.objectContaining({ id: "c1", nom: "TF1" }));
   });
 

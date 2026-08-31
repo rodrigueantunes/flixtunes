@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
@@ -32,6 +33,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -142,6 +145,48 @@ internal fun EcranDirect(
                 }
 
                 /*
+                 * Deux interrupteurs plutôt que deux volets : ils n'ont qu'un état, et ce sont les
+                 * deux qu'on actionne le plus. Un volet à déplier coûterait deux gestes pour un — et
+                 * à la télécommande, deux pressions de plus avant le premier choix.
+                 */
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                    PuceFiltre(section.favorisSeuls, {
+                        grille.requestScrollToItem(0); model.filtrerDirect(favorisSeuls = !section.favorisSeuls)
+                    }) { Text(stringResource(R.string.direct_mes_chaines), fontSize = 13.sp) }
+                    PuceFiltre(section.masquerMortes, {
+                        grille.requestScrollToItem(0); model.filtrerDirect(masquerMortes = !section.masquerMortes)
+                    }) { Text(stringResource(R.string.direct_masquer_mortes), fontSize = 13.sp) }
+                }
+
+                /*
+                 * Reprendre là où l'on s'était arrêté — ce que fait un téléviseur qu'on rallume.
+                 *
+                 * La chaîne vient du serveur : on la retrouve depuis le salon comme depuis le
+                 * téléphone. Elle disparaît dès qu'on cherche : au milieu d'une recherche, elle
+                 * serait un résultat qui n'en est pas un.
+                 */
+                val derniere = section.derniere
+                if (derniere != null && section.query.isBlank() && !section.favorisSeuls) {
+                    Row(
+                        Modifier
+                            .padding(top = 8.dp)
+                            .cliquableAuFocus(RayonCommande.value.toInt()) { jouer(derniere) }
+                            .clip(RoundedCornerShape(RayonCommande))
+                            .background(Color.White.copy(alpha = .04f))
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Text(stringResource(R.string.direct_reprendre), color = Muet, fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold)
+                        Text(
+                            listOfNotNull(derniere.numero?.toString(), derniere.nom).joinToString(" · "),
+                            color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+
+                /*
                  * Le pays d'abord : c'est le filtre qui sert le plus.
                  *
                  * Chercher « canal » sur un corpus mondial rend 1 141 chaînes — le mot est espagnol
@@ -182,7 +227,9 @@ internal fun EcranDirect(
             }
         }
 
-        items(section.items, key = { it.id }) { chaine -> CarteChaine(chaine, jouer) }
+        items(section.items, key = { it.id }) { chaine ->
+            CarteChaine(chaine, jouer) { model.basculerFavoriDirect(chaine) }
+        }
 
         if (section.items.isEmpty() && !section.loading) {
             item(span = { GridItemSpanPleineLargeur() }) {
@@ -239,15 +286,20 @@ private fun VoletFiltre(
  * repli, donc la probabilité que la chaîne réponde.
  */
 @Composable
-private fun CarteChaine(chaine: ChaineDirect, jouer: (ChaineDirect) -> Unit) {
-    Column(
-        Modifier
-            .cliquableAuFocus(RayonCommande.value.toInt()) { jouer(chaine) }
-            .clip(RoundedCornerShape(RayonCommande))
-            .background(Color.White.copy(alpha = .04f))
-            .padding(vertical = 12.dp, horizontal = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
+private fun CarteChaine(chaine: ChaineDirect, jouer: (ChaineDirect) -> Unit, basculerFavori: () -> Unit) {
+    // Le libellé se résout ici : `semantics` n'est pas un composable et ne peut pas lire les ressources.
+    val libelleEtoile = stringResource(
+        if (chaine.favori) R.string.direct_retirer else R.string.direct_garder, chaine.nom,
+    )
+    Box {
+        Column(
+            Modifier
+                .cliquableAuFocus(RayonCommande.value.toInt()) { jouer(chaine) }
+                .clip(RoundedCornerShape(RayonCommande))
+                .background(Color.White.copy(alpha = .04f))
+                .padding(vertical = 12.dp, horizontal = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
         Text(chaine.numero?.toString() ?: "—", color = BleuClair, fontSize = 12.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(6.dp))
         Box(Modifier.size(52.dp), contentAlignment = Alignment.Center) {
@@ -264,5 +316,26 @@ private fun CarteChaine(chaine: ChaineDirect, jouer: (ChaineDirect) -> Unit) {
             if (chaine.adresses > 1) stringResource(R.string.direct_sources, chaine.adresses) else chaine.groupe.orEmpty(),
             color = Muet, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
         )
+        }
+        /*
+         * L'étoile, posée sur la carte sans en faire partie.
+         *
+         * Valider une carte ouvre la chaîne : c'est le geste principal, et rien ne doit le rendre
+         * hésitant. L'étoile est donc une cible distincte, atteignable au focus comme au doigt, et
+         * son libellé dit ce qu'elle fera — pas ce qu'elle montre.
+         */
+        Text(
+            if (chaine.favori) "★" else "☆",
+            Modifier
+                .align(Alignment.TopEnd)
+                .cliquableAuFocus(999) { basculerFavori() }
+                .padding(6.dp)
+                .semantics { contentDescription = libelleEtoile },
+            color = if (chaine.favori) EtoileRetenue else Muet,
+            fontSize = 15.sp,
+        )
     }
 }
+
+/** L'or de l'étoile retenue. Il ne sert qu'ici, et ne mérite pas d'entrer dans les jetons communs. */
+private val EtoileRetenue = Color(0xFFFFCF5C)

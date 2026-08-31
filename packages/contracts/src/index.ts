@@ -1090,6 +1090,8 @@ export interface ChaineDirect {
   etat: "bonne" | "morte" | "inconnue";
   /** Nombre d'adresses connues : c'est la profondeur du repli, et elle se voit à l'écran. */
   adresses: number;
+  /** Retenue par ce profil. Vingt chaînes sur 76 823 : c'est le vrai usage d'une grille pareille. */
+  favori?: boolean;
 }
 
 /**

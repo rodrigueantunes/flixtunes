@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type Hls from "hls.js";
 import type { ChaineDirect } from "@flixtunes/contracts";
 import { api } from "./api";
+import { courirLesAdresses } from "./course-adresses";
 
 /**
  * Le lecteur d'une chaîne en direct.
@@ -25,7 +26,13 @@ const REPLIS = 4;
 /** Une adresse et son doublon relayé, tels que le serveur les rend. */
 interface SourceLisible { url: string; relais: string | null }
 
-export function LecteurDirect({ chaine, onClose }: { chaine: ChaineDirect; onClose: () => void }) {
+export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
+  chaine: ChaineDirect;
+  /** La chaîne quittée, ou `null` la première fois. */
+  precedente: ChaineDirect | null;
+  onChaine: (chaine: ChaineDirect) => void;
+  onClose: () => void;
+}) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
   const [adresses, setAdresses] = useState<SourceLisible[]>([]);
@@ -47,15 +54,31 @@ export function LecteurDirect({ chaine, onClose }: { chaine: ChaineDirect; onClo
 
   useEffect(() => {
     let annule = false;
-    api.chaineLive(chaine.id)
-      .then((details) => {
+    void (async () => {
+      try {
+        const details = await api.chaineLive(chaine.id);
+        if (annule) return;
+        const declarees = details.sources.map((source) => ({ url: source.url, relais: source.relais ?? null }));
+        /*
+         * La course, avant d'ouvrir quoi que ce soit.
+         *
+         * Les adresses partent ensemble et l'ordre des réponses devient l'ordre d'essai : une chaîne
+         * dont la première adresse est morte démarrait en treize secondes, elle démarre en une. Elle
+         * ne coûte rien au NAS — ces requêtes partent d'ici — et ne jette aucune adresse : une
+         * silencieuse reste jouable, elle passe simplement derrière.
+         *
+         * Une seule adresse ne se court pas contre elle-même : la fonction rend la liste telle quelle.
+         */
+        const ordonnees = await courirLesAdresses(declarees);
         if (annule) return;
         rangRef.current = 0;
         setRang(0);
         setParRelais(false);
-        setAdresses(details.sources.map((source) => ({ url: source.url, relais: source.relais ?? null })));
-      })
-      .catch(() => { if (!annule) { setMessage("Chaîne indisponible"); setEchec(true); } });
+        setAdresses(ordonnees);
+      } catch {
+        if (!annule) { setMessage("Chaîne indisponible"); setEchec(true); }
+      }
+    })();
     return () => { annule = true; };
   }, [chaine.id]);
 
@@ -188,10 +211,20 @@ export function LecteurDirect({ chaine, onClose }: { chaine: ChaineDirect; onClo
   }, [adresses, chaine.id, echec, parRelais, rang, suivante]);
 
   useEffect(() => {
-    const auClavier = (evenement: KeyboardEvent) => { if (evenement.key === "Escape") onClose(); };
+    const auClavier = (evenement: KeyboardEvent) => {
+      if (evenement.key === "Escape") { onClose(); return; }
+      /*
+       * `P` comme précédente : l'aller-retour entre deux chaînes, sans repasser par la grille.
+       *
+       * C'est le geste que la touche « chaîne précédente » d'une télécommande rend, et il n'a pas
+       * d'équivalent naturel au clavier — d'où une lettre, et non une flèche déjà prise par le
+       * défilement de la page.
+       */
+      if (evenement.key.toLowerCase() === "p" && precedente) onChaine(precedente);
+    };
     window.addEventListener("keydown", auClavier);
     return () => window.removeEventListener("keydown", auClavier);
-  }, [onClose]);
+  }, [onChaine, onClose, precedente]);
 
   const sources = Math.min(adresses.length, REPLIS);
 
@@ -199,6 +232,9 @@ export function LecteurDirect({ chaine, onClose }: { chaine: ChaineDirect; onClo
     <video ref={videoRef} autoPlay playsInline muted={false} />
     <div className="lecteur-direct-barre">
       <button type="button" className="player-icon-button" onClick={onClose} aria-label="Fermer">←</button>
+      {precedente && <button type="button" className="player-icon-button"
+        aria-label={`Revenir à ${precedente.nom}`} title={`Revenir à ${precedente.nom}`}
+        onClick={() => onChaine(precedente)}>⇄</button>}
       <div className="lecteur-direct-titre">
         <b>{chaine.numero != null ? `${chaine.numero} · ` : ""}{chaine.nom}</b>
         {/*

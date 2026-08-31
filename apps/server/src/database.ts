@@ -561,6 +561,32 @@ ensureLiveChannelColumn("pays", "TEXT");
 ensureLiveChannelColumn("nom_compact", "TEXT");
 
 /**
+ * Les chaînes qu'un profil garde sous la main, et la dernière qu'il a regardée.
+ *
+ * **Par profil, comme la liste d'envies** : vingt chaînes sur 76 823, c'est le vrai usage, et ce ne
+ * sont pas les mêmes vingt pour tout le monde. Les mettre au foyer obligerait chacun à traverser
+ * celles des autres.
+ *
+ * La suppression en cascade porte des deux côtés : un profil effacé n'a plus de favorites, et une
+ * chaîne réellement supprimée — ce qui n'arrive qu'à une remise à zéro — n'en laisse pas d'orphelines.
+ */
+db.exec(`
+  CREATE TABLE IF NOT EXISTS live_favoris (
+    profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    channel_id TEXT NOT NULL REFERENCES live_channels(id) ON DELETE CASCADE,
+    ajoute_le TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(profile_id, channel_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_live_favoris_profil ON live_favoris(profile_id, ajoute_le DESC);
+
+  CREATE TABLE IF NOT EXISTS live_derniere_chaine (
+    profile_id TEXT PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
+    channel_id TEXT NOT NULL REFERENCES live_channels(id) ON DELETE CASCADE,
+    vue_le TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+
+/**
  * Le ❌ des listes ne voulait pas dire ce qu'on croyait.
  *
  * Il était enregistré `morte` ; le script qui produit `m3u.json` le pose en réalité sur les listes

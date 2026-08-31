@@ -291,6 +291,8 @@ data class ChaineDirect(
     val pays: String?,
     val etat: String,
     val adresses: Int,
+    /** Retenue par ce profil. Vingt chaînes sur 76 823 : c'est le vrai usage d'une grille pareille. */
+    val favori: Boolean = false,
 )
 
 data class PageChaines(val items: List<ChaineDirect>, val total: Int, val offset: Int, val limit: Int)

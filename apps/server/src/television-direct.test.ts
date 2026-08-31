@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "./database.js";
 import {
   chaineDetaillee,
+  derniereChaine,
   enregistrerParametres,
   etatClient,
   etatDirect,
@@ -13,7 +14,9 @@ import {
   listerListes,
   listerListesClient,
   listerPays,
+  marquerFavorite,
   noterResultat,
+  retenirDerniereChaine,
   parametresDirect,
   rafraichirDirect,
   rafraichissementDuAuDemarrage,
@@ -87,6 +90,9 @@ afterAll(async () => {
   db.prepare("DELETE FROM live_channels").run();
   db.prepare("DELETE FROM live_playlists").run();
   db.prepare("DELETE FROM live_sources").run();
+  db.prepare("DELETE FROM live_favoris").run();
+  db.prepare("DELETE FROM live_derniere_chaine").run();
+  db.prepare("DELETE FROM profiles WHERE id = 'profil-direct-test'").run();
   db.prepare("DELETE FROM server_settings WHERE key = 'live.parametres'").run();
   rmSync(dossier, { recursive: true, force: true });
   await new Promise<void>((resoudre) => serveur.close(() => resoudre()));
@@ -305,6 +311,56 @@ describe("ce qu'un client voit", () => {
     expect(proposees.map((liste) => liste.nom)).toEqual(expect.arrayContaining(["Liste A", "Liste B"]));
     // La liste qui n'a pas répondu n'a rien à proposer : elle n'encombre pas le filtre.
     expect(proposees.map((liste) => liste.nom)).not.toContain("Liste morte");
+  });
+});
+
+describe("les favorites et la dernière chaîne", () => {
+  /** Un profil de test : les favorites sont à lui, jamais au foyer. */
+  const profil = "profil-direct-test";
+
+  it("garde vingt chaînes sous la main, par profil", () => {
+    db.prepare("INSERT OR IGNORE INTO profiles (id, name, avatar_color) VALUES (?, 'Essai', '#2e6bff')").run(profil);
+    const tf1 = listerChaines({ q: "tf1" }).items[0]!;
+    const arte = listerChaines({ q: "arte" }).items[0]!;
+
+    expect(marquerFavorite(profil, tf1.id, true)).toBe(true);
+    // Deux fois la même n'ajoute rien : la clé primaire porte le couple.
+    expect(marquerFavorite(profil, tf1.id, true)).toBe(false);
+
+    const retenues = listerChaines({ profileId: profil, favoris: true });
+    expect(retenues.items.map((chaine) => chaine.nom)).toEqual(["TF1"]);
+    // L'étoile voyage avec la chaîne, sans une sous-requête par ligne.
+    const grille = listerChaines({ profileId: profil, limit: 50 }).items;
+    expect(grille.find((chaine) => chaine.id === tf1.id)?.favori).toBe(true);
+    expect(grille.find((chaine) => chaine.id === arte.id)?.favori).toBe(false);
+
+    // Sans profil, aucune étoile — et surtout, la requête reste valide.
+    expect(listerChaines({ limit: 1 }).items[0]?.favori).toBe(false);
+
+    expect(marquerFavorite(profil, tf1.id, false)).toBe(true);
+    expect(listerChaines({ profileId: profil, favoris: true }).items).toHaveLength(0);
+  });
+
+  it("retient la dernière chaîne regardée, pour la rallumer", () => {
+    const tf1 = listerChaines({ q: "tf1" }).items[0]!;
+    expect(derniereChaine(profil)).toBeNull();
+    retenirDerniereChaine(profil, tf1.id);
+    expect(derniereChaine(profil)?.nom).toBe("TF1");
+    // Elle se remplace, elle ne s'empile pas.
+    const m6 = listerChaines({ q: "m6" }).items[0]!;
+    retenirDerniereChaine(profil, m6.id);
+    expect(derniereChaine(profil)?.nom).toBe("M6");
+  });
+
+  it("masque les chaînes mortes, mais seulement si on le demande", () => {
+    const canal = listerChaines({ q: "canal" }).items.find((chaine) => chaine.nom === "Canal+")!;
+    db.prepare("UPDATE live_channels SET etat = 'morte' WHERE id = ?").run(canal.id);
+
+    // Éteint par défaut : une chaîne morte hier soir répond peut-être ce matin.
+    expect(listerChaines({ q: "canal" }).items.some((chaine) => chaine.id === canal.id)).toBe(true);
+    expect(listerChaines({ q: "canal", masquerMortes: true }).items.some((chaine) => chaine.id === canal.id)).toBe(false);
+
+    db.prepare("UPDATE live_channels SET etat = 'inconnue' WHERE id = ?").run(canal.id);
   });
 });
 

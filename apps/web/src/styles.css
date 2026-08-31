@@ -652,6 +652,32 @@ h1, h2 { font-family: "Manrope", sans-serif; }
 .live-squelette { aspect-ratio: 1 / 1; }
 
 /*
+ * L'étoile, posée sur la carte sans en faire partie.
+ *
+ * Cliquer une carte ouvre la chaîne : c'est le geste principal, et rien ne doit le rendre hésitant.
+ * L'étoile est donc un bouton distinct, dans le coin, assez grand pour un pouce — quarante-quatre
+ * points, sous quoi une cible se rate plus souvent qu'elle ne s'atteint.
+ */
+.live-carte-enveloppe { position: relative; display: grid; }
+.live-etoile { position: absolute; top: 2px; right: 2px; z-index: 1; width: 44px; height: 44px; padding: 0;
+  border: 0; border-radius: var(--rayon-pastille); background: transparent; color: var(--muted);
+  font-size: 1.05rem; line-height: 1; cursor: pointer; transition: color var(--duree-reponse); }
+.live-etoile:hover, .live-etoile:focus-visible { color: #f7f9ff; }
+.live-etoile.retenue { color: #ffcf5c; }
+
+/*
+ * Reprendre la dernière chaîne, en tête de grille.
+ *
+ * Elle a la silhouette d'une commande et non d'une carte : ce n'est pas une chaîne parmi les autres,
+ * c'est un raccourci vers celle qu'on regardait.
+ */
+.live-reprise { display: flex; align-items: baseline; gap: var(--pas-2); margin-top: var(--pas-3);
+  padding: var(--pas-2) var(--pas-3); border: 1px solid var(--line); border-radius: var(--rayon-commande);
+  background: #ffffff08; color: inherit; cursor: pointer; }
+.live-reprise:hover, .live-reprise:focus-visible { border-color: var(--blue-light); background: #ffffff14; }
+.live-reprise > span { color: var(--muted); font-size: .78rem; font-weight: 600; }
+
+/*
  * Les filtres du direct : le filtre a genres du catalogue, mais repliable.
  *
  * Meme boite, meme liseré, meme legende, memes puces cliquables — c'est le meme geste, il doit avoir

@@ -52,6 +52,7 @@ import {
   arreterRafraichissement,
   chaineDetaillee,
   chaineParNumero,
+  derniereChaine,
   chaineVoisine,
   cheminDuCatalogue,
   enregistrerParametres,
@@ -62,8 +63,10 @@ import {
   listerFiabilites,
   listerListes,
   listerPays,
+  marquerFavorite,
   noterResultat,
   parametresDirect,
+  retenirDerniereChaine,
   rafraichirDirect,
 } from "./television-direct.js";
 import { listMetadataProvenance, recordMetadataField } from "./metadata-fields.js";
@@ -684,6 +687,38 @@ export async function registerRoutes(app: FastifyInstance) {
     return listerFiabilites();
   });
 
+  /**
+   * L'étoile d'une chaîne, pour ce profil.
+   *
+   * Le même geste que la liste d'envies du catalogue, et rangé pareil : par profil, jamais au foyer.
+   */
+  app.put<{ Params: IdParams }>("/api/live/channels/:id/favori", async (request, reply) => {
+    const profile = profileFromRequest(request);
+    if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
+    marquerFavorite(profile.id, request.params.id, true);
+    return reply.code(204).send();
+  });
+
+  app.delete<{ Params: IdParams }>("/api/live/channels/:id/favori", async (request, reply) => {
+    const profile = profileFromRequest(request);
+    if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
+    marquerFavorite(profile.id, request.params.id, false);
+    return reply.code(204).send();
+  });
+
+  /**
+   * La dernière chaîne regardée, et celle d'avant.
+   *
+   * Elles sont retenues par le serveur : un téléviseur qu'on rallume retrouve ce qu'on regardait,
+   * même si on l'avait quitté depuis le téléphone. C'est aussi ce qui rend « chaîne précédente »
+   * possible d'un appareil à l'autre.
+   */
+  app.get("/api/live/derniere", async (request, reply) => {
+    const profile = profileFromRequest(request);
+    if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
+    return { chaine: derniereChaine(profile.id) };
+  });
+
   app.get("/api/live/pays", async (request, reply) => {
     const profile = profileFromRequest(request);
     if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
@@ -708,8 +743,12 @@ export async function registerRoutes(app: FastifyInstance) {
     }
     const decouper = (valeur: string | undefined): string[] =>
       (valeur ?? "").split(",").map((element) => element.trim()).filter(Boolean).slice(0, 200);
-    return listerChaines({ q: query.q, listes: decouper(query.listes), pays: decouper(query.pays),
-      fiabilites: decouper(query.fiabilites) as ClassementListe[], offset, limit });
+    return listerChaines({
+      q: query.q, profileId: profile.id,
+      favoris: query.favoris === "1", masquerMortes: query.masquerMortes === "1",
+      listes: decouper(query.listes), pays: decouper(query.pays),
+      fiabilites: decouper(query.fiabilites) as ClassementListe[], offset, limit,
+    });
   });
 
   /**
@@ -765,6 +804,9 @@ export async function registerRoutes(app: FastifyInstance) {
     if (!noterResultat(request.params.id, corps.url, corps.ok)) {
       return reply.code(404).send({ message: "Adresse inconnue pour cette chaîne" });
     }
+    // Une adresse qui a joué vaut « c'est ce qu'on regarde » : c'est le moment le plus sûr pour
+    // retenir la chaîne, plutôt qu'à l'ouverture d'un flux dont on ignore encore s'il répondra.
+    if (corps.ok) retenirDerniereChaine(profile.id, request.params.id);
     return reply.code(204).send();
   });
 

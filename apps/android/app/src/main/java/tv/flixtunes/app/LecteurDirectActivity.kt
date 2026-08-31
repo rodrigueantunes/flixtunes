@@ -1,5 +1,6 @@
 package tv.flixtunes.app
 
+import android.annotation.SuppressLint
 import android.os.Bundle
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
@@ -32,9 +33,14 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import tv.flixtunes.app.data.ChaineDirect
 import tv.flixtunes.app.data.FlixTunesApi
 import tv.flixtunes.app.ui.Encre
@@ -72,6 +78,8 @@ class LecteurDirectActivity : ComponentActivity() {
 
     /** Les adresses de la chaîne courante, déjà triées par ce que l'usage a appris. */
     private var adresses: List<String> = emptyList()
+    /** La chaîne quittée, pour y revenir d'une touche — le second geste d'un téléviseur. */
+    private var precedente: String? = null
     private var rang = 0
     /** L'adresse en cours d'essai. Vidée dès qu'on bascule, elle sert de verrou contre les rafales. */
     private var essai: String? = null
@@ -121,14 +129,57 @@ class LecteurDirectActivity : ComponentActivity() {
         essai = null
         rang = 0
         echec = false
+        // Ce qu'on quitte devient ce vers quoi on revient. Enregistré avant de charger : si la
+        // nouvelle chaîne ne répond pas, le retour reste possible.
+        chaine?.id?.takeIf { it != chaineId }?.let { precedente = it }
         message = getString(R.string.direct_ouverture)
         runCatching { api.chaineDirect(profileId, chaineId) }
             .onSuccess { details ->
                 chaine = details.chaine
-                adresses = details.sources.map { it.url }.take(REPLIS)
+                adresses = courirLesAdresses(details.sources.map { it.url }.take(REPLIS))
                 jouerRang()
             }
             .onFailure { echec = true; message = getString(R.string.direct_aucune_source) }
+    }
+
+    /**
+     * La course : sonder les adresses **en même temps**, et garder l'ordre des réponses.
+     *
+     * Le lecteur essayait la première, attendait douze secondes, passait à la deuxième : une chaîne à
+     * trois adresses dont les deux premières sont mortes mettait jusqu'à trente-six secondes à
+     * démarrer, c'est-à-dire qu'on avait changé de chaîne avant. Ici tout part ensemble.
+     *
+     * Aucune adresse n'est perdue : une silencieuse passe derrière, jamais à la poubelle. Un
+     * hébergeur lent reste jouable, et si tout se tait il faut bien essayer quelque chose.
+     *
+     * Android n'a pas le mur du navigateur — pas de CORS, pas de contenu mixte —, donc la sonde est
+     * exacte : c'est le code HTTP réel qui décide, et non une réponse opaque.
+     */
+    private suspend fun courirLesAdresses(candidates: List<String>): List<String> {
+        if (candidates.size <= 1) return candidates
+        val arrivees = java.util.concurrent.ConcurrentLinkedQueue<String>()
+        withContext(Dispatchers.IO) {
+            withTimeoutOrNull(DELAI_COURSE_MS) {
+                candidates.map { url ->
+                    async {
+                        runCatching {
+                            val connexion = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                                requestMethod = "GET"
+                                connectTimeout = DELAI_COURSE_MS.toInt()
+                                readTimeout = DELAI_COURSE_MS.toInt()
+                                instanceFollowRedirects = true
+                                setRequestProperty("User-Agent", "FlixTunes")
+                            }
+                            try {
+                                if (connexion.responseCode in 200..399) arrivees.add(url)
+                            } finally { connexion.disconnect() }
+                        }
+                    }
+                }.awaitAll()
+            }
+        }
+        val repondues = arrivees.toList()
+        return repondues + candidates.filterNot { it in repondues }
     }
 
     private fun jouerRang() {
@@ -172,8 +223,21 @@ class LecteurDirectActivity : ComponentActivity() {
      * C'est le geste qui distingue un téléviseur d'une grille d'icônes, et il ne s'invente pas : on
      * tape un ou plusieurs chiffres, et la chaîne s'ouvre d'elle-même après une seconde et demie —
      * le temps qu'on ait fini de composer.
+     *
+     * **`dispatchKeyEvent` et non `onKeyDown`**, comme le lecteur de la médiathèque le fait déjà et
+     * pour la raison qu'il donne : `onKeyDown` n'est appelé qu'**après** que l'arbre de vues a
+     * décliné la touche. Or il y a ici un `PlayerView` dans un `AndroidView`, et le système de focus
+     * de Compose par-dessus : l'un comme l'autre peuvent consommer un chiffre ou un P+ avant que
+     * l'activité n'en voie la couleur. Intercepter avant l'arbre est le moyen prévu par Android, et
+     * l'appel à `super` laisse passer tout ce qu'on ne prend pas — le retour compris.
+     *
+     * `RestrictedApi` est écarté pour la même raison qu'en face : la restriction porte sur la
+     * tuyauterie interne d'AndroidX, que l'appel à `super` fait justement fonctionner.
      */
-    override fun onKeyDown(code: Int, evenement: KeyEvent): Boolean {
+    @SuppressLint("RestrictedApi")
+    override fun dispatchKeyEvent(evenement: KeyEvent): Boolean {
+        if (evenement.action != KeyEvent.ACTION_DOWN) return super.dispatchKeyEvent(evenement)
+        val code = evenement.keyCode
         val chiffre = when (code) {
             in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 -> code - KeyEvent.KEYCODE_0
             in KeyEvent.KEYCODE_NUMPAD_0..KeyEvent.KEYCODE_NUMPAD_9 -> code - KeyEvent.KEYCODE_NUMPAD_0
@@ -190,9 +254,30 @@ class LecteurDirectActivity : ComponentActivity() {
             }
             return true
         }
-        if (code == KeyEvent.KEYCODE_CHANNEL_UP || code == KeyEvent.KEYCODE_PAGE_UP) { voisine(1); return true }
-        if (code == KeyEvent.KEYCODE_CHANNEL_DOWN || code == KeyEvent.KEYCODE_PAGE_DOWN) { voisine(-1); return true }
-        return super.onKeyDown(code, evenement)
+        /*
+         * Deux paires de touches pour un seul geste.
+         *
+         * Toutes les télécommandes n'envoient pas `CHANNEL_UP` : beaucoup de boîtiers Android TV
+         * n'ont pas de touche de chaîne du tout et rendent la croix directionnelle. Haut et bas y
+         * répondent donc aussi — c'est le geste qu'on fait naturellement devant une image plein
+         * écran, et rien d'autre ne s'en sert ici.
+         */
+        /*
+         * La chaîne précédente : le second geste d'un téléviseur, après le numéro.
+         *
+         * `LAST_CHANNEL` est la touche prévue par Android, que peu de télécommandes portent ; la
+         * flèche gauche fait donc la même chose, et rien d'autre ne s'en sert devant une image plein
+         * écran.
+         */
+        if (code == KeyEvent.KEYCODE_LAST_CHANNEL || code == KeyEvent.KEYCODE_DPAD_LEFT) {
+            precedente?.let { ouvrir(it) }
+            return true
+        }
+        if (code == KeyEvent.KEYCODE_CHANNEL_UP || code == KeyEvent.KEYCODE_PAGE_UP ||
+            code == KeyEvent.KEYCODE_DPAD_UP) { voisine(1); return true }
+        if (code == KeyEvent.KEYCODE_CHANNEL_DOWN || code == KeyEvent.KEYCODE_PAGE_DOWN ||
+            code == KeyEvent.KEYCODE_DPAD_DOWN) { voisine(-1); return true }
+        return super.dispatchKeyEvent(evenement)
     }
 
     /**
@@ -273,5 +358,8 @@ class LecteurDirectActivity : ComponentActivity() {
 
         /** Au-delà, on ne s'acharne pas : quatre adresses mortes disent que la chaîne l'est. */
         private const val REPLIS = 4
+
+        /** Au-delà, on n'attend plus : une adresse muette trois secondes fera perdre du temps. */
+        private const val DELAI_COURSE_MS = 3_000L
     }
 }

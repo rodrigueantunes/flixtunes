@@ -55,6 +55,8 @@ const { apiMock } = vi.hoisted(() => ({ apiMock: {
   etatLive: vi.fn(async () => ({ disponible: false, chaines: 0, rafraichieLe: null as string | null })),
   listesLiveClient: vi.fn(async () => []),
   paysLive: vi.fn(async () => []),
+  favoriLive: vi.fn(),
+  derniereChaineLive: vi.fn(async () => ({ chaine: null })),
   fiabilitesLive: vi.fn(async () => []),
   chaineLive: vi.fn(), resultatChaineLive: vi.fn(),
 } }));

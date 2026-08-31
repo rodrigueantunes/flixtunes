@@ -151,6 +151,12 @@ data class SectionDirect(
     val paysChoisis: List<String> = emptyList(),
     val fiabilites: List<FiabiliteDirect> = emptyList(),
     val fiabilitesChoisies: List<String> = emptyList(),
+    /** Ne montrer que les chaînes retenues par le profil. */
+    val favorisSeuls: Boolean = false,
+    /** Écarter celles dont la dernière lecture a échoué. Éteint par défaut : « morte » n'est pas définitif. */
+    val masquerMortes: Boolean = false,
+    /** La dernière chaîne regardée, pour la rallumer d'un geste. */
+    val derniere: ChaineDirect? = null,
 ) {
     val hasMore: Boolean get() = items.size < total
 }
@@ -735,7 +741,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val listes = runCatching { api.listesDirect(profileId) }.getOrDefault(emptyList())
         val pays = runCatching { api.paysDirect(profileId) }.getOrDefault(emptyList())
         val fiabilites = runCatching { api.fiabilitesDirect(profileId) }.getOrDefault(emptyList())
-        state = state.copy(direct = SectionDirect(disponible = true, listes = listes, pays = pays, fiabilites = fiabilites))
+        val derniere = api.derniereChaineDirect(profileId)
+        state = state.copy(direct = SectionDirect(disponible = true, listes = listes, pays = pays,
+            fiabilites = fiabilites, derniere = derniere))
     }
 
     /**
@@ -754,14 +762,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         runCatching {
             currentApi.chainesDirect(profile.id, if (reset) 0 else section.items.size, taillePageDirect,
                 query = section.query, listes = section.listesChoisies,
-                pays = section.paysChoisis, fiabilites = section.fiabilitesChoisies)
+                pays = section.paysChoisis, fiabilites = section.fiabilitesChoisies,
+                favoris = section.favorisSeuls, masquerMortes = section.masquerMortes)
         }
             .onSuccess { page ->
                 val courante = state.direct ?: return@onSuccess
                 // Une réponse lancée pour un critère peut arriver après qu'on en a changé : elle ne
                 // doit pas repeupler la grille avec ce qu'on ne demande plus.
                 if (courante.query != section.query || courante.listesChoisies != section.listesChoisies ||
-                    courante.paysChoisis != section.paysChoisis || courante.fiabilitesChoisies != section.fiabilitesChoisies) {
+                    courante.paysChoisis != section.paysChoisis || courante.fiabilitesChoisies != section.fiabilitesChoisies ||
+                    courante.favorisSeuls != section.favorisSeuls || courante.masquerMortes != section.masquerMortes) {
                     state = state.copy(direct = courante.copy(loading = false)); return@onSuccess
                 }
                 val connues = if (reset) emptySet() else courante.items.mapTo(mutableSetOf()) { it.id }
@@ -779,6 +789,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun filtrerDirect(
         query: String? = null, listes: List<String>? = null,
         pays: List<String>? = null, fiabilites: List<String>? = null,
+        favorisSeuls: Boolean? = null, masquerMortes: Boolean? = null,
     ) {
         val section = state.direct ?: return
         state = state.copy(direct = section.copy(
@@ -786,8 +797,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             listesChoisies = listes ?: section.listesChoisies,
             paysChoisis = pays ?: section.paysChoisis,
             fiabilitesChoisies = fiabilites ?: section.fiabilitesChoisies,
+            favorisSeuls = favorisSeuls ?: section.favorisSeuls,
+            masquerMortes = masquerMortes ?: section.masquerMortes,
         ))
         chargerChaines(reset = true)
+    }
+
+    /**
+     * L'étoile bascule à l'écran d'abord, et se confirme ensuite.
+     *
+     * Attendre le serveur pour repeindre une étoile ferait clignoter la grille sur un geste qui ne
+     * peut presque pas échouer. En cas de refus, elle revient comme elle était.
+     */
+    fun basculerFavoriDirect(chaine: ChaineDirect) = viewModelScope.launch {
+        val currentApi = repository.api ?: return@launch
+        val profile = state.profile ?: return@launch
+        val voulu = !chaine.favori
+        peindreFavori(chaine.id, voulu)
+        runCatching { currentApi.favoriDirect(profile.id, chaine.id, voulu) }
+            .onFailure { peindreFavori(chaine.id, !voulu) }
+    }
+
+    private fun peindreFavori(channelId: String, favori: Boolean) {
+        val section = state.direct ?: return
+        state = state.copy(direct = section.copy(
+            items = section.items.map { if (it.id == channelId) it.copy(favori = favori) else it },
+        ))
     }
 
     fun loadCatalog(kind: String, reset: Boolean = false) = viewModelScope.launch {

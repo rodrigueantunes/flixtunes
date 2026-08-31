@@ -732,6 +732,28 @@ export function App() {
    */
   const [directDisponible, setDirectDisponible] = useState(false);
   const [chaineDirect, setChaineDirect] = useState<ChaineDirect | null>(null);
+  /**
+   * La chaîne quittée, pour y revenir sans repasser par la grille.
+   *
+   * C'est le second geste d'un téléviseur, après le numéro : l'aller-retour entre deux chaînes. Elle
+   * vit ici et non dans le lecteur, qui est démonté à chaque changement de chaîne — il perdrait la
+   * mémoire au moment précis où elle sert.
+   */
+  const [chainePrecedente, setChainePrecedente] = useState<ChaineDirect | null>(null);
+  /**
+   * La dernière chaîne **ouverte**, que le lecteur soit encore là ou non.
+   *
+   * Elle était prise du lecteur en cours, si bien que fermer celui-ci effaçait la mémoire : on
+   * regardait A, on revenait à la grille, on ouvrait B — et « précédente » ne renvoyait nulle part,
+   * alors que c'est exactement le moment où l'on en a besoin.
+   */
+  const derniereOuverte = useRef<ChaineDirect | null>(null);
+  const ouvrirChaine = (chaine: ChaineDirect) => {
+    const quittee = derniereOuverte.current;
+    if (quittee && quittee.id !== chaine.id) setChainePrecedente(quittee);
+    derniereOuverte.current = chaine;
+    setChaineDirect(chaine);
+  };
 
   const refreshGroups = async () => { const next = await api.profileGroups(); setGroups(next); return next; };
   const refreshProfiles = async (activeGroup = group) => {
@@ -918,7 +940,8 @@ export function App() {
   );
   if (chaineDirect && profile) return (
     <Suspense fallback={<div className="player-page" role="status" aria-label="Ouverture de la chaîne" />}>
-      <LecteurDirect chaine={chaineDirect} onClose={() => setChaineDirect(null)} />
+      <LecteurDirect chaine={chaineDirect} precedente={chainePrecedente}
+        onChaine={ouvrirChaine} onClose={() => setChaineDirect(null)} />
     </Suspense>
   );
   if (!introComplete || firstRunRequired === null || remoteLoginRequired === null) return <div className="app-loading brand-intro"><div className="intro-orbit"/><img src="/brand/flixtunes-logo.png" alt="FlixTunes" /><strong>Flix<span>Tunes</span></strong><span>{firstRunRequired === null || remoteLoginRequired === null ? "Connexion au serveur…" : "Votre cinéma prend vie"}</span></div>;
@@ -939,7 +962,7 @@ export function App() {
       {view === "home" && !empty && home && <div className="content"><Rail title="Continuer à regarder" items={home.continueWatching} onOpen={openDetails} onContext={openContext} />{profile && <RecommendationRail recommendations={home.recommendations ?? []} profile={profile} onOpen={openDetails} onChanged={() => void loadHome()} onContext={openContext} />}<Rail title="Ma liste" items={home.watchlist ?? []} onOpen={openDetails} onContext={openContext} /><Rail title="Ajouts récents" items={home.recentlyAdded} onOpen={openDetails} onContext={openContext} /><Rail title="Films" items={home.movies} onOpen={openDetails} onContext={openContext} /><Rail title="Séries" items={home.shows} onOpen={openDetails} onContext={openContext} /><Rail title="Déjà vus" items={home.completed} onOpen={openDetails} onContext={openContext} /><Rail title="Historique récent" items={home.watchedRecently} onOpen={openDetails} onContext={openContext} /></div>}
       {home && profile && view === "movies" && <CatalogPage kind="movies" profileId={profile.id} total={home.movieTotal ?? home.movies.length} onOpen={openDetails} onContext={openContext} />}
       {home && profile && view === "shows" && <CatalogPage kind="shows" profileId={profile.id} total={home.showTotal ?? home.shows.length} onOpen={openDetails} onContext={openContext} />}
-      {view === "live" && directDisponible && <Suspense fallback={<HomeSkeleton />}><LiveTv onPlay={setChaineDirect} /></Suspense>}
+      {view === "live" && directDisponible && <Suspense fallback={<HomeSkeleton />}><LiveTv onPlay={ouvrirChaine} /></Suspense>}
       {home && view === "history" && <section className="catalog-page"><header className="catalog-header"><div><span className="eyebrow">Votre activité</span><h1>Historique</h1></div></header><Rail title="Déjà vus" items={home.completed} onOpen={openDetails} onContext={openContext} /><Rail title="Historique récent" items={home.watchedRecently} onOpen={openDetails} onContext={openContext} /></section>}
     </main><footer><span>FlixTunes</span><button onClick={() => setLibrariesOpen(true)}>Gérer les bibliothèques</button><small>Votre cinéma. Votre réseau.</small></footer>
     {librariesOpen && <LibraryManager onClose={() => { setLibrariesOpen(false); void loadHome(); }} onChanged={() => void loadHome()} />}

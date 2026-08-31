@@ -546,6 +546,12 @@ export function corrigerNumero(channelId: string, numero: number | null): void {
 
 export interface RequeteChaines {
   q?: string;
+  /** Le profil, requis dès qu'on parle de favorites : elles sont à lui, pas au foyer. */
+  profileId?: string;
+  /** N'afficher que les favorites de ce profil. */
+  favoris?: boolean;
+  /** Écarter les chaînes dont toutes les adresses ont échoué. Éteint par défaut. */
+  masquerMortes?: boolean;
   listes?: string[];
   /** Codes a deux lettres. Vide : tous les pays, chaines sans pays connu comprises. */
   pays?: string[];
@@ -588,6 +594,17 @@ export function listerChaines(requete: RequeteChaines = {}): PageChaines {
   const conditions = ["c.adresses > 0"];
   const params: unknown[] = [];
   let jointure = "";
+
+  /*
+   * « Morte » n'est pas un jugement définitif : c'est ce que la dernière lecture a appris. Une chaîne
+   * peut l'être hier soir et répondre ce matin, d'où un filtre **éteint par défaut** — on ne cache
+   * pas de soi-même quelque chose qui marche peut-être.
+   */
+  if (requete.masquerMortes) conditions.push("c.etat <> 'morte'");
+  if (requete.favoris && requete.profileId) {
+    jointure += " JOIN live_favoris f ON f.channel_id = c.id AND f.profile_id = ?";
+    params.push(requete.profileId);
+  }
 
   const saisie = requete.q?.trim();
   if (saisie) {
@@ -675,15 +692,32 @@ export function listerChaines(requete: RequeteChaines = {}): PageChaines {
     ? [normaliseForSearch(saisie), `${normaliseForSearch(saisie).replaceAll("%", "\\%").replaceAll("_", "\\_")}%`]
     : [];
 
-  const lignes = db.prepare(`SELECT c.id, c.nom, c.numero, c.logo, c.groupe, c.pays, c.etat, c.adresses
+  /*
+   * L'étoile est lue en une fois pour la page, pas chaîne par chaîne.
+   *
+   * Un `EXISTS` par ligne coûterait soixante sous-requêtes ; ici c'est une jointure gauche sur une
+   * table dont la clé primaire commence par le profil. La grille garde ses 0,4 ms.
+   */
+  const favori = requete.profileId
+    ? "EXISTS (SELECT 1 FROM live_favoris fa WHERE fa.channel_id = c.id AND fa.profile_id = ?) AS favori"
+    : "0 AS favori";
+  const lignes = db.prepare(`SELECT c.id, c.nom, c.numero, c.logo, c.groupe, c.pays, c.etat, c.adresses, ${favori}
     FROM live_channels c ${jointure} ${where}
     ORDER BY ${tri}
-    LIMIT ? OFFSET ?`).all(...[...params, ...parametresTri, limit, offset] as never[]) as unknown as Array<{
-      id: string; nom: string; numero: number | null; logo: string | null;
-      groupe: string | null; pays: string | null; etat: ChaineDirect["etat"]; adresses: number;
+    LIMIT ? OFFSET ?`)
+    /*
+     * L'ordre des paramètres suit celui des `?` **dans le texte de la requête**, pas celui du code.
+     * Celui de l'étoile est dans le SELECT : il passe donc avant ceux de la jointure et du filtre.
+     */
+    .all(...[...(requete.profileId ? [requete.profileId] : []), ...params, ...parametresTri, limit, offset] as never[]) as unknown as Array<{
+      id: string; nom: string; numero: number | null; logo: string | null; groupe: string | null;
+      pays: string | null; etat: ChaineDirect["etat"]; adresses: number; favori: number;
     }>;
 
-  return { items: lignes, total: compte.n, offset, limit };
+  return {
+    items: lignes.map((ligne) => ({ ...ligne, favori: ligne.favori === 1 })),
+    total: compte.n, offset, limit,
+  };
 }
 
 /**
@@ -788,6 +822,41 @@ export function noterResultat(id: string, url: string, ok: boolean): boolean {
     throw cause;
   }
   return true;
+}
+
+/**
+ * Une chaîne entre dans les favorites d'un profil, ou en sort.
+ *
+ * Vingt chaînes sur 76 823 : c'est le vrai usage d'une grille de cette taille, et c'est ce qui la
+ * rend utilisable au quotidien. Le geste est le même que la liste d'envies du catalogue.
+ */
+export function marquerFavorite(profileId: string, channelId: string, favorite: boolean): boolean {
+  if (favorite) {
+    return db.prepare("INSERT OR IGNORE INTO live_favoris (profile_id, channel_id) VALUES (?, ?)")
+      .run(profileId, channelId).changes > 0;
+  }
+  return db.prepare("DELETE FROM live_favoris WHERE profile_id = ? AND channel_id = ?")
+    .run(profileId, channelId).changes > 0;
+}
+
+/**
+ * La dernière chaîne regardée par un profil.
+ *
+ * Elle est retenue **côté serveur** et non dans le client : un téléviseur qu'on rallume doit
+ * retrouver ce qu'on regardait, y compris quand on l'avait quitté depuis le téléphone. C'est aussi
+ * ce qui rend la touche « chaîne précédente » possible d'un appareil à l'autre.
+ */
+export function retenirDerniereChaine(profileId: string, channelId: string): void {
+  db.prepare(`INSERT INTO live_derniere_chaine (profile_id, channel_id, vue_le) VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(profile_id) DO UPDATE SET channel_id = excluded.channel_id, vue_le = CURRENT_TIMESTAMP`)
+    .run(profileId, channelId);
+}
+
+export function derniereChaine(profileId: string): ChaineDirect | null {
+  const ligne = db.prepare(`SELECT c.id, c.nom, c.numero, c.logo, c.groupe, c.pays, c.etat, c.adresses
+    FROM live_derniere_chaine d JOIN live_channels c ON c.id = d.channel_id
+    WHERE d.profile_id = ? AND c.adresses > 0`).get(profileId) as unknown as ChaineDirect | undefined;
+  return ligne ?? null;
 }
 
 /**

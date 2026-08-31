@@ -198,6 +198,11 @@
   <string name="etat_direct">Chargement du Live TV</string>
   <string name="etat_affiches_tv">Préparation des affiches TV</string>
   <string name="direct_titre">Live TV</string>
+  <string name="direct_mes_chaines">★ Mes chaînes</string>
+  <string name="direct_masquer_mortes">Masquer celles qui n\'ont pas répondu</string>
+  <string name="direct_reprendre">Reprendre</string>
+  <string name="direct_garder">Garder %1$s</string>
+  <string name="direct_retirer">Retirer %1$s de mes chaînes</string>
   <string name="direct_recherche">Rechercher une chaîne</string>
   <string name="direct_vide">Aucune chaîne ne correspond</string>
   <string name="direct_sources">%1$d sources</string>

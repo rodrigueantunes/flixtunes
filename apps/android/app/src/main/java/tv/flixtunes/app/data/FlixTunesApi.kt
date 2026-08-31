@@ -277,7 +277,7 @@ class FlixTunesApi(
     suspend fun chainesDirect(
         profileId: String, offset: Int, limit: Int,
         query: String = "", listes: List<String> = emptyList(), pays: List<String> = emptyList(),
-        fiabilites: List<String> = emptyList(),
+        fiabilites: List<String> = emptyList(), favoris: Boolean = false, masquerMortes: Boolean = false,
     ): PageChaines = withContext(Dispatchers.Default) {
         val reponse = request(buildString {
             append("/live/channels?profileId=${encode(profileId)}&offset=$offset&limit=$limit")
@@ -285,6 +285,8 @@ class FlixTunesApi(
             if (listes.isNotEmpty()) append("&listes=${encode(listes.joinToString(","))}")
             if (pays.isNotEmpty()) append("&pays=${encode(pays.joinToString(","))}")
             if (fiabilites.isNotEmpty()) append("&fiabilites=${encode(fiabilites.joinToString(","))}")
+            if (favoris) append("&favoris=1")
+            if (masquerMortes) append("&masquerMortes=1")
         })
         val items = reponse.optJSONArray("items") ?: JSONArray()
         PageChaines(
@@ -304,6 +306,25 @@ class FlixTunesApi(
     /** La chaîne voisine, par numéro — P+ et P− d'un téléviseur. Les extrémités bouclent. */
     suspend fun chaineVoisine(profileId: String, numero: Int, sens: Int): ChaineDirect? = withContext(Dispatchers.Default) {
         runCatching { lireChaine(request("/live/numero?profileId=${encode(profileId)}&numero=$numero&sens=$sens")) }.getOrNull()
+    }
+
+    /** L'étoile d'une chaîne, pour ce profil. Le même geste que la liste d'envies du catalogue. */
+    suspend fun favoriDirect(profileId: String, id: String, favori: Boolean) {
+        requestRaw("/live/channels/${encode(id)}/favori?profileId=${encode(profileId)}",
+            if (favori) "PUT" else "DELETE", null)
+    }
+
+    /**
+     * La dernière chaîne regardée par ce profil.
+     *
+     * Elle vient du serveur : un téléviseur qu'on rallume retrouve ce qu'on regardait, même si on
+     * l'avait quitté depuis le téléphone.
+     */
+    suspend fun derniereChaineDirect(profileId: String): ChaineDirect? = withContext(Dispatchers.Default) {
+        runCatching {
+            val reponse = request("/live/derniere?profileId=${encode(profileId)}")
+            if (reponse.isNull("chaine")) null else lireChaine(reponse.getJSONObject("chaine"))
+        }.getOrNull()
     }
 
     /** Les adresses d'une chaîne, déjà triées par ce que l'usage a appris. */
@@ -364,6 +385,7 @@ class FlixTunesApi(
         pays = entree.optString("pays").takeIf { it.isNotBlank() && it != "null" },
         etat = entree.optString("etat", "inconnue"),
         adresses = entree.optInt("adresses"),
+        favori = entree.optBoolean("favori"),
     )
 
     private suspend fun request(path: String, method: String = "GET", body: JSONObject? = null): JSONObject {
