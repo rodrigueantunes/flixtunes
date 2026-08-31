@@ -28,9 +28,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
@@ -324,12 +327,27 @@ private fun CarteChaine(
         Text(chaine.numero?.toString() ?: "—", color = BleuClair, fontSize = 12.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(6.dp))
         // 44 dp sur mobile, comme le `clamp(44px, 4vw, 64px)` du Web : au-delà, le carré déborde.
+        /*
+         * Le logo entier, jamais recadré — et l'initiale quand il manque.
+         *
+         * Il était affiché comme une jaquette : `ContentScale.Crop` sur une texture demandée au format
+         * 2:3. Un logo n'a pas de format, il y en a des larges et des hauts, et les rogner au carré
+         * coupait « BFM TV » et « RMC Découverte » de leurs côtés. Le Web les montre entiers depuis le
+         * début — `object-fit: contain` —, c'est lui la référence.
+         *
+         * Et le logo vient d'un hébergeur quelconque : il disparaît sans prévenir. Une case vide au
+         * milieu d'une grille se remarque plus qu'une lettre, d'où le repli sur l'initiale, qui est
+         * déjà ce qu'on affiche quand la liste n'en donne aucun.
+         */
         Box(Modifier.size(if (televiseur) 60.dp else 44.dp), contentAlignment = Alignment.Center) {
             val logo = chaine.logo
-            if (logo.isNullOrBlank()) {
+            var echec by remember(logo) { mutableStateOf(false) }
+            if (logo.isNullOrBlank() || echec) {
                 Text(chaine.nom.trim().take(1).uppercase().ifBlank { "?" },
                     color = Color.White.copy(alpha = .5f), fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
-            } else ImageOptimiseeTv(logo, FormatImageTv.SAISON, Modifier.fillMaxSize())
+            } else {
+                ImageOptimiseeTv(logo, FormatImageTv.LOGO, Modifier.fillMaxSize(), ContentScale.Fit) { echec = true }
+            }
         }
         Spacer(Modifier.height(6.dp))
         Text(chaine.nom, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,

@@ -68,6 +68,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import coil3.compose.AsyncImagePainter
 import coil3.request.ImageRequest
 import coil3.size.Size
 import androidx.compose.ui.layout.ContentScale
@@ -293,7 +294,7 @@ fun Jaquette(url: String?, titre: String, modifier: Modifier = Modifier, rang: I
 }
 
 /** Deux familles de textures suffisent à partager exactement les mêmes clés Coil sur TV. */
-enum class FormatImageTv { JAQUETTE, SAISON, BANDEAU }
+enum class FormatImageTv { JAQUETTE, SAISON, BANDEAU, LOGO }
 
 /**
  * Image réseau bornée sur TV, dimensionnée normalement par AsyncImage sur téléphone et tablette.
@@ -306,6 +307,8 @@ fun ImageOptimiseeTv(
     format: FormatImageTv,
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Crop,
+    /** Prévenu quand l'image ne se charge pas : à l'appelant de montrer autre chose. */
+    onEchec: (() -> Unit)? = null,
 ) {
     val gabarit = LocalGabarit.current
     val contexte = LocalContext.current
@@ -319,15 +322,25 @@ fun ImageOptimiseeTv(
                 // petite marge supplémentaire conserve ses détails sans revenir au décodage libre.
                 FormatImageTv.SAISON -> tailleTextureJaquetteTv(memoire) + 64
                 FormatImageTv.BANDEAU -> tailleTextureBandeauTv(memoire)
+                // Un logo de chaîne s'affiche dans soixante points : 192 pixels couvrent les écrans
+                // les plus denses et tiennent en mémoire, là où une texture de jaquette en gâchait dix
+                // fois plus pour une image dix fois plus petite.
+                FormatImageTv.LOGO -> 192
             }
             val hauteur = when (format) {
                 FormatImageTv.JAQUETTE, FormatImageTv.SAISON -> largeur * 3 / 2
                 FormatImageTv.BANDEAU -> largeur * 9 / 16
+                // Carré, parce qu'un logo n'a pas de format : il y en a des larges et des hauts, et
+                // c'est `ContentScale.Fit` qui décide de la place qu'il prend dedans.
+                FormatImageTv.LOGO -> largeur
             }
             ImageRequest.Builder(contexte).data(url).size(Size(largeur, hauteur)).build()
         }
     }
-    AsyncImage(modele, null, modifier, contentScale = contentScale)
+    AsyncImage(
+        modele, null, modifier, contentScale = contentScale,
+        onState = { etat -> if (etat is AsyncImagePainter.State.Error) onEchec?.invoke() },
+    )
 }
 
 /**

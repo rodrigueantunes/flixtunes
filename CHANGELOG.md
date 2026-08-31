@@ -10,6 +10,17 @@
 - **C'est le cas d'usage le plus normal qui soit**, et précisément celui qu'aucun de mes essais ne
   pouvait rencontrer : un lecteur qu'on ouvre trente secondes pour vérifier une correction ne dort
   jamais. Il a fallu une soirée devant un vrai téléviseur pour qu'il se voie.
+- **Les logos de chaînes étaient recadrés sur Android.** Ils étaient affichés comme des jaquettes :
+  `ContentScale.Crop` sur une texture demandée au format 2:3. Or un logo n'a pas de format — il y en a
+  des larges et des hauts —, et les rogner au carré coupait « BFM TV » et « RMC Découverte » de leurs
+  côtés. Le Web les montre entiers depuis le début, `object-fit: contain` : c'est lui la référence, et
+  Android s'y aligne enfin.
+- **Et la texture demandée était dix fois trop grosse.** Un logo s'affiche dans soixante points ; on en
+  chargeait une image de jaquette. Un format `LOGO` carré de 192 pixels le remplace : moins de mémoire
+  graphique sur le téléviseur, pour une image plus juste.
+- **Une case vide quand le logo casse.** Les logos viennent d'hébergeurs quelconques et disparaissent
+  sans prévenir ; le trou au milieu de la grille se remarquait plus qu'une lettre. L'initiale prend la
+  place, comme elle le fait déjà quand la liste n'en donne aucun.
 - 876 tests serveur, 271 tests Web, le Kotlin compile, lint passe.
 
 ## 0.5.7.r4 — ce que le téléviseur a montré
