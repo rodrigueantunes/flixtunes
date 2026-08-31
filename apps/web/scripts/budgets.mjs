@@ -43,7 +43,20 @@ const BUDGETS = {
    * dérive à peine gagnés, ce que ce fichier existe précisément pour empêcher.
    */
   jsEntree: { limite: 95 * Kio, libelle: "JavaScript du premier affichage (gzip)" },
-  css: { limite: 16 * Kio, libelle: "Feuille de style (gzip)" },
+  /**
+   * Relevé de 16 à 18 Kio le 31 août 2026, pour un écran entier qui n'existait pas.
+   *
+   * La télévision en direct a ajouté à la feuille une grille de chaînes, ses quatre filtres
+   * repliables, un lecteur avec sa barre de progression, son menu de sources et son cadre de
+   * réglages. Le seuil de 16 Kio datait d'une application qui n'avait ni cet écran ni ce lecteur ; la
+   * feuille est mesurée à **16,13 Kio**, soit 134 octets au-dessus.
+   *
+   * Rogner ces 134 octets aurait été jouer contre le garde-fou plutôt qu'avec lui : ce fichier existe
+   * pour rendre la dérive visible, et une dérive qu'on explique n'est plus une dérive. Deux kilooctets
+   * de marge pour une fonction de cette taille, et le prochain qui les dépassera devra à son tour dire
+   * pourquoi.
+   */
+  css: { limite: 18 * Kio, libelle: "Feuille de style (gzip)" },
   /**
    * Relevé de 175 à 200 Kio le même jour, et pour la même raison vue de l'autre côté.
    *

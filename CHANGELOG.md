@@ -61,6 +61,13 @@ que des défauts d'affichage : elles existaient, on ne pouvait simplement pas le
   bout de quelques minutes. Un verrou porté par une vue dépend de son attachement et de sa
   visibilité — et une vue posée dans un `AndroidView` de Compose n'offre pas les garanties d'un arbre
   de vues ordinaire. Le drapeau de fenêtre tient tant que l'activité est au premier plan.
+- **Le budget de la feuille de style relevé de 16 à 18 Kio, et c'est le garde-fou qui a parlé.** La
+  construction a échoué sur `16,0 Kio pour un budget de 16,0` — 134 octets au-dessus. Le seuil datait
+  d'une application qui n'avait ni écran Live TV ni lecteur de direct ; depuis, la feuille porte une
+  grille de chaînes, quatre filtres repliables, une barre de progression, un menu de sources et un
+  cadre de réglages. Rogner ces 134 octets aurait été jouer **contre** le garde-fou : il existe pour
+  rendre la dérive visible, et une dérive expliquée n'en est plus une. Le prochain qui dépassera les
+  18 Kio devra à son tour dire pourquoi.
 - 876 tests serveur, 271 tests Web, le Kotlin compile, lint passe.
 
 ## 0.5.7.r5 — le téléviseur s'endormait pendant qu'on regardait
