@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.os.Bundle
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -23,6 +24,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -115,23 +118,41 @@ class LecteurDirectActivity : ComponentActivity() {
     private var effacementSaisie: Job? = null
 
     /** La fenêtre publiée par la chaîne et l'endroit où l'on s'y trouve, relevés quatre fois par seconde. */
-    private var fenetreMs by mutableStateOf(0L)
-    private var positionMs by mutableStateOf(0L)
-    private var retardMs by mutableStateOf(0L)
+    private var fenetreMs by mutableLongStateOf(0L)
+    private var positionMs by mutableLongStateOf(0L)
+    private var retardMs by mutableLongStateOf(0L)
     private var enPause by mutableStateOf(false)
     /** Les commandes se montrent au geste et s'effacent : on regarde la télévision, pas une interface. */
     private var commandesVisibles by mutableStateOf(true)
     private var effacementCommandes: Job? = null
     /** La liste des sources, ouverte à la touche verte. */
     private var choixOuvert by mutableStateOf(false)
-    private var choixIndex by mutableStateOf(0)
+    private var choixIndex by mutableIntStateOf(0)
+
+    /**
+     * Le retour ferme la liste des sources avant de quitter la chaîne.
+     *
+     * Ce n'est pas la touche `BACK` qu'on écoute : sur un téléphone récent, le geste de retour ne
+     * l'envoie plus du tout — il passe par ce répartiteur, et lint le signale comme une erreur.
+     * Le rappel n'est actif que lorsque la liste est ouverte ; sinon le retour fait ce qu'il a
+     * toujours fait, fermer le lecteur.
+     */
+    private val fermerLeChoix = object : OnBackPressedCallback(false) {
+        override fun handleOnBackPressed() { montrerLesSources(false) }
+    }
+
+    private fun montrerLesSources(ouvert: Boolean) {
+        choixOuvert = ouvert
+        fermerLeChoix.isEnabled = ouvert
+        if (ouvert) commandesVisibles = true
+    }
     /**
      * Le retard de sécurité pris après des blocages répétés, en secondes.
      *
      * Zéro tant que tout va bien : on part **au bord du flux**, et l'on ne paie du retard que
      * lorsqu'il est mérité.
      */
-    private var securite by mutableStateOf(0)
+    private var securite by mutableIntStateOf(0)
     private var blocages = mutableListOf<Long>()
     /** Réparations tentées sur l'adresse en cours : une seule, après quoi la source est bien en cause. */
     private var reparations = 0
@@ -227,6 +248,7 @@ class LecteurDirectActivity : ComponentActivity() {
             })
         }
 
+        onBackPressedDispatcher.addCallback(this, fermerLeChoix)
         setContent { ThemeFlixTunes { Ecran() } }
         ouvrir(chaineId)
     }
@@ -240,7 +262,7 @@ class LecteurDirectActivity : ComponentActivity() {
         // Une chaîne neuve repart au bord : le retard de sécurité était celui de la précédente.
         securite = 0
         blocages.clear()
-        choixOuvert = false
+        montrerLesSources(false)
         reparations = 0
         // Ce qu'on quitte devient ce vers quoi on revient. Enregistré avant de charger : si la
         // nouvelle chaîne ne répond pas, le retour reste possible.
@@ -413,7 +435,9 @@ class LecteurDirectActivity : ComponentActivity() {
                 KeyEvent.KEYCODE_DPAD_UP -> { choixIndex = (choixIndex - 1).coerceAtLeast(0); return true }
                 KeyEvent.KEYCODE_DPAD_DOWN -> { choixIndex = (choixIndex + 1).coerceAtMost(adresses.lastIndex); return true }
                 KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> { choisirSource(choixIndex); return true }
-                KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> { choixOuvert = false; return true }
+                // Le retour n'est pas écouté ici : il passe par `OnBackPressedDispatcher`, seul chemin
+                // que le geste des téléphones récents emprunte encore.
+                KeyEvent.KEYCODE_ESCAPE -> { montrerLesSources(false); return true }
                 else -> Unit
             }
         }
@@ -443,8 +467,7 @@ class LecteurDirectActivity : ComponentActivity() {
         // La touche verte ouvre les sources : c'est la convention des boîtiers, et elle ne sert à rien d'autre ici.
         if (code == KeyEvent.KEYCODE_PROG_GREEN && adresses.size > 1) {
             choixIndex = rang
-            choixOuvert = true
-            commandesVisibles = true
+            montrerLesSources(true)
             return true
         }
         return super.dispatchKeyEvent(evenement)
@@ -521,7 +544,7 @@ class LecteurDirectActivity : ComponentActivity() {
      * simplement une autre.
      */
     private fun choisirSource(index: Int) {
-        choixOuvert = false
+        montrerLesSources(false)
         if (index !in adresses.indices || index == rang) return
         essai = null
         reparations = 0
@@ -604,8 +627,7 @@ class LecteurDirectActivity : ComponentActivity() {
                     ).joinToString(" · "),
                     Modifier.clickable(enabled = adresses.size > 1) {
                         choixIndex = rang
-                        choixOuvert = true
-                        commandesVisibles = true
+                        montrerLesSources(true)
                     },
                     color = Muet, fontSize = 13.sp,
                 )

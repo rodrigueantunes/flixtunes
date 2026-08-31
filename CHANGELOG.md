@@ -114,7 +114,11 @@ de la r2 tient toujours — ne rien dégrader de la grille à 0,07 ms.*
 - **Le nom est lu pour un pays avant qu'on se fie à la marque** : « Canal+ Family Poland-PL » et
   « Canal+ Sport 2 HD PL » se retrouvaient françaises et remontaient dans le bloc français de la
   grille, ce qui est le contraire du service rendu.
-- 873 tests serveur, 271 tests Web, le Kotlin compile. Vérifié à l'écran : Arte en 1080p, « − 0:31 »
+- **Le retour passe par le répartiteur, pas par la touche.** La liste des sources se fermait sur
+  `KEYCODE_BACK` — et lint a refusé la construction, à juste titre : sur un téléphone récent le geste
+  de retour ne l'envoie plus du tout. Il passe par `OnBackPressedDispatcher`, où un rappel actif
+  seulement quand la liste est ouverte la ferme, et laisse sinon le retour fermer le lecteur.
+- 873 tests serveur, 271 tests Web, le Kotlin compile, lint passe. Vérifié à l'écran : Arte en 1080p, « − 0:31 »
   sur la barre, la liste des deux sources, la pause et le retour au direct.
 
 ## 0.5.7.r2 — mes chaînes, la course, et la chaîne d'avant
