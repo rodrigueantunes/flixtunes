@@ -45,11 +45,21 @@ export interface SourceDirect {
  * Les adresses viennent du projet iptv-org, qui les tient à jour ; elles sont écrites ici plutôt que
  * dans un fichier de configuration parce qu'elles font partie de ce que l'application propose.
  */
+/*
+ * Les quatre adresses précédentes étaient **mortes**, et le fournisseur ne livrait donc rien.
+ *
+ * Vérifié le 1er septembre 2026 : les trois de `i.mjh.nz` rendent 404 — l'hébergeur ne publie plus
+ * que des guides XMLTV, ses playlists ont disparu — et `iptv-org.github.io/iptv/subdivisions/fr.m3u`
+ * répond 404 lui aussi. Personne ne s'en apercevait : une source qui ne rend aucune liste ressemble à
+ * une source qu'on n'a pas encore rafraîchie.
+ *
+ * Les deux qui les remplacent sont vérifiées : **215 et 459 chaînes** au moment de l'écriture. Elles
+ * portent les mêmes bouquets gratuits — iptv-org référence les chaînes Pluto, Samsung et Rakuten —,
+ * simplement rassemblées par pays et par langue plutôt que par éditeur.
+ */
 const LISTES_FAST: Array<{ nom: string; url: string }> = [
-  { nom: "Pluto TV France", url: "https://iptv-org.github.io/iptv/subdivisions/fr.m3u" },
-  { nom: "Samsung TV Plus France", url: "https://i.mjh.nz/SamsungTVPlus/fr.m3u8" },
-  { nom: "Pluto TV (tous pays)", url: "https://i.mjh.nz/PlutoTV/all.m3u8" },
-  { nom: "Rakuten TV France", url: "https://i.mjh.nz/Rakuten/fr.m3u8" },
+  { nom: "Chaînes françaises", url: "https://iptv-org.github.io/iptv/countries/fr.m3u" },
+  { nom: "Chaînes francophones", url: "https://iptv-org.github.io/iptv/languages/fra.m3u" },
 ];
 
 /** Le secret d'une source Xtream, chiffré au repos comme les jetons des fournisseurs de métadonnées. */

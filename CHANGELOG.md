@@ -1,5 +1,36 @@
 # Journal des versions
 
+## 0.5.7.r11 — le fournisseur qui ne livrait rien, et les listes qu'on choisit
+
+- **Les quatre adresses du bouquet gratuit répondaient 404.** Le fournisseur « Chaînes » de FlixTunes
+  ne livrait donc **aucune liste**, et personne ne s'en apercevait : une source qui ne rend rien
+  ressemble à une source qu'on n'a pas encore rafraîchie. Vérifié le 1er septembre 2026 — les trois de
+  `i.mjh.nz` parce que l'hébergeur ne publie plus que des guides XMLTV, ses playlists ayant disparu, et
+  `iptv-org.github.io/iptv/subdivisions/fr.m3u` parce qu'elle n'existe plus. Deux adresses vérifiées
+  les remplacent : **215 et 459 chaînes**.
+- **La recherche vise de nouveau TF1, M6 et Canal+.** L'ancien script cherchait `TF1 in:file` : GitHub
+  ne rendait que des fichiers **contenant** TF1, et le filtre était gratuit. En passant aux dépôts —
+  deux requêtes pour des dizaines de listes — j'avais gagné du volume et perdu cette visée sans le
+  voir, si bien qu'un dépôt mondial mentionnant « france » apportait ses listes chinoises et russes.
+  Les requêtes de code sont maintenant **dérivées de la même liste** que le critère, pour qu'elles ne
+  puissent pas se décaler.
+- **Et une liste découverte n'est gardée que si elle porte les trois.** Le test lit le fichier, pas son
+  nom, et compare sur le nom compacté **ponctuation gardée** — c'est le `+` qui empêche de ramasser
+  les mille « Canal 8 » hispanophones — et sur le début du nom, si bien que « TF1 FHD [1080p] » et
+  « Canal+ Sport » répondent présents. Il s'applique **avant** de sonder : une liste écartée coûte un
+  téléchargement, pas quatre cents sondes de flux.
+- **Un filtre grossier mais gratuit sur le nom du fichier** — `china`, `arabic`, `india`, `xxx` — évite
+  de télécharger deux mégaoctets pour découvrir qu'ils sont indiens.
+- **Les listes fixes échappent au critère, délibérément.** Mesuré : « Free-TV France » porte TF1 et M6
+  mais pas Canal+, et serait écartée — 32 vraies chaînes françaises perdues. L'intention est d'arrêter
+  d'importer le monde entier, pas de jeter ce qu'on a choisi.
+- **Un remplaçant écarté avant d'être écrit.** L'index de toutes les catégories d'iptv-org semblait
+  remplacer naturellement les adresses mortes ; mesuré, il porte **13 561 chaînes du monde entier**, et
+  les listes fixes étant exemptes du critère, il aurait fait rentrer par la porte ce qu'on venait de
+  sortir par la fenêtre.
+- 892 tests serveur, 271 tests Web, le Kotlin compile, lint passe. 12 vérifications sur le critère et
+  le filtre du script.
+
 ## 0.5.7.r10 — un menu de sources qu'on peut lire
 
 - **Les sources identiques sont regroupées.** Mesuré sur le corpus : **7 559 adresses de 1 976

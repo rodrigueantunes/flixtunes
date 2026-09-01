@@ -80,12 +80,56 @@ PUBLIC_PLAYLISTS = {
     "iptv-org Canada": "https://iptv-org.github.io/iptv/countries/ca.m3u",
     "Free-TV France": "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlists/playlist_france.m3u8",
     "simon-lzw France": "https://raw.githubusercontent.com/simon-lzw/iptv-scraper/master/output/countries/FR.m3u",
-    # Les bouquets gratuits et légaux que FlixTunes propose déjà comme fournisseur : les mesurer ici
-    # leur donne le même classement qu'aux autres, au lieu de les croire sur parole.
-    "Pluto TV (tous pays)": "https://i.mjh.nz/PlutoTV/all.m3u8",
-    "Samsung TV Plus France": "https://i.mjh.nz/SamsungTVPlus/fr.m3u8",
-    "Rakuten TV France": "https://i.mjh.nz/Rakuten/fr.m3u8",
+    # Les listes de i.mjh.nz — Pluto, Samsung, Rakuten — ont été retirées le 1er septembre 2026 :
+    # vérifié, elles rendent 404 et l'hébergeur ne publie plus que des guides XMLTV. Les mesurer ici
+    # les aurait comptées comme mortes à chaque passe, ce qui est exact mais inutile.
+    #
+    # Et rien n'a pris leur place. L'index de toutes les catégories d'iptv-org — 13 561 chaînes du
+    # monde entier, mesuré — semblait un remplaçant naturel : c'en était le contraire. Les listes
+    # fixes étant **exemptes du critère TF1/M6/Canal+**, elle aurait fait rentrer par la porte le
+    # monde entier qu'on venait de sortir par la fenêtre. Les listes fixes restent francophones.
 }
+
+"""
+Ce qu'une liste doit contenir pour être retenue.
+
+Le script cherchait auparavant `TF1 in:file` : GitHub ne rendait donc que des fichiers **contenant**
+TF1, et le filtre était gratuit. En passant aux dépôts — deux requêtes pour des dizaines de listes —
+j'ai gagné du volume et perdu ce filtre : un dépôt qui collectionne le monde entier et mentionne
+« france » dans sa description apportait ses listes chinoises, russes et arabes avec les autres.
+
+Le critère revient donc, et explicitement : une liste découverte n'est gardée que si elle porte **les
+trois**. C'est le test le plus simple qui distingue une liste française d'une liste mondiale, et il se
+lit dans le fichier plutôt que dans son nom.
+
+Les formes comptent : `canal+` garde son signe, parce que `canal` seul ramasserait les mille
+« Canal 8 » hispanophones. La comparaison porte sur le **début** du nom compacté, si bien que
+« TF1 FHD [1080p] » et « Canal+ Sport » répondent présents.
+"""
+CHAINES_REQUISES = ("tf1", "m6", "canal+")
+
+"""
+Comment elles s'écrivent quand on les cherche.
+
+La recherche de code de GitHub et le critère de contenu parlent des **mêmes trois chaînes**, et c'est
+la seule liste à tenir : dériver l'une de l'autre est ce qui les empêche de se décaler le jour où
+l'une bouge. L'ancien script cherchait déjà `TF1 in:file` — chercher des dépôts m'avait fait perdre
+cette visée, elle revient ici.
+"""
+CHAINES_CHERCHEES = ("TF1", "M6", '"Canal+"')
+
+"""
+Ce qu'un nom de fichier annonce franchement, et qui n'est pas pour nous.
+
+Un filtre grossier, mais gratuit : il évite de télécharger une liste de deux mégaoctets pour découvrir
+qu'elle est indienne. Il ne remplace pas le critère ci-dessus, il lui épargne du travail.
+"""
+NOMS_ECARTES = (
+    "china", "chinese", "arab", "arabic", "india", "indian", "hindi", "turk", "russia", "russian",
+    "brasil", "brazil", "espana", "spain", "italia", "italy", "german", "deutsch", "poland", "polska",
+    "portugal", "greek", "korea", "japan", "viet", "thai", "indo", "iran", "pakistan", "africa",
+    "latino", "mexico", "adult", "xxx", "porn",
+)
 
 """
 Les dépôts qu'on va lire, plutôt que les fichiers qu'on cherche.
@@ -106,9 +150,9 @@ La recherche de code reste, mais en second : elle trouve les fichiers isolés qu
 spécialisé ne porte.
 """
 GITHUB_QUERIES = [
-    "TF1 in:file extension:m3u",
-    '"France 2" in:file extension:m3u',
-    "TNT in:file extension:m3u8",
+    f"{chaine} in:file extension:{extension}"
+    for chaine in CHAINES_CHERCHEES
+    for extension in ("m3u", "m3u8")
 ]
 
 GITHUB_MAX_PAGES_PER_QUERY = 2
@@ -236,6 +280,10 @@ async def depots_github(client: httpx.AsyncClient) -> Dict[str, str]:
             ]
             for chemin in fichiers[:GITHUB_MAX_FICHIERS_PAR_DEPOT]:
                 base = os.path.splitext(os.path.basename(chemin))[0]
+                # Ce qui s'annonce étranger ne sera pas téléchargé : le critère de contenu s'appliquera
+                # aux autres, et n'aura pas à trancher ce que le nom disait déjà.
+                if any(mot in chemin.lower() for mot in NOMS_ECARTES):
+                    continue
                 trouvees.setdefault(
                     f"{base} ({plein})",
                     f"https://raw.githubusercontent.com/{plein}/{branche}/{chemin}",
@@ -347,6 +395,17 @@ def parse_stream_url(brute: str, heritees: Optional[Dict[str, str]] = None) -> T
         elif courte == "origin":
             entetes["Origin"] = valeur
     return url.strip(), entetes
+
+
+def compacter(nom: str) -> str:
+    """Le nom sans accents ni espaces, **ponctuation gardée** : c'est le `+` qui sauve « Canal+ »."""
+    return DIACRITIQUES.sub("", unicodedata.normalize("NFD", nom)).lower().replace(" ", "")
+
+
+def porte_les_chaines_requises(entrees: List[Dict[str, object]]) -> List[str]:
+    """Celles des chaînes exigées que cette liste porte vraiment."""
+    compacts = [compacter(str(entree.get("name", ""))) for entree in entrees]
+    return [requise for requise in CHAINES_REQUISES if any(nom.startswith(requise) for nom in compacts)]
 
 
 def analyze_m3u(contenu: str) -> Tuple[List[Dict[str, object]], int]:
@@ -526,6 +585,7 @@ async def traiter_une_liste(
     cache: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], bool],
     verrou: asyncio.Semaphore,
     journal: List[Dict[str, object]],
+    exigeante: bool,
 ) -> Optional[Dict[str, object]]:
     try:
         reponse = await client.get(url, timeout=PLAYLIST_DOWNLOAD_TIMEOUT)
@@ -539,6 +599,23 @@ async def traiter_une_liste(
 
     if not entrees:
         return None
+
+    """
+    Le critère de contenu, sur les listes découvertes seulement.
+
+    Les listes fixes sont un choix délibéré : les soumettre au même test retirerait « Free-TV France »,
+    qui porte TF1 et M6 mais pas Canal+ — vérifié —, et les bouquets gratuits, qui n'en portent aucun.
+    L'intention est d'arrêter d'importer le monde entier, pas de jeter ce qu'on a choisi.
+
+    Le test se fait **avant** de sonder : une liste écartée ne coûte alors qu'un téléchargement, et non
+    quatre cents sondes de flux.
+    """
+    if exigeante:
+        trouvees = porte_les_chaines_requises(entrees)
+        if len(trouvees) < len(CHAINES_REQUISES):
+            manquantes = [c for c in CHAINES_REQUISES if c not in trouvees]
+            logger.info(f"« {nom} » écartée : il lui manque {', '.join(manquantes)}")
+            return None
 
     await hotes.resoudre({urlparse(str(e["flux_url"])).hostname or "" for e in entrees} - {""})
 
@@ -617,9 +694,13 @@ async def traiter_les_listes(listes: Dict[str, str]) -> Tuple[List[Dict[str, obj
     portes = asyncio.Semaphore(LISTES_EN_PARALLELE)
 
     async with httpx.AsyncClient(limits=plafond, timeout=delais, follow_redirects=True, http2=True) as client:
+        fixes = set(PUBLIC_PLAYLISTS.values())
+
         async def une(nom: str, url: str) -> None:
             async with portes:
-                mesure = await traiter_une_liste(client, nom, url, hotes, cache, verrou, journal)
+                mesure = await traiter_une_liste(
+                    client, nom, url, hotes, cache, verrou, journal, exigeante=url not in fixes,
+                )
             if mesure:
                 retenues.append(mesure)
 
