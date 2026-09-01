@@ -151,8 +151,8 @@ describe("lireCatalogueM3U", () => {
       "❌ morte": "https://exemple.test/morte.m3u",
     }));
     expect(listes).toEqual([
-      { nom: "iptv-org France", url: "https://exemple.test/fr.m3u", classement: "bonne" },
-      { nom: "morte", url: "https://exemple.test/morte.m3u", classement: "faible" },
+      { nom: "iptv-org France", url: "https://exemple.test/fr.m3u", classement: "bonne", pourcentage: null },
+      { nom: "morte", url: "https://exemple.test/morte.m3u", classement: "faible", pourcentage: null },
     ]);
   });
 
@@ -169,5 +169,60 @@ describe("lireCatalogueM3U", () => {
 
   it("refuse un fichier qui n'est pas un objet", () => {
     expect(() => lireCatalogueM3U("[]")).toThrow(/objet/);
+  });
+});
+
+describe("le fichier de catalogue, version 2", () => {
+  /**
+   * La version 1 faisait voyager la mesure **dans le nom**, sous forme d'emoji, faute d'autre canal.
+   * La version 2 porte le pourcentage exact. Les deux doivent être lues : le fichier posé sur le NAS
+   * reste en version 1 jusqu'à la prochaine passe du script.
+   */
+  it("lit le pourcentage exact et en dérive la bande", () => {
+    const fichier = JSON.stringify({
+      version: 2,
+      listes: [
+        { nom: "Bonne liste", url: "https://exemple.test/a.m3u", pourcentage: 82.4 },
+        { nom: "Liste moyenne", url: "https://exemple.test/b.m3u", pourcentage: 51 },
+        { nom: "Liste douteuse", url: "https://exemple.test/c.m3u", pourcentage: 25 },
+        { nom: "Liste faible", url: "https://exemple.test/d.m3u", pourcentage: 3.2 },
+      ],
+    });
+    expect(lireCatalogueM3U(fichier)).toEqual([
+      { nom: "Bonne liste", url: "https://exemple.test/a.m3u", classement: "bonne", pourcentage: 82.4 },
+      { nom: "Liste moyenne", url: "https://exemple.test/b.m3u", classement: "moyenne", pourcentage: 51 },
+      { nom: "Liste douteuse", url: "https://exemple.test/c.m3u", classement: "douteuse", pourcentage: 25 },
+      { nom: "Liste faible", url: "https://exemple.test/d.m3u", classement: "faible", pourcentage: 3.2 },
+    ]);
+  });
+
+  it("recalcule la bande plutôt que de croire le fichier", () => {
+    /*
+     * Le script propose un classement, mais les seuils sont une décision d'affichage. Les garder ici
+     * est ce qui empêche les deux de diverger le jour où l'un bouge.
+     */
+    const fichier = JSON.stringify({
+      version: 2,
+      listes: [{ nom: "Menteuse", url: "https://exemple.test/x.m3u", pourcentage: 4, classement: "bonne" }],
+    });
+    expect(lireCatalogueM3U(fichier)[0]?.classement).toBe("faible");
+  });
+
+  it("continue de lire l'ancien format, pastille comprise", () => {
+    const ancien = JSON.stringify({ "✅ iptv-org France": "https://exemple.test/fr.m3u" });
+    expect(lireCatalogueM3U(ancien)).toEqual([
+      { nom: "iptv-org France", url: "https://exemple.test/fr.m3u", classement: "bonne", pourcentage: null },
+    ]);
+  });
+
+  it("ignore une entrée sans adresse utilisable", () => {
+    const fichier = JSON.stringify({
+      version: 2,
+      listes: [{ nom: "Sans adresse" }, { url: "rtp://239.0.0.1" }, { url: "https://exemple.test/ok.m3u" }],
+    });
+    const listes = lireCatalogueM3U(fichier);
+    expect(listes).toHaveLength(1);
+    // Sans nom, l'adresse en tient lieu : mieux vaut une ligne lisible qu'une ligne vide.
+    expect(listes[0]?.nom).toBe("https://exemple.test/ok.m3u");
   });
 });

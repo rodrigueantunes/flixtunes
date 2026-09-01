@@ -593,6 +593,21 @@ ensureLiveUrlColumn("sonde_le", "TEXT");
  * mauvaise doit apparaître dans les deux, puisqu'elle est vraiment dans les deux.
  */
 ensureLiveChannelColumn("classements", "INTEGER NOT NULL DEFAULT 0");
+
+/**
+ * La part **exacte** de chaînes joignables d'une liste, quand le fichier la donne.
+ *
+ * Le classement en quatre bandes était tout ce qui arrivait jusqu'ici, parce que le fichier ne
+ * transportait qu'un nom et une adresse : la mesure voyageait sous forme d'emoji dans le libellé.
+ * La version 2 du fichier porte le chiffre ; `NULL` pour les listes venues d'un ancien fichier, qui
+ * ne l'ont jamais dit.
+ */
+{
+  const colonnes = db.prepare("PRAGMA table_info(live_playlists)").all() as Array<{ name: string }>;
+  if (!colonnes.some((colonne) => colonne.name === "pourcentage")) {
+    db.exec("ALTER TABLE live_playlists ADD COLUMN pourcentage REAL");
+  }
+}
 /**
  * Le nom **compact** : sans accents, sans espaces, mais **avec sa ponctuation**.
  *

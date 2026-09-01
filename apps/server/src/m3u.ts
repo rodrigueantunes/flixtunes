@@ -250,12 +250,77 @@ export function analyserM3U(contenu: string): EntreeM3U[] {
  * plutôt que d'en imposer un autre. Une valeur qui n'est pas une adresse `http(s)` est écartée sans
  * faire échouer le reste : sur 535 entrées, une faute de frappe ne doit pas coûter les 534 autres.
  */
-export function lireCatalogueM3U(json: string): Array<{ nom: string; url: string; classement: ClassementListe }> {
+/** Une liste du catalogue, telle qu'on la range ensuite. */
+export interface ListeCatalogue {
+  nom: string;
+  url: string;
+  classement: ClassementListe;
+  /** La part exacte de chaînes joignables, quand le fichier la donne. `null` en version 1. */
+  pourcentage: number | null;
+}
+
+/**
+ * La version 2 du fichier : ce que le script a mesuré, dit franchement.
+ *
+ * La version 1 était un dictionnaire « nom » : « adresse », et le classement voyageait **dans le
+ * nom**, sous forme d'emoji — c'était le seul canal disponible. On rétro-analysait donc une pastille
+ * pour retrouver un chiffre que le script avait mesuré puis jeté, et quatre paliers pour un
+ * pourcentage. La version 2 le porte tel quel.
+ *
+ * Les deux formes restent lues, et ce n'est pas de la complaisance : le fichier posé sur le NAS reste
+ * en version 1 jusqu'à la prochaine passe du script, et un serveur neuf devant un ancien fichier ne
+ * doit pas tomber en panne — pas plus qu'un ancien serveur devant un fichier neuf, qui n'y verra
+ * aucune adresse plutôt que de s'arrêter.
+ */
+interface CatalogueV2 {
+  version: number;
+  listes?: Array<{ nom?: unknown; url?: unknown; classement?: unknown; pourcentage?: unknown }>;
+}
+
+function lireVersion2(lu: CatalogueV2): ListeCatalogue[] {
+  const listes: ListeCatalogue[] = [];
+  const vues = new Set<string>();
+  for (const entree of lu.listes ?? []) {
+    if (typeof entree?.url !== "string" || !/^https?:\/\//i.test(entree.url.trim())) continue;
+    const url = entree.url.trim();
+    if (vues.has(url)) continue;
+    vues.add(url);
+    const pourcentage = typeof entree.pourcentage === "number" && Number.isFinite(entree.pourcentage)
+      ? Math.min(100, Math.max(0, entree.pourcentage))
+      : null;
+    /*
+     * Le classement est **recalculé** depuis le pourcentage, et non repris du fichier.
+     *
+     * Le script en propose un, mais les seuils sont une décision d'affichage : les garder ici est ce
+     * qui empêche les deux de diverger le jour où l'un des deux bouge. Ce qui vient du fichier, c'est
+     * la mesure ; ce qui vient d'ici, c'est ce qu'on en fait.
+     */
+    listes.push({
+      nom: typeof entree.nom === "string" && entree.nom.trim() ? entree.nom.trim() : url,
+      url,
+      classement: pourcentage == null ? "inconnue" : classementDuPourcentage(pourcentage),
+      pourcentage,
+    });
+  }
+  return listes;
+}
+
+/** Les quatre bandes, à partir du chiffre. Les mêmes seuils que ceux que le script annonce. */
+export function classementDuPourcentage(pourcentage: number): ClassementListe {
+  if (pourcentage >= 75) return "bonne";
+  if (pourcentage >= 50) return "moyenne";
+  if (pourcentage >= 25) return "douteuse";
+  return "faible";
+}
+
+export function lireCatalogueM3U(json: string): ListeCatalogue[] {
   const lu: unknown = JSON.parse(json);
   if (!lu || typeof lu !== "object" || Array.isArray(lu)) {
     throw new Error("Le fichier doit contenir un objet « nom de liste » : « adresse ».");
   }
-  const listes: Array<{ nom: string; url: string; classement: ClassementListe }> = [];
+  if ((lu as CatalogueV2).version === 2) return lireVersion2(lu as CatalogueV2);
+
+  const listes: ListeCatalogue[] = [];
   const vues = new Set<string>();
   for (const [libelle, adresse] of Object.entries(lu as Record<string, unknown>)) {
     if (typeof adresse !== "string" || !/^https?:\/\//i.test(adresse.trim())) continue;
@@ -263,7 +328,8 @@ export function lireCatalogueM3U(json: string): Array<{ nom: string; url: string
     if (vues.has(url)) continue;
     vues.add(url);
     const { nom, classement } = decouperClassement(libelle);
-    listes.push({ nom: nom || url, url, classement });
+    // La version 1 ne connaît que la pastille : le pourcentage exact n'a jamais été transmis.
+    listes.push({ nom: nom || url, url, classement, pourcentage: null });
   }
   return listes;
 }

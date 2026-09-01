@@ -1,5 +1,51 @@
 # Journal des versions
 
+## 0.5.7.r8 — le script refait, et les chaînes enfin identifiées
+
+*Le script qui produit `m3u.json` était lent et trop confiant ; le fichier qu'il écrit ne savait
+transporter qu'un nom et une adresse. Les trois ont été repris ensemble.*
+
+- **La vitesse, sans rien retirer à la mesure.** Le contrôle reste **exhaustif** — c'est ce qui a été
+  demandé, et l'échantillonnage aurait été la solution facile. La vitesse vient donc de la structure :
+  les 539 listes étaient traitées **une par une**, chacune attendant les quatre cents sondes de la
+  précédente ; elles avancent maintenant huit de front. Un hôte est **banni après trois échecs de
+  transport**, ce qui fait tomber d'un coup les centaines d'adresses d'un serveur disparu. Les noms de
+  domaine sont **résolus une seule fois**, en parallèle, et ceux qui n'existent plus condamnent leurs
+  adresses sans qu'une connexion soit tentée. Les délais passent de 7 et 8 s à **4 s** : sur un corpus
+  où la moitié des adresses sont mortes, l'attente *est* la durée du script.
+- **Un 404 n'accuse jamais la machine.** Elle a répondu, elle est vivante, et ses autres adresses le
+  sont peut-être : seuls les échecs de transport comptent pour le bannissement.
+- **La fiabilité : n'importe quelle réponse 200 comptait comme un flux vivant.** Page d'erreur, portail
+  captif, page de garde d'un hébergeur qui a récupéré le domaine — tout passait. On lit maintenant les
+  premiers octets : `#EXTM3U` pour un manifeste, l'octet `0x47` pour du MPEG-TS, un type déclaré vidéo.
+  Ce qui commence par `<` est une page web. **Certains pourcentages vont baisser, et ils seront vrais.**
+- **La découverte va chercher les dépôts, plus seulement les fichiers.** Deux requêtes sur un dépôt
+  spécialisé rendent ses dizaines de listes, là où la recherche de code en montrait une par résultat et
+  s'épuisait en quota. S'ajoutent la Belgique, la Suisse, le Canada, et les **trois bouquets FAST que
+  FlixTunes proposait sans jamais les mesurer**.
+- **`m3u.json` passe en version 2, et la pastille disparaît.** Le classement d'une liste voyageait
+  **dans son libellé** — `✅ …` — faute d'autre canal : on rétro-analysait un emoji pour retrouver un
+  chiffre mesuré puis jeté. Le fichier porte désormais le **pourcentage exact**, l'effectif et la date
+  du relevé. Les deux formats restent lus : le fichier posé sur le NAS reste en version 1 jusqu'à la
+  prochaine passe du script, et un serveur neuf ne doit pas tomber en panne devant.
+- **Les seuils restent au serveur.** Le script propose un classement, FlixTunes le **recalcule** depuis
+  le pourcentage : c'est ce qui empêche les deux de diverger le jour où l'un bouge.
+- **Les chaînes sont identifiées par une table de référence, et le gain est mesuré.** Les quatre
+  indices déduits — `tvg-id`, drapeau, nom de pays dans le groupe, catalogue de noms français —
+  couvrent 28,3 % du corpus. L'index public d'iptv-org en apporte **+4 236**, soit **32,9 %**. C'est
+  réel et c'est modeste : j'avais annoncé un gisement, c'est un appoint.
+- **Le dépouillement des noms vaut la moitié de ce gain.** Les noms de la table sont propres — « TF1 »
+  —, ceux du corpus décorés — « TF1 FHD [1080p-canalplus.com] ». Comparer tels quels ne rapportait que
+  **2 775** chaînes ; en retirant la décoration une couche à la fois, **4 236**.
+- **Elle refuse d'identifier plutôt que de se tromper.** Sur 46 601 noms indexés, **1 408 sont écartés**
+  parce que deux pays se les disputent — « News », « Sport TV ». Les chaînes fermées le sont aussi,
+  pour ne pas prêter leur identité à une homonyme encore diffusée. Une erreur silencieuse vaut moins
+  que l'aveu d'ignorance qu'on avait déjà.
+- **Et elle n'est jamais une dépendance** : les 10 Mo sont mis en cache une semaine, un échec de
+  téléchargement garde la copie périmée plutôt que rien, et n'interrompt pas le rafraîchissement.
+- 888 tests serveur, 271 tests Web, le Kotlin compile, lint passe. 26 vérifications sur les fonctions
+  pures du script.
+
 ## 0.5.7.r7 — toutes les sources, des icônes qu'on voit, et l'image qui répond au doigt
 
 - **On limitait bien à quatre sources, et à trois endroits.** Le menu n'en listait que quatre, le

@@ -2,27 +2,31 @@
 """
 Le script qui produit `m3u.json` — la liste des listes que FlixTunes relit au démarrage.
 
-Version adaptée de `tv_playlist_checker.py` (Antunes Informatique) pour que ce qu'il mesure soit
-exactement ce que FlixTunes affiche. Cinq écarts ont été relevés entre les deux, et corrigés ici :
+Il cherche des listes de chaînes, sonde chacun de leurs flux, et écrit ce qu'il a mesuré. Trois choses
+ont été refaites, dans cet ordre d'importance.
 
-1. **L'ordre des pastilles était inversé.** `⚠️` marquait les listes sous 25 % et `❌` celles de 25 à
-   49 % : la pire portait le symbole le moins alarmant, et le filtre de fiabilité de FlixTunes les
-   classait donc à l'envers. Les quatre pastilles descendent maintenant ✅ 〰️ ⚠️ ❌, du meilleur au pire.
-2. **Le pourcentage comptait des flux, FlixTunes affiche des chaînes.** Une liste qui donne deux
-   adresses par chaîne, l'une morte et l'autre vivante, était mesurée à 50 % alors que FlixTunes en
-   montre 100 % de joignables — il fusionne les doublons et essaie les adresses l'une après l'autre.
-   La pastille porte désormais sur les chaînes fusionnées, c'est-à-dire sur ce qu'on verra.
-3. **Les transports illisibles pesaient dans le total.** `rtp://`, `rtsp://`, `rtmp://` : aucun des
-   trois lecteurs de FlixTunes ne les ouvre, il les écarte à l'import. Les compter comme morts
-   faisait passer pour mauvaise une liste dont FlixTunes ne garde que la bonne moitié.
-4. **Le nom se coupait à la première virgule**, y compris celle d'un `tvg-name="Ciné, Polar"`. La
-   virgule est maintenant cherchée hors guillemets, comme dans l'analyseur du serveur.
-5. **Les entrées sans nom** sont écartées, comme le fait FlixTunes : sans nom, pas de clé de fusion.
+**La vitesse, sans rien retirer à la mesure.** Le contrôle reste *exhaustif* — chaque flux de chaque
+liste est réellement essayé —, l'échantillonnage aurait été la solution facile. La vitesse vient donc
+de la structure :
 
-Le format du fichier ne change pas — « nom de liste » : « adresse » —, TvPourTous continue de le lire.
+| Ce qui coûtait | Ce qui le remplace |
+| --- | --- |
+| les listes traitées **une par une**, chacune attendant la précédente | `LISTES_EN_PARALLELE` de front |
+| un hôte mort retenté pour chacune de ses centaines d'adresses | il est **banni**, ses autres adresses tombent sans requête |
+| un nom de domaine disparu résolu à chaque adresse | résolu **une fois**, ses adresses écartées sans HTTP |
+| 7 s pour se connecter, 8 s pour le premier octet | 4 s : plus lent que cela n'est pas regardable |
 
-Écrire ailleurs qu'à côté du script : `FLIXTUNES_M3U_DIR` (par exemple le dossier du NAS que
-FlixTunes surveille) reçoit une copie de `m3u.json` à la fin de la passe.
+**La fiabilité.** N'importe quelle réponse 200 comptait comme vivante — page d'erreur, portail captif,
+page de garde d'hébergeur. On regarde maintenant les premiers octets : un manifeste commence par
+`#EXTM3U`, un flux MPEG-TS par l'octet de synchronisation `0x47`. Certains pourcentages vont
+**baisser**, et ils seront justes.
+
+**Ce que le fichier dit.** `m3u.json` portait le classement d'une liste **dans son libellé** — `✅ …`,
+`〰️ …` — faute de pouvoir transporter autre chose qu'un nom et une adresse. Il porte maintenant le
+pourcentage exact, l'effectif et la date du relevé. FlixTunes n'a plus à lire des emojis pour
+retrouver un chiffre qu'on avait mesuré, et son filtre de fiabilité cesse de tenir en quatre paliers.
+
+Écrire ailleurs qu'à côté du script : `FLIXTUNES_M3U_DIR` reçoit une copie de `m3u.json` à la fin.
 """
 import asyncio
 import datetime
@@ -31,9 +35,10 @@ import logging
 import os
 import re
 import shutil
+import socket
 import unicodedata
-from typing import Dict, List, Optional, Tuple
-from urllib.parse import parse_qsl
+from typing import Dict, List, Optional, Set, Tuple
+from urllib.parse import parse_qsl, urlparse
 
 import httpx
 from google.auth.exceptions import RefreshError
@@ -63,30 +68,90 @@ M3U_FILE = "m3u.json"
 FILES_TO_ARCHIVE = [M3U_FILE, CHANNELS_STATUS_FILE]
 LOG_FILE = "script.log"
 
-# Le dossier que FlixTunes relit, s'il est indiqué : une copie y est déposée en fin de passe.
 FLIXTUNES_M3U_DIR = os.environ.get("FLIXTUNES_M3U_DIR", "").strip()
+
+# ------------------------------------------------------------------- où l'on cherche
 
 PUBLIC_PLAYLISTS = {
     "iptv-org France": "https://iptv-org.github.io/iptv/countries/fr.m3u",
     "iptv-org Francophone": "https://iptv-org.github.io/iptv/languages/fra.m3u",
+    "iptv-org Belgique": "https://iptv-org.github.io/iptv/countries/be.m3u",
+    "iptv-org Suisse": "https://iptv-org.github.io/iptv/countries/ch.m3u",
+    "iptv-org Canada": "https://iptv-org.github.io/iptv/countries/ca.m3u",
     "Free-TV France": "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlists/playlist_france.m3u8",
     "simon-lzw France": "https://raw.githubusercontent.com/simon-lzw/iptv-scraper/master/output/countries/FR.m3u",
+    # Les bouquets gratuits et légaux que FlixTunes propose déjà comme fournisseur : les mesurer ici
+    # leur donne le même classement qu'aux autres, au lieu de les croire sur parole.
+    "Pluto TV (tous pays)": "https://i.mjh.nz/PlutoTV/all.m3u8",
+    "Samsung TV Plus France": "https://i.mjh.nz/SamsungTVPlus/fr.m3u8",
+    "Rakuten TV France": "https://i.mjh.nz/Rakuten/fr.m3u8",
 }
 
+"""
+Les dépôts qu'on va lire, plutôt que les fichiers qu'on cherche.
+
+La recherche de code de GitHub rend cent résultats par page, s'épuise vite en quota et ne voit qu'un
+fichier à la fois. Chercher des **dépôts** puis lire leur arbre git donne toutes les listes d'un
+projet en deux requêtes — et les projets qui collectionnent des listes en contiennent des dizaines.
+"""
+GITHUB_DEPOTS = [
+    "iptv m3u france",
+    "iptv playlist tnt",
+    "iptv-org",
+    "free iptv m3u",
+]
+
+"""
+La recherche de code reste, mais en second : elle trouve les fichiers isolés qu'aucun dépôt
+spécialisé ne porte.
+"""
 GITHUB_QUERIES = [
     "TF1 in:file extension:m3u",
-    "M6 in:file extension:m3u",
     '"France 2" in:file extension:m3u',
-    "TNT in:file extension:m3u",
-    "TF1 in:file extension:m3u8",
-    "M6 in:file extension:m3u8",
+    "TNT in:file extension:m3u8",
 ]
 
 GITHUB_MAX_PAGES_PER_QUERY = 2
-PLAYLIST_DOWNLOAD_TIMEOUT = 20.0
-STREAM_CONNECT_TIMEOUT = 7.0
-STREAM_READ_TIMEOUT = 8.0
-MAX_STREAM_CONCURRENCY = 80
+GITHUB_MAX_DEPOTS = 40
+GITHUB_MAX_FICHIERS_PAR_DEPOT = 60
+
+# ------------------------------------------------------------------- ce qui coûte du temps
+
+PLAYLIST_DOWNLOAD_TIMEOUT = 15.0
+
+"""
+Quatre secondes, et non sept puis huit.
+
+Un flux qui n'a pas répondu en quatre secondes ne se regarde pas : on ne mesure pas la patience d'un
+hébergeur, on mesure s'il envoie une image. Sur un corpus où la moitié des adresses sont mortes, la
+différence entre 4 et 15 secondes d'attente **est** la durée du script.
+"""
+STREAM_CONNECT_TIMEOUT = 4.0
+STREAM_READ_TIMEOUT = 4.0
+
+"""
+La concurrence, à deux étages.
+
+`MAX_STREAM_CONCURRENCY` borne le total — au-delà, on sature sa propre carte réseau et l'on mesure sa
+propre file d'attente plutôt que les hébergeurs. `LISTES_EN_PARALLELE` est le vrai gain : les listes
+étaient traitées une par une, chacune attendant que la précédente ait fini ses quatre cents sondes.
+"""
+MAX_STREAM_CONCURRENCY = 240
+LISTES_EN_PARALLELE = 8
+
+"""
+Le bannissement d'un hôte, et pourquoi il compte autant.
+
+Une liste morte, c'est un serveur disparu et quatre cents adresses qui pointent dessus. Les essayer
+une à une, c'est quatre cents fois le même délai. Trois échecs de connexion suffisent à conclure : ce
+n'est pas l'adresse qui est morte, c'est la machine.
+
+Les échecs comptés sont ceux du **transport** — connexion refusée, délai dépassé —, jamais un 404 :
+un hébergeur qui répond « cette chaîne n'existe plus » est bien vivant, et ses autres adresses le sont
+peut-être aussi.
+"""
+ECHECS_AVANT_BANNISSEMENT = 3
+
 MIN_ACTIVE_TO_KEEP = 1
 
 logger = logging.getLogger("tv_checker")
@@ -99,6 +164,8 @@ fh = logging.FileHandler(os.path.join(SCRIPT_DIR, LOG_FILE), encoding="utf-8")
 fh.setFormatter(formatter)
 logger.addHandler(fh)
 
+
+# ------------------------------------------------------------------- la découverte
 
 def load_github_token() -> str:
     token = os.environ.get("GITHUB_TOKEN", "").strip()
@@ -114,97 +181,124 @@ def load_github_token() -> str:
     return ""
 
 
-async def search_github_m3u(token: str) -> Dict[str, str]:
-    if not token:
-        logger.warning("GitHub ignoré: aucun token dans GITHUB_TOKEN ou github_token.txt")
-        return {}
-
-    url = "https://api.github.com/search/code"
-    headers = {
+def entetes_github(token: str) -> Dict[str, str]:
+    return {
         "Accept": "application/vnd.github+json",
         "Authorization": f"Bearer {token}",
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "TvPourTous/2.0 PlaylistAnalyzer",
+        "User-Agent": "FlixTunes/PlaylistAnalyzer",
     }
-    playlists: Dict[str, str] = {}
-
-    async with httpx.AsyncClient(headers=headers, timeout=20.0, follow_redirects=True) as client:
-        for q in GITHUB_QUERIES:
-            logger.info(f"GitHub search query: {q}")
-            for page in range(1, GITHUB_MAX_PAGES_PER_QUERY + 1):
-                try:
-                    resp = await client.get(url, params={"q": q, "per_page": 100, "page": page})
-                    if resp.status_code in (403, 429):
-                        logger.warning(f"GitHub rate limit atteint sur '{q}', recherche suivante")
-                        break
-                    resp.raise_for_status()
-                except Exception as e:
-                    logger.warning(f"Recherche GitHub ignorée pour '{q}' page {page}: {e}")
-                    break
-
-                data = resp.json()
-                items = data.get("items", [])
-                if page == 1:
-                    logger.info(f"Found {data.get('total_count', 0)} items; scanning up to {GITHUB_MAX_PAGES_PER_QUERY * 100}")
-
-                if not items:
-                    break
-
-                for item in items:
-                    path = item.get("path", "")
-                    if not path.lower().endswith((".m3u", ".m3u8")):
-                        continue
-                    repo = item.get("repository", {})
-                    owner = repo.get("owner", {}).get("login", "")
-                    name = repo.get("name", "")
-                    branch = repo.get("default_branch", "master")
-                    if not owner or not name or not path:
-                        continue
-                    raw_url = f"https://raw.githubusercontent.com/{owner}/{name}/{branch}/{path}"
-                    key = f"GitHub {owner}/{name}/{path}"
-                    playlists.setdefault(key, raw_url)
-
-                if len(items) < 100:
-                    break
-
-    return playlists
 
 
-def parse_stream_url(raw_url: str, inherited_headers: Optional[Dict[str, str]] = None) -> Tuple[str, Dict[str, str]]:
-    headers = dict(inherited_headers or {})
-    if "|" not in raw_url:
-        return raw_url.strip(), headers
-
-    url, params = raw_url.split("|", 1)
-    for key, value in parse_qsl(params, keep_blank_values=True):
-        lk = key.strip().lower()
-        if lk in {"user-agent", "user_agent", "http-user-agent"}:
-            headers["User-Agent"] = value
-        elif lk in {"referer", "referrer", "http-referrer"}:
-            headers["Referer"] = value
-        elif lk == "origin":
-            headers["Origin"] = value
-    return url.strip(), headers
-
-
-def nom_de_lextinf(line: str) -> str:
+async def depots_github(client: httpx.AsyncClient) -> Dict[str, str]:
     """
-    Le nom d'une ligne `#EXTINF`, coupé à la première virgule **hors guillemets**.
+    Les listes trouvées en lisant l'**arbre** des dépôts spécialisés.
 
-    `#EXTINF:-1 tvg-name="Ciné, Polar" group-title="Cinéma",Ciné+ Polar` en contient trois : couper à
-    la première donnait `Polar" group-title=...` comme nom de chaîne. C'est la règle qu'applique
-    l'analyseur du serveur, et le nom sert maintenant de clé de fusion — il ne peut plus être faux.
+    Deux requêtes par dépôt — la recherche puis l'arbre complet — rendent toutes ses listes d'un coup,
+    là où la recherche de code n'en montre qu'une par résultat et s'épuise en quota. Un dépôt qui
+    collectionne des listes en porte des dizaines : c'est là que se trouve le volume.
     """
-    dans_guillemets = False
-    for index, caractere in enumerate(line):
-        if caractere == '"':
-            dans_guillemets = not dans_guillemets
-        elif caractere == "," and not dans_guillemets:
-            return line[index + 1:].strip()
-    return ""
+    trouvees: Dict[str, str] = {}
+    vus: Set[str] = set()
+    for requete in GITHUB_DEPOTS:
+        try:
+            reponse = await client.get(
+                "https://api.github.com/search/repositories",
+                params={"q": requete, "sort": "updated", "per_page": 20},
+            )
+            if reponse.status_code in (403, 429):
+                logger.warning(f"GitHub : quota atteint sur les dépôts « {requete} »")
+                break
+            reponse.raise_for_status()
+        except Exception as erreur:
+            logger.warning(f"GitHub : recherche de dépôts « {requete} » ignorée ({erreur})")
+            continue
+
+        for depot in reponse.json().get("items", [])[:GITHUB_MAX_DEPOTS]:
+            plein = depot.get("full_name") or ""
+            branche = depot.get("default_branch") or "master"
+            if not plein or plein in vus:
+                continue
+            vus.add(plein)
+            try:
+                arbre = await client.get(
+                    f"https://api.github.com/repos/{plein}/git/trees/{branche}",
+                    params={"recursive": "1"},
+                )
+                if arbre.status_code != 200:
+                    continue
+            except Exception:
+                continue
+
+            fichiers = [
+                noeud.get("path", "") for noeud in arbre.json().get("tree", [])
+                if str(noeud.get("path", "")).lower().endswith((".m3u", ".m3u8"))
+            ]
+            for chemin in fichiers[:GITHUB_MAX_FICHIERS_PAR_DEPOT]:
+                base = os.path.splitext(os.path.basename(chemin))[0]
+                trouvees.setdefault(
+                    f"{base} ({plein})",
+                    f"https://raw.githubusercontent.com/{plein}/{branche}/{chemin}",
+                )
+    return trouvees
 
 
-# Les diacritiques combinants, exactement le bloc que retire la normalisation du serveur.
+async def fichiers_github(client: httpx.AsyncClient) -> Dict[str, str]:
+    """La recherche de code, en second : elle trouve les listes isolées qu'aucun dépôt ne rassemble."""
+    trouvees: Dict[str, str] = {}
+    for requete in GITHUB_QUERIES:
+        for page in range(1, GITHUB_MAX_PAGES_PER_QUERY + 1):
+            try:
+                reponse = await client.get(
+                    "https://api.github.com/search/code",
+                    params={"q": requete, "per_page": 100, "page": page},
+                )
+                if reponse.status_code in (403, 429):
+                    logger.warning(f"GitHub : quota atteint sur « {requete} »")
+                    return trouvees
+                reponse.raise_for_status()
+            except Exception as erreur:
+                logger.warning(f"GitHub : « {requete} » page {page} ignorée ({erreur})")
+                break
+
+            entrees = reponse.json().get("items", [])
+            for entree in entrees:
+                chemin = entree.get("path", "")
+                depot = entree.get("repository", {})
+                proprietaire = depot.get("owner", {}).get("login", "")
+                nom = depot.get("name", "")
+                branche = depot.get("default_branch", "master")
+                if not (chemin.lower().endswith((".m3u", ".m3u8")) and proprietaire and nom):
+                    continue
+                base = os.path.splitext(os.path.basename(chemin))[0]
+                trouvees.setdefault(
+                    f"{base} ({proprietaire}/{nom})",
+                    f"https://raw.githubusercontent.com/{proprietaire}/{nom}/{branche}/{chemin}",
+                )
+            if len(entrees) < 100:
+                break
+    return trouvees
+
+
+async def chercher_les_listes() -> Dict[str, str]:
+    """Les listes fixes, puis ce que GitHub apporte — dépôts d'abord, fichiers isolés ensuite."""
+    listes = dict(PUBLIC_PLAYLISTS)
+    token = load_github_token()
+    if not token:
+        logger.warning("GitHub ignoré : aucun jeton dans GITHUB_TOKEN ni github_token.txt")
+        return listes
+
+    async with httpx.AsyncClient(headers=entetes_github(token), timeout=20.0, follow_redirects=True) as client:
+        for source, trouvees in (("dépôts", await depots_github(client)), ("fichiers", await fichiers_github(client))):
+            connues = set(listes.values())
+            neuves = {nom: url for nom, url in trouvees.items() if url not in connues}
+            listes.update(neuves)
+            logger.info(f"GitHub {source} : {len(neuves)} liste(s) retenue(s)")
+    return listes
+
+
+# ------------------------------------------------------------------- lire une liste
+
 DIACRITIQUES = re.compile(r"[̀-ͯ]")
 
 
@@ -212,10 +306,10 @@ def cle_de_chaine(nom: str) -> str:
     """
     La clé sous laquelle FlixTunes fusionne deux entrées.
 
-    Transcription de `normaliseForSearch` : décomposition, retrait des accents, minuscules,
-    ligatures dépliées, et tout ce qui n'est ni lettre ni chiffre devient une espace. « TF1 HD » et
-    « tf1  hd » retombent ainsi sur la même chaîne — comme dans la base, sans quoi le pourcentage
-    mesuré ici ne parlerait pas de la même chose que la grille.
+    Transcription de `normaliseForSearch` : décomposition, retrait des accents, minuscules, ligatures
+    dépliées, et tout ce qui n'est ni lettre ni chiffre devient une espace. Le pourcentage mesuré ici
+    porte sur les mêmes chaînes que celles de la grille — sans cette clé commune, les deux compteraient
+    des choses différentes en croyant compter la même.
     """
     texte = DIACRITIQUES.sub("", unicodedata.normalize("NFD", nom)).lower()
     texte = texte.replace("œ", "oe").replace("æ", "ae").replace("ß", "ss")
@@ -223,219 +317,322 @@ def cle_de_chaine(nom: str) -> str:
     return " ".join(lisible.split())
 
 
-def lisible_par_flixtunes(url: str) -> bool:
-    """
-    Ce que les lecteurs de FlixTunes savent ouvrir : `http` et `https`, rien d'autre.
+def nom_de_lextinf(ligne: str) -> str:
+    """Le nom d'une ligne `#EXTINF`, coupé à la première virgule **hors guillemets**."""
+    dans_guillemets = False
+    for index, caractere in enumerate(ligne):
+        if caractere == '"':
+            dans_guillemets = not dans_guillemets
+        elif caractere == "," and not dans_guillemets:
+            return ligne[index + 1:].strip()
+    return ""
 
-    Le corpus mesuré compte 1 347 entrées en `rtp`, `rtsp`, `rtmp` ou `plugin`. Ni le navigateur ni
-    Media3 ne les lisent, et le serveur les écarte à l'import : les compter comme des flux morts
-    faisait passer pour mauvaise une liste dont FlixTunes ne garde que la partie lisible.
-    """
+
+def lisible_par_flixtunes(url: str) -> bool:
+    """Ce que les lecteurs de FlixTunes savent ouvrir : `http` et `https`, rien d'autre."""
     return bool(re.match(r"^https?://", url, re.IGNORECASE))
 
 
-def analyze_m3u(content: str) -> Tuple[List[Dict[str, object]], int]:
+def parse_stream_url(brute: str, heritees: Optional[Dict[str, str]] = None) -> Tuple[str, Dict[str, str]]:
+    entetes = dict(heritees or {})
+    if "|" not in brute:
+        return brute.strip(), entetes
+    url, parametres = brute.split("|", 1)
+    for cle, valeur in parse_qsl(parametres, keep_blank_values=True):
+        courte = cle.strip().lower()
+        if courte in {"user-agent", "user_agent", "http-user-agent"}:
+            entetes["User-Agent"] = valeur
+        elif courte in {"referer", "referrer", "http-referrer"}:
+            entetes["Referer"] = valeur
+        elif courte == "origin":
+            entetes["Origin"] = valeur
+    return url.strip(), entetes
+
+
+def analyze_m3u(contenu: str) -> Tuple[List[Dict[str, object]], int]:
     """
     Les entrées d'une liste, et le nombre de celles que FlixTunes n'importera pas.
 
     Ce qui est écarté ici l'est pour les mêmes raisons que là-bas : un transport qu'aucun lecteur
-    n'ouvre, ou un nom vide qui ne donne aucune clé de fusion. Les écartées sont **comptées** et non
-    tues : une liste dont on retire la moitié doit pouvoir se lire dans le journal.
+    n'ouvre, ou un nom vide qui ne donne aucune clé de fusion.
     """
-    channels: List[Dict[str, object]] = []
+    entrees: List[Dict[str, object]] = []
     ecartees = 0
-    last_name = ""
-    pending_headers: Dict[str, str] = {}
+    dernier_nom = ""
+    entetes: Dict[str, str] = {}
 
-    for raw_line in content.splitlines():
-        line = raw_line.strip()
-        if not line:
+    for ligne_brute in contenu.splitlines():
+        ligne = ligne_brute.strip()
+        if not ligne:
             continue
-        lower = line.lower()
+        minuscule = ligne.lower()
 
-        if lower.startswith("#extinf:"):
-            last_name = nom_de_lextinf(line)
-            pending_headers = {}
+        if minuscule.startswith("#extinf:"):
+            dernier_nom = nom_de_lextinf(ligne)
+            entetes = {}
             continue
-
-        if lower.startswith("#extvlcopt:http-user-agent="):
-            pending_headers["User-Agent"] = line.split("=", 1)[1].strip()
+        if minuscule.startswith("#extvlcopt:http-user-agent="):
+            entetes["User-Agent"] = ligne.split("=", 1)[1].strip()
             continue
-
-        if lower.startswith("#extvlcopt:http-referrer=") or lower.startswith("#extvlcopt:http-referer="):
-            pending_headers["Referer"] = line.split("=", 1)[1].strip()
+        if minuscule.startswith("#extvlcopt:http-referrer=") or minuscule.startswith("#extvlcopt:http-referer="):
+            entetes["Referer"] = ligne.split("=", 1)[1].strip()
             continue
-
-        if line.startswith("#"):
+        if ligne.startswith("#"):
             continue
 
-        url, headers = parse_stream_url(line, pending_headers)
-        pending_headers = {}
+        url, propres = parse_stream_url(ligne, entetes)
+        entetes = {}
         if not url:
             continue
-        cle = cle_de_chaine(last_name)
+        cle = cle_de_chaine(dernier_nom)
         if not lisible_par_flixtunes(url) or not cle:
             ecartees += 1
             continue
-        channels.append({"name": last_name, "cle": cle, "flux_url": url, "headers": headers})
+        entrees.append({"name": dernier_nom, "cle": cle, "flux_url": url, "headers": propres})
 
-    dedup: Dict[str, Dict[str, object]] = {}
-    for channel in channels:
-        dedup.setdefault(str(channel["flux_url"]), channel)
-    return list(dedup.values()), ecartees
+    unique: Dict[str, Dict[str, object]] = {}
+    for entree in entrees:
+        unique.setdefault(str(entree["flux_url"]), entree)
+    return list(unique.values()), ecartees
 
 
-async def check_flux(client: httpx.AsyncClient, url: str, headers: Dict[str, str]) -> bool:
+# ------------------------------------------------------------------- sonder, vite et juste
+
+class VerdictHotes:
+    """
+    Ce qu'on sait des machines, pour ne pas le réapprendre à chaque adresse.
+
+    Une liste morte, c'est un serveur disparu et quatre cents adresses qui pointent dessus. Les
+    essayer une à une revient à payer quatre cents fois le même délai. Deux mémoires suffisent : les
+    noms qui ne se résolvent pas, et les machines qui ont refusé le transport plusieurs fois.
+    """
+
+    def __init__(self) -> None:
+        self.resolus: Dict[str, bool] = {}
+        self.echecs: Dict[str, int] = {}
+
+    def banni(self, hote: str) -> bool:
+        return self.resolus.get(hote) is False or self.echecs.get(hote, 0) >= ECHECS_AVANT_BANNISSEMENT
+
+    def noter_echec(self, hote: str) -> None:
+        self.echecs[hote] = self.echecs.get(hote, 0) + 1
+
+    def noter_succes(self, hote: str) -> None:
+        # Une réussite efface le passé : un hébergeur qui a hoqueté trois fois puis répond n'est pas mort.
+        self.echecs[hote] = 0
+
+    async def resoudre(self, hotes: Set[str]) -> None:
+        """
+        Résoudre chaque nom **une seule fois**, en parallèle, avant toute requête.
+
+        Un domaine expiré est la panne la plus fréquente d'un corpus de listes, et la plus chère à
+        découvrir par HTTP : le délai s'écoule en entier pour chacune de ses adresses. Un nom qui ne
+        se résout pas condamne les siennes sans qu'une seule connexion ne soit tentée.
+        """
+        inconnus = [hote for hote in hotes if hote not in self.resolus]
+        if not inconnus:
+            return
+        boucle = asyncio.get_running_loop()
+        verrou = asyncio.Semaphore(64)
+
+        async def resoudre_un(hote: str) -> None:
+            async with verrou:
+                try:
+                    await boucle.getaddrinfo(hote, None)
+                    self.resolus[hote] = True
+                except Exception:
+                    self.resolus[hote] = False
+
+        await asyncio.gather(*(resoudre_un(hote) for hote in inconnus))
+        morts = sum(1 for hote in inconnus if not self.resolus.get(hote))
+        logger.info(f"Noms résolus : {len(inconnus) - morts} vivants, {morts} disparus")
+
+
+def ressemble_a_un_flux(octets: bytes, type_declare: Optional[str]) -> bool:
+    """
+    Est-ce vraiment un flux, ou une page qui répond poliment ?
+
+    N'importe quelle réponse 200 comptait comme vivante : une page d'erreur, un portail captif, la
+    page de garde d'un hébergeur qui a récupéré le domaine. Trois signes suffisent à trancher — un
+    manifeste commence par `#EXTM3U`, un flux MPEG-TS par l'octet `0x47`, et un type déclaré vidéo
+    engage celui qui l'annonce. Ce qui commence par `<` est une page web, et rien d'autre.
+    """
+    tete = octets[:512]
+    if tete.lstrip()[:7] == b"#EXTM3U":
+        return True
+    if tete[:1] == b"G":
+        return True
+    if tete.lstrip()[:1] == b"<":
+        return False
+    declare = (type_declare or "").lower()
+    return any(marqueur in declare for marqueur in ("mpegurl", "video/", "octet-stream", "audio/"))
+
+
+async def check_flux(client: httpx.AsyncClient, url: str, entetes: Dict[str, str], hotes: VerdictHotes) -> bool:
     if not lisible_par_flixtunes(url):
         return False
+    hote = urlparse(url).hostname or ""
+    if not hote or hotes.banni(hote):
+        return False
 
-    request_headers = {
+    demande = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/142 Safari/537.36",
         "Accept": "*/*",
         "Connection": "keep-alive",
     }
-    request_headers.update(headers)
+    demande.update(entetes)
 
     try:
-        async with client.stream("GET", url, headers=request_headers) as resp:
-            if resp.status_code not in (200, 206):
+        async with client.stream("GET", url, headers=demande) as reponse:
+            if reponse.status_code not in (200, 206):
+                # Un 404 n'accuse pas la machine : elle a répondu, elle est vivante.
+                hotes.noter_succes(hote)
                 return False
-            async for chunk in resp.aiter_bytes(2048):
-                if chunk:
-                    return True
-            return True
+            async for morceau in reponse.aiter_bytes(2048):
+                hotes.noter_succes(hote)
+                return ressemble_a_un_flux(morceau, reponse.headers.get("content-type"))
+            return False
     except Exception:
+        hotes.noter_echec(hote)
         return False
 
 
-def determine_icon(total: int, active: int) -> str:
+# ------------------------------------------------------------------- la passe
+
+def classement(pourcentage: Optional[float]) -> str:
     """
-    La pastille posée en tête du nom, et lue par FlixTunes pour classer la liste.
+    Les quatre bandes que FlixTunes affiche, dérivées du pourcentage exact.
 
-    Les quatre descendent du meilleur au pire — ✅ 〰️ ⚠️ ❌ — et c'est la correction principale de
-    cette version : `⚠️` marquait auparavant les listes sous 25 % et `❌` celles de 25 à 49 %, si bien
-    que la pire portait le symbole le moins alarmant et que le filtre de fiabilité les rangeait à
-    l'envers. Les seuils, eux, n'ont pas bougé.
-
-    | Pastille | Chaînes joignables | Classe côté FlixTunes |
-    | --- | --- | --- |
-    | ✅ | 75 % et plus | `bonne` |
-    | 〰️ | 50 à 74 % | `moyenne` |
-    | ⚠️ | 25 à 49 % | `douteuse` |
-    | ❌ | moins de 25 % | `faible` |
-
-    Aucune pastille quand rien ne répond : la liste n'est alors pas écrite dans le fichier.
+    Le fichier porte désormais le chiffre lui-même ; ces noms ne servent plus qu'à ranger les listes
+    dans un menu. C'est l'inverse d'avant, où le nom était la seule chose transmise et le chiffre
+    perdu en route.
     """
-    if total <= 0 or active <= 0:
-        return ""
-    pct = active / total * 100
-    if pct < 25:
-        return "❌"
-    if pct < 50:
-        return "⚠️"
-    if pct < 75:
-        return "〰️"
-    return "✅"
+    if pourcentage is None:
+        return "inconnue"
+    if pourcentage >= 75:
+        return "bonne"
+    if pourcentage >= 50:
+        return "moyenne"
+    if pourcentage >= 25:
+        return "douteuse"
+    return "faible"
 
 
-def playlist_label(key: str, icon: str) -> str:
-    if key.startswith("GitHub "):
-        value = key[7:]
-        parts = value.split("/", 2)
-        if len(parts) == 3:
-            owner, repo, path = parts
-            base = os.path.splitext(os.path.basename(path))[0]
-            return f"{icon} {base} ({owner}/{repo})".strip()
-    return f"{icon} {key}".strip()
+async def traiter_une_liste(
+    client: httpx.AsyncClient,
+    nom: str,
+    url: str,
+    hotes: VerdictHotes,
+    cache: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], bool],
+    verrou: asyncio.Semaphore,
+    journal: List[Dict[str, object]],
+) -> Optional[Dict[str, object]]:
+    try:
+        reponse = await client.get(url, timeout=PLAYLIST_DOWNLOAD_TIMEOUT)
+        if reponse.status_code != 200:
+            logger.warning(f"Liste « {nom} » injoignable (HTTP {reponse.status_code})")
+            return None
+        entrees, ecartees = analyze_m3u(reponse.text)
+    except Exception as erreur:
+        logger.warning(f"Liste ignorée « {nom} » : {erreur}")
+        return None
 
+    if not entrees:
+        return None
 
-async def process_playlists(playlists: Dict[str, str]) -> Tuple[List[Dict[str, object]], Dict[str, str]]:
-    channels_status: List[Dict[str, object]] = []
-    m3u_dict: Dict[str, str] = {}
-    flux_cache: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], bool] = {}
+    await hotes.resoudre({urlparse(str(e["flux_url"])).hostname or "" for e in entrees} - {""})
 
-    timeout = httpx.Timeout(
-        connect=STREAM_CONNECT_TIMEOUT,
-        read=STREAM_READ_TIMEOUT,
-        write=STREAM_READ_TIMEOUT,
-        pool=STREAM_CONNECT_TIMEOUT,
+    async def sonder(entree: Dict[str, object]) -> Tuple[Dict[str, object], bool]:
+        adresse = str(entree["flux_url"])
+        propres = dict(entree.get("headers", {}))
+        empreinte = (adresse, tuple(sorted(propres.items())))
+        if empreinte in cache:
+            return entree, cache[empreinte]
+        async with verrou:
+            vivant = await check_flux(client, adresse, propres, hotes)
+        cache[empreinte] = vivant
+        return entree, vivant
+
+    """
+    Une chaîne est joignable si **l'une** de ses adresses répond.
+
+    C'est la règle du lecteur : il les sonde toutes et prend celle qui arrive la première. Compter les
+    flux plutôt que les chaînes donnait 50 % à une liste qui double chacune de ses entrées, alors que
+    FlixTunes en montre 100 % de vivantes.
+    """
+    par_chaine: Dict[str, bool] = {}
+    flux_actifs = 0
+    for tache in asyncio.as_completed([asyncio.create_task(sonder(e)) for e in entrees]):
+        entree, vivant = await tache
+        cle = str(entree["cle"])
+        par_chaine[cle] = par_chaine.get(cle, False) or vivant
+        if vivant:
+            flux_actifs += 1
+        journal.append({
+            "playlist": nom, "name": entree.get("name", ""),
+            "flux_url": entree.get("flux_url", ""), "etat": "v" if vivant else "x",
+        })
+
+    total = len(par_chaine)
+    joignables = sum(1 for vivant in par_chaine.values() if vivant)
+    if joignables < MIN_ACTIVE_TO_KEEP:
+        logger.info(f"« {nom} » : aucune chaîne joignable, écartée")
+        return None
+
+    pourcentage = round(joignables * 100 / total, 1) if total else 0.0
+    logger.info(
+        f"« {nom} » : {joignables}/{total} chaînes ({pourcentage} %) — "
+        f"{flux_actifs}/{len(entrees)} flux, {ecartees} écartée(s)"
     )
-    limits = httpx.Limits(max_connections=MAX_STREAM_CONCURRENCY + 20, max_keepalive_connections=MAX_STREAM_CONCURRENCY)
+    return {
+        "nom": nom, "url": url, "chaines": total, "joignables": joignables,
+        "pourcentage": pourcentage, "classement": classement(pourcentage),
+        "flux": len(entrees), "flux_joignables": flux_actifs, "ecartees": ecartees,
+    }
 
-    async with httpx.AsyncClient(limits=limits, timeout=timeout, follow_redirects=True, http2=True) as client:
-        for key, url in playlists.items():
-            logger.info(f"Downloading playlist '{key}' -> {url}")
-            try:
-                r = await client.get(url, timeout=PLAYLIST_DOWNLOAD_TIMEOUT)
-                if r.status_code != 200:
-                    logger.warning(f"Playlist '{key}' inactive (HTTP {r.status_code})")
-                    continue
 
-                chans, ecartees = analyze_m3u(r.text)
-                flux_actifs = 0
-                sem = asyncio.Semaphore(MAX_STREAM_CONCURRENCY)
+async def traiter_les_listes(listes: Dict[str, str]) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
+    """
+    Les listes sont traitées **par paquets**, et c'est le gain principal.
 
-                async def chk(channel: Dict[str, object]) -> Tuple[Dict[str, object], bool]:
-                    stream_url = str(channel["flux_url"])
-                    stream_headers = dict(channel.get("headers", {}))
-                    cache_key = (stream_url, tuple(sorted(stream_headers.items())))
-                    if cache_key in flux_cache:
-                        return channel, flux_cache[cache_key]
-                    async with sem:
-                        ok = await check_flux(client, stream_url, stream_headers)
-                    flux_cache[cache_key] = ok
-                    return channel, ok
+    Elles l'étaient une par une : chacune attendait que la précédente ait fini ses quatre cents
+    sondes. Sur cinq cents listes, cette attente **était** la durée du script. Elles avancent
+    maintenant à `LISTES_EN_PARALLELE` de front, sous un plafond commun de connexions qui empêche de
+    saturer sa propre carte réseau — c'est-à-dire de mesurer sa file d'attente au lieu des hébergeurs.
+    """
+    journal: List[Dict[str, object]] = []
+    retenues: List[Dict[str, object]] = []
+    cache: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], bool] = {}
+    hotes = VerdictHotes()
 
-                """
-                Une chaîne est joignable si **l'une** de ses adresses répond.
+    delais = httpx.Timeout(
+        connect=STREAM_CONNECT_TIMEOUT, read=STREAM_READ_TIMEOUT,
+        write=STREAM_READ_TIMEOUT, pool=STREAM_CONNECT_TIMEOUT,
+    )
+    plafond = httpx.Limits(
+        max_connections=MAX_STREAM_CONCURRENCY + 40,
+        max_keepalive_connections=MAX_STREAM_CONCURRENCY,
+    )
+    verrou = asyncio.Semaphore(MAX_STREAM_CONCURRENCY)
+    portes = asyncio.Semaphore(LISTES_EN_PARALLELE)
 
-                C'est la règle du lecteur : il les sonde toutes en même temps et prend celle qui
-                arrive la première. Compter les flux plutôt que les chaînes donnait 50 % à une liste
-                qui double chacune de ses entrées, alors que FlixTunes en montre 100 % de vivantes.
-                """
-                par_chaine: Dict[str, bool] = {}
-                tasks = [asyncio.create_task(chk(c)) for c in chans]
-                for task in asyncio.as_completed(tasks):
-                    channel, ok = await task
-                    cle = str(channel["cle"])
-                    par_chaine[cle] = par_chaine.get(cle, False) or ok
-                    if ok:
-                        flux_actifs += 1
-                    channels_status.append(
-                        {
-                            "playlist": key,
-                            "name": channel.get("name", ""),
-                            "flux_url": channel.get("flux_url", ""),
-                            "etat": "v" if ok else "x",
-                        }
-                    )
+    async with httpx.AsyncClient(limits=plafond, timeout=delais, follow_redirects=True, http2=True) as client:
+        async def une(nom: str, url: str) -> None:
+            async with portes:
+                mesure = await traiter_une_liste(client, nom, url, hotes, cache, verrou, journal)
+            if mesure:
+                retenues.append(mesure)
 
-                total = len(par_chaine)
-                active = sum(1 for joignable in par_chaine.values() if joignable)
-                icon = determine_icon(total, active)
-                if active >= MIN_ACTIVE_TO_KEEP:
-                    label = playlist_label(key, icon)
-                    base_label = label
-                    n = 2
-                    while label in m3u_dict and m3u_dict[label] != url:
-                        label = f"{base_label} #{n}"
-                        n += 1
-                    m3u_dict[label] = url
+        await asyncio.gather(*(une(nom, url) for nom, url in listes.items()))
 
-                pct = active / total * 100 if total else 0
-                logger.info(
-                    f"{active}/{total} chaînes joignables ({pct:.1f}%) dans '{key}' "
-                    f"— {flux_actifs}/{len(chans)} flux, {ecartees} entrée(s) écartée(s)"
-                )
+    retenues.sort(key=lambda m: (-float(m["pourcentage"]), str(m["nom"]).lower()))
+    return journal, retenues
 
-            except Exception as e:
-                logger.warning(f"Playlist ignorée '{key}': {e}")
 
-    return channels_status, m3u_dict
-
+# ------------------------------------------------------------------- Google Drive
 
 def get_folder_id(service, folder_name: str, parent_id: Optional[str] = None) -> Optional[str]:
-    safe_name = folder_name.replace("'", "\\'")
+    safe_name = folder_name.replace("'", "\'")
     query = f"name='{safe_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
     if parent_id:
         query += f" and '{parent_id}' in parents"
@@ -445,7 +642,7 @@ def get_folder_id(service, folder_name: str, parent_id: Optional[str] = None) ->
 
 
 def get_file_id(service, file_name: str, parent_id: str) -> Optional[str]:
-    safe_name = file_name.replace("'", "\\'")
+    safe_name = file_name.replace("'", "\'")
     query = f"name='{safe_name}' and '{parent_id}' in parents and trashed=false"
     res = service.files().list(q=query, fields="files(id,name)").execute()
     items = res.get("files", [])
@@ -457,7 +654,6 @@ def authenticate_drive():
     if not os.path.exists(token_path):
         logger.warning("Drive ignoré: token.json absent")
         return None
-
     try:
         creds = Credentials.from_authorized_user_file(token_path, SCOPES)
         if not creds.valid:
@@ -469,11 +665,11 @@ def authenticate_drive():
                 logger.warning("Drive ignoré: authentification invalide")
                 return None
         return build("drive", "v3", credentials=creds, cache_discovery=False)
-    except RefreshError as e:
-        logger.warning(f"Drive ignoré: jeton Google refusé ({e})")
+    except RefreshError as erreur:
+        logger.warning(f"Drive ignoré: jeton Google refusé ({erreur})")
         return None
-    except Exception as e:
-        logger.warning(f"Drive ignoré: authentification impossible ({e})")
+    except Exception as erreur:
+        logger.warning(f"Drive ignoré: authentification impossible ({erreur})")
         return None
 
 
@@ -482,79 +678,88 @@ def sync_drive() -> None:
         service = authenticate_drive()
         if service is None:
             return
-
         root_id = get_folder_id(service, ROOT_FOLDER)
         if not root_id:
             logger.warning(f"Drive ignoré: dossier '{ROOT_FOLDER}' introuvable")
             return
-
         archive_id = get_folder_id(service, ARCHIVE_FOLDER_NAME, root_id)
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        horodatage = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        for fn in FILES_TO_ARCHIVE:
-            fid = get_file_id(service, fn, root_id)
-            if fid and archive_id:
-                archive_name = f"{os.path.splitext(fn)[0]}_{timestamp}{os.path.splitext(fn)[1]}"
-                service.files().copy(fileId=fid, body={"name": archive_name, "parents": [archive_id]}).execute()
-                logger.info(f"Archived {fn} to {ARCHIVE_FOLDER_NAME}")
+        for fichier in FILES_TO_ARCHIVE:
+            identifiant = get_file_id(service, fichier, root_id)
+            if identifiant and archive_id:
+                base, extension = os.path.splitext(fichier)
+                service.files().copy(
+                    fileId=identifiant,
+                    body={"name": f"{base}_{horodatage}{extension}", "parents": [archive_id]},
+                ).execute()
+                logger.info(f"{fichier} archivé dans {ARCHIVE_FOLDER_NAME}")
 
-            file_path = os.path.join(SCRIPT_DIR, fn)
-            media = MediaFileUpload(file_path, mimetype="application/json", resumable=True)
-            if fid:
-                service.files().update(fileId=fid, media_body=media, fields="id").execute()
-                logger.info(f"Updated {fn} on Drive")
+            media = MediaFileUpload(os.path.join(SCRIPT_DIR, fichier), mimetype="application/json", resumable=True)
+            if identifiant:
+                service.files().update(fileId=identifiant, media_body=media, fields="id").execute()
+                logger.info(f"{fichier} mis à jour sur Drive")
             else:
                 service.files().create(
-                    body={"name": fn, "parents": [root_id]},
-                    media_body=media,
-                    fields="id",
+                    body={"name": fichier, "parents": [root_id]}, media_body=media, fields="id",
                 ).execute()
-                logger.info(f"Uploaded new {fn} to {ROOT_FOLDER}")
-    except Exception as e:
-        logger.warning(f"Drive ignoré pour cette exécution: {e}")
+                logger.info(f"{fichier} envoyé dans {ROOT_FOLDER}")
+    except Exception as erreur:
+        logger.warning(f"Drive ignoré pour cette exécution: {erreur}")
 
 
 def deposer_pour_flixtunes(source: str) -> None:
-    """
-    Déposer une copie dans le dossier que FlixTunes relit, si on en a indiqué un.
-
-    Sans cela, il faut copier le fichier à la main après chaque passe — et le jour où on l'oublie,
-    FlixTunes relit sagement la liste de la semaine dernière sans avoir aucun moyen de le dire.
-    """
+    """Déposer une copie dans le dossier que FlixTunes relit, si on en a indiqué un."""
     if not FLIXTUNES_M3U_DIR:
         return
     try:
         os.makedirs(FLIXTUNES_M3U_DIR, exist_ok=True)
         shutil.copyfile(source, os.path.join(FLIXTUNES_M3U_DIR, M3U_FILE))
         logger.info(f"{M3U_FILE} déposé dans {FLIXTUNES_M3U_DIR}")
-    except OSError as e:
-        logger.warning(f"Dépôt FlixTunes ignoré ({FLIXTUNES_M3U_DIR}): {e}")
+    except OSError as erreur:
+        logger.warning(f"Dépôt FlixTunes ignoré ({FLIXTUNES_M3U_DIR}): {erreur}")
+
+
+# ------------------------------------------------------------------- le fichier produit
+
+def ecrire_m3u_json(mesures: List[Dict[str, object]]) -> str:
+    """
+    Le fichier, version 2 : ce qu'on a mesuré, dit franchement.
+
+    La version 1 était un dictionnaire « nom » : « adresse », et le classement voyageait **dans le
+    nom** sous forme d'emoji — `✅ iptv-org France`. C'était le seul canal disponible, et FlixTunes
+    devait rétro-analyser une pastille pour retrouver un chiffre qu'on avait mesuré puis jeté.
+    Le pourcentage exact est là, l'effectif aussi, et la date du relevé avec eux.
+    """
+    contenu = {
+        "version": 2,
+        "genere_le": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+        "listes": mesures,
+    }
+    chemin = os.path.join(SCRIPT_DIR, M3U_FILE)
+    with open(chemin, "w", encoding="utf-8") as fichier:
+        json.dump(contenu, fichier, ensure_ascii=False, indent=2)
+    return chemin
 
 
 async def _main() -> None:
-    playlists = dict(PUBLIC_PLAYLISTS)
-    github_playlists = await search_github_m3u(load_github_token())
+    debut = datetime.datetime.now()
+    listes = await chercher_les_listes()
+    logger.info(f"{len(listes)} liste(s) à analyser")
 
-    known_urls = set(playlists.values())
-    for key, url in github_playlists.items():
-        if url not in known_urls:
-            playlists[key] = url
-            known_urls.add(url)
+    journal, mesures = await traiter_les_listes(listes)
 
-    logger.info(f"{len(playlists)} playlists uniques à analyser ({len(PUBLIC_PLAYLISTS)} sources fixes + {len(playlists) - len(PUBLIC_PLAYLISTS)} GitHub)")
-    channels_status, m3u_data = await process_playlists(playlists)
+    with open(os.path.join(SCRIPT_DIR, CHANNELS_STATUS_FILE), "w", encoding="utf-8") as fichier:
+        json.dump(journal, fichier, ensure_ascii=False, indent=2)
+    chemin = ecrire_m3u_json(mesures)
 
-    with open(os.path.join(SCRIPT_DIR, CHANNELS_STATUS_FILE), "w", encoding="utf-8") as f:
-        json.dump(channels_status, f, ensure_ascii=False, indent=2)
-
-    chemin_m3u = os.path.join(SCRIPT_DIR, M3U_FILE)
-    with open(chemin_m3u, "w", encoding="utf-8") as f:
-        json.dump(m3u_data, f, ensure_ascii=False, indent=2)
-
-    active_count = sum(1 for item in channels_status if item.get("etat") == "v")
-    logger.info(f"Local files updated: {CHANNELS_STATUS_FILE}, {M3U_FILE}")
-    logger.info(f"Résultat: {len(m3u_data)} playlists conservées, {active_count} flux actifs détectés")
-    deposer_pour_flixtunes(chemin_m3u)
+    actifs = sum(1 for entree in journal if entree.get("etat") == "v")
+    duree = (datetime.datetime.now() - debut).total_seconds()
+    logger.info(
+        f"Résultat : {len(mesures)} liste(s) conservée(s), {actifs} flux joignables sur {len(journal)}, "
+        f"en {duree / 60:.1f} min"
+    )
+    deposer_pour_flixtunes(chemin)
     sync_drive()
 
 
