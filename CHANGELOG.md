@@ -1,5 +1,55 @@
 # Journal des versions
 
+## 0.5.7.r12 — le tri passe de la liste à la chaîne
+
+Aucun artefact n'étant sorti pour cette révision, le travail sur le filtre francophone complète
+l'entrée. Ne touche que `tools/tv_playlist_checker.py`, qui n'entre dans aucun artefact.
+
+- **Le critère TF1 + M6 + Canal+ est retiré : il se trompait dans les deux sens.** Il jugeait une
+  *liste* entière sur trois noms — il jetait donc une bonne liste de chaînes régionales françaises qui
+  n'a pas Canal+, et gardait un dépôt mondial de 12 884 chaînes qui, lui, contient les trois. Une
+  liste n'est pas francophone ou étrangère ; ce sont ses **entrées** qui le sont, et le plus souvent
+  les deux à la fois.
+- **Ce qui manquait, c'était la langue.** iptv-org publie `feeds.json`, où chaque flux déclare la
+  sienne : **2 002 chaînes de langue française**. Et le `tvg-id` des listes — `6ter.fr@SD` — est
+  exactement cet identifiant, si bien que la jointure est **exacte** et non une ressemblance de noms.
+  Trois signaux plus grossiers s'y ajoutent en union : suffixe de pays du `tvg-id`, nom dépouillé de
+  ses décorations, `group-title` et préfixe `|FR|`. Les deux derniers ne rendent rien sur iptv-org,
+  qui met des genres dans ses groupes, et 100 % sur Free-TV France.
+- **Mesuré sur quatre listes réelles**, en faisant tourner le chemin complet du script :
+
+  | liste | entrées | sondées | part | décision |
+  | --- | --- | --- | --- | --- |
+  | iptv-org monde | 12 878 | **705** | 5,5 % | réduite |
+  | iptv-org langue `fra` | 459 | 459 | 100 % | entière |
+  | iptv-org pays `fr` | 215 | 215 | 100 % | entière |
+  | Free-TV France | 32 | 32 | 100 % | entière |
+
+  Le fourre-tout mondial n'entre plus que par sa part française et coûte **705 sondes au lieu de
+  12 878** ; les trois listes françaises ne perdent rien. Free-TV France, que l'ancien critère écartait
+  faute de Canal+, revient entière.
+- **Le garde-fou contre la perte : 50 %.** Au-dessus, la liste est gardée **entière**, entrées non
+  identifiées comprises — sur une liste française, ce qui n'est pas étiqueté est français, et une
+  chaîne régionale absente d'iptv-org ne mérite pas d'être perdue pour ça. Le tri strict ne frappe que
+  les fourre-tout. Le seuil lui-même est **raisonné, pas mesuré** : aucune liste à moitié française
+  n'était disponible pour l'éprouver.
+- **Un nom que porte aussi une chaîne non francophone n'identifie rien** — 204 écritures écartées à ce
+  titre, sans quoi « Sport TV » ferait entrer le Portugal. Même prudence que la table de pays du
+  serveur.
+- **Si la table manque, le filtre se désactive franchement** et rien n'est jeté : vérifié, 12 878
+  sondes. Tout garder est un défaut visible ; tout jeter faute de savoir serait un désastre
+  silencieux.
+- **Les attributs de `#EXTINF` étaient lus puis jetés.** `tvg-id`, `group-title`, `tvg-logo` sont
+  maintenant retenus — 215/215 sur la liste française — et passent dans `m3u.json` avec
+  `part_francophone` et `entiere`, qui disent *comment* une liste a été traitée : une liste mondiale
+  rabotée à trente chaînes ne vaut pas une liste française entière de trente chaînes, et rien ne le
+  disait.
+- **La recherche s'élargit au lieu de se restreindre**, le tri ne dépendant plus d'elle : huit
+  requêtes de dépôts au lieu de six, dont deux nouvelles francophones.
+- **Six secondes entre deux recherches de code.** L'API n'accorde que dix requêtes par minute ; douze
+  étaient tirées d'affilée, les deux dernières recevaient 403 et le script les abandonnait en silence
+  — on perdait précisément ce qu'on était allé chercher.
+
 ## 0.5.7.r12 — la même adresse sondée huit fois
 
 Mené pendant la construction de la r11, donc versé ici. Ne touche que `tools/tv_playlist_checker.py`,

@@ -37,6 +37,7 @@ import os
 import re
 import shutil
 import socket
+import time
 import unicodedata
 from typing import Dict, List, Optional, Set, Tuple
 from urllib.parse import parse_qsl, urlparse
@@ -87,37 +88,44 @@ PUBLIC_PLAYLISTS = {
     #
     # Et rien n'a pris leur place. L'index de toutes les catégories d'iptv-org — 13 561 chaînes du
     # monde entier, mesuré — semblait un remplaçant naturel : c'en était le contraire. Les listes
-    # fixes étant **exemptes du critère TF1/M6/Canal+**, elle aurait fait rentrer par la porte le
-    # monde entier qu'on venait de sortir par la fenêtre. Les listes fixes restent francophones.
+    # fixes étant alors exemptes du critère de liste, elle aurait fait rentrer par la porte le monde
+    # entier qu'on venait de sortir par la fenêtre. Le tri se faisant maintenant à la chaîne, elle ne
+    # serait plus dangereuse — seulement inutile : ses 12 884 entrées se réduisent aux 705 que la
+    # liste de langue française apporte déjà, mesuré.
 }
 
 """
-Ce qu'une liste doit contenir pour être retenue.
+La part d'entrées francophones qui suffit à garder une liste **entière**.
 
-Le script cherchait auparavant `TF1 in:file` : GitHub ne rendait donc que des fichiers **contenant**
-TF1, et le filtre était gratuit. En passant aux dépôts — deux requêtes pour des dizaines de listes —
-j'ai gagné du volume et perdu ce filtre : un dépôt qui collectionne le monde entier et mentionne
-« france » dans sa description apportait ses listes chinoises, russes et arabes avec les autres.
+C'est le garde-fou du filtre, et le seul réglage qui compte. En deçà, on ne retient que les entrées
+reconnues — un fourre-tout mondial n'entre que par sa part française. Au-delà, on garde tout, y
+compris ce que la table ne connaît pas : sur une liste française, ce qui n'est pas étiqueté est
+français, et une chaîne régionale absente d'iptv-org ne mérite pas d'être perdue pour ça.
 
-Le critère revient donc, et explicitement : une liste découverte n'est gardée que si elle porte **les
-trois**. C'est le test le plus simple qui distingue une liste française d'une liste mondiale, et il se
-lit dans le fichier plutôt que dans son nom.
-
-Les formes comptent : `canal+` garde son signe, parce que `canal` seul ramasserait les mille
-« Canal 8 » hispanophones. La comparaison porte sur le **début** du nom compacté, si bien que
-« TF1 FHD [1080p] » et « Canal+ Sport » répondent présents.
+Mesuré : les trois listes françaises éprouvées sont reconnues à 100 % et passent donc largement,
+tandis que le fourre-tout mondial d'iptv-org est à 5,5 % et subit le tri strict. Aucune liste
+intermédiaire n'était disponible pour éprouver le seuil lui-même — il est raisonné, pas mesuré.
 """
-CHAINES_REQUISES = ("tf1", "m6", "canal+")
+PART_FRANCOPHONE_SUFFISANTE = 0.50
 
 """
-Comment elles s'écrivent quand on les cherche.
+Les noms qui trahissent une liste française, quand on cherche des **fichiers**.
 
-La recherche de code de GitHub et le critère de contenu parlent des **mêmes trois chaînes**, et c'est
-la seule liste à tenir : dériver l'une de l'autre est ce qui les empêche de se décaler le jour où
-l'une bouge. L'ancien script cherchait déjà `TF1 in:file` — chercher des dépôts m'avait fait perdre
-cette visée, elle revient ici.
+Ils ne filtrent plus rien : le tri se fait à la chaîne, et une liste n'a plus à porter tel ou tel nom
+pour être acceptée. Ils ne servent qu'à **trouver** — un fichier qui contient « TF1 » ou « Canal+ »
+est très probablement une liste française, et GitHub ne sait chercher que par contenu littéral.
 """
 CHAINES_CHERCHEES = ("TF1", "M6", '"Canal+"')
+
+"""
+Six secondes entre deux recherches de code.
+
+L'API de recherche de code de GitHub n'accorde que **dix requêtes par minute**. Douze étaient tirées
+d'affilée : les deux dernières recevaient 403, et le script les abandonnait en silence — on perdait
+donc précisément les résultats qu'on était allé chercher. Attendre coûte une minute et rend ces
+pages. La recherche de dépôts, elle, dispose de trente requêtes par minute et n'a pas besoin de ça.
+"""
+REPIT_RECHERCHE_CODE_S = 6.0
 
 """
 Ce qu'un nom de fichier annonce franchement, et qui n'est pas pour nous.
@@ -144,6 +152,8 @@ GITHUB_DEPOTS = [
     "iptv playlist tnt",
     "chaines francaises m3u",
     "playlist tv francaise",
+    "iptv francophone",
+    "iptv belgique suisse m3u",
     "iptv-org",
     "free iptv m3u",
 ]
@@ -315,8 +325,12 @@ async def depots_github(client: httpx.AsyncClient) -> Dict[str, str]:
 async def fichiers_github(client: httpx.AsyncClient) -> Dict[str, str]:
     """La recherche de code, en second : elle trouve les listes isolées qu'aucun dépôt ne rassemble."""
     trouvees: Dict[str, str] = {}
+    premiere = True
     for requete in GITHUB_QUERIES:
         for page in range(1, GITHUB_MAX_PAGES_PER_QUERY + 1):
+            if not premiere:
+                await asyncio.sleep(REPIT_RECHERCHE_CODE_S)
+            premiere = False
             try:
                 reponse = await client.get(
                     "https://api.github.com/search/code",
@@ -386,6 +400,21 @@ def cle_de_chaine(nom: str) -> str:
     return " ".join(lisible.split())
 
 
+ATTRIBUT_EXTINF = re.compile(r'([\w-]+)="([^"]*)"')
+
+
+def attributs_de_lextinf(ligne: str) -> Dict[str, str]:
+    """
+    Ce que la ligne `#EXTINF` déclare avant le nom, et qu'on jetait.
+
+    `tvg-id="6ter.fr@SD"`, `group-title="Entertainment"`, `tvg-logo="…"` : trois renseignements
+    lus puis perdus. Le premier est ce qui permet de reconnaître une chaîne francophone **par
+    jointure exacte** plutôt que par ressemblance de nom ; les deux autres épargnent à FlixTunes de
+    redécouvrir un logo et un genre qu'on avait sous les yeux.
+    """
+    return {cle.lower(): valeur for cle, valeur in ATTRIBUT_EXTINF.findall(ligne)}
+
+
 def nom_de_lextinf(ligne: str) -> str:
     """Le nom d'une ligne `#EXTINF`, coupé à la première virgule **hors guillemets**."""
     dans_guillemets = False
@@ -423,10 +452,177 @@ def compacter(nom: str) -> str:
     return DIACRITIQUES.sub("", unicodedata.normalize("NFD", nom)).lower().replace(" ", "")
 
 
-def porte_les_chaines_requises(entrees: List[Dict[str, object]]) -> List[str]:
-    """Celles des chaînes exigées que cette liste porte vraiment."""
-    compacts = [compacter(str(entree.get("name", ""))) for entree in entrees]
-    return [requise for requise in CHAINES_REQUISES if any(nom.startswith(requise) for nom in compacts)]
+# ------------------------------------------------------------------- qui parle français
+
+"""
+Le tri se fait à la **chaîne**, et non à la liste.
+
+Le critère précédent jugeait une liste entière sur trois noms — TF1, M6, Canal+. Il se trompait dans
+les deux sens : il jetait une bonne liste de chaînes régionales françaises qui n'a pas Canal+, et
+gardait un dépôt mondial de douze mille chaînes qui, lui, contient les trois. Une liste n'est pas
+francophone ou étrangère ; ce sont ses **entrées** qui le sont, et souvent les deux à la fois.
+
+Ce qui manquait, c'est la langue. iptv-org publie `feeds.json`, où chaque flux déclare la sienne :
+**2 002 chaînes de langue française**, et le `tvg-id` des listes — `6ter.fr@SD` — est exactement cet
+identifiant. La jointure est donc **exacte**, sans comparaison de noms décorés.
+
+Mesuré sur quatre listes réelles : le fourre-tout mondial d'iptv-org n'entre plus que par ses 705
+chaînes françaises sur 12 884, tandis que les trois listes françaises éprouvées sont reconnues à
+**100 %** et ne perdent rien.
+"""
+
+FEEDS_IPTV_ORG = "https://iptv-org.github.io/api/feeds.json"
+CHAINES_IPTV_ORG = "https://iptv-org.github.io/api/channels.json"
+CACHE_FRANCOPHONE = "reference-francophone.json"
+
+"""Une semaine : une chaîne ne change pas de langue, et les deux tables pèsent vingt mégaoctets."""
+FRAICHEUR_REFERENCE_S = 7 * 24 * 3600
+
+"""
+Les pays où le français est officiel ou d'usage courant.
+
+Second signal, plus grossier que la langue déclarée : il rattrape les chaînes qu'iptv-org connaît sans
+leur avoir attribué de flux. Le Canada en est **absent volontairement** — mille chaînes canadiennes
+dont l'immense majorité est anglophone, et le signal de langue distingue déjà correctement celles du
+Québec.
+"""
+PAYS_FRANCOPHONES = {
+    "fr", "be", "ch", "lu", "mc", "sn", "ci", "cm", "ml", "bf", "ne", "td", "ga", "cg", "cd",
+    "bj", "tg", "gn", "mg", "dj", "km", "rw", "bi", "sc", "mu", "ht",
+}
+
+"""Ce qu'un `group-title` dit quand il parle de territoire plutôt que de genre."""
+MOTS_DE_GROUPE = (
+    "france", "french", "francais", "français", "francophone", "belgique", "belgi", "suisse",
+    "romande", "quebec", "québec", "canal+", "tnt", "afrique franc",
+)
+
+"""Le préfixe que beaucoup de listes collent devant le nom : « |FR| TF1 », « BE: La Une »."""
+PREFIXE_DE_PAYS = re.compile(r"^\s*[\|\[\(]?\s*(fr|be|ch|qc|lu|mc)\s*[\|\]\)\:\-\.]", re.IGNORECASE)
+
+"""Ce qui décore un nom sans rien en dire — mêmes listes que le serveur, pour que les deux s'accordent."""
+DECOR_ENTRE_PARENTHESES = re.compile(r"\s*[\(\[\{][^\)\]\}]*[\)\]\}]\s*$")
+DECOR_QUEUE = {
+    "hd", "fhd", "uhd", "sd", "qhd", "4k", "8k", "1080p", "1080", "720p", "720", "576p", "540p",
+    "480p", "h264", "h265", "hevc", "raw", "vip", "backup", "alt", "multi", "tnt", "tv", "fps50",
+}
+DECOR_TETE = {"fr", "fra", "france", "tnt", "hd", "fhd", "uhd", "sd", "4k", "vip", "hevc", "be", "ch", "qc"}
+
+
+def ecritures_possibles(nom: str) -> List[str]:
+    """Les écritures d'un nom, de la plus décorée à la plus nue : « TF1 FHD (1080p) » finit en « tf1 »."""
+    reduit = nom
+    for _ in range(3):
+        suivant = DECOR_ENTRE_PARENTHESES.sub("", reduit).strip()
+        if suivant == reduit:
+            break
+        reduit = suivant
+    jetons = [jeton for jeton in reduit.split() if jeton]
+    essais: List[str] = []
+    while jetons:
+        essais.append(compacter(" ".join(jetons)))
+        if len(jetons) > 1 and jetons[-1].strip("[]()").lower() in DECOR_QUEUE:
+            jetons = jetons[:-1]
+            continue
+        if len(jetons) > 1 and jetons[0].strip("|[]()").lower() in DECOR_TETE:
+            jetons = jetons[1:]
+            continue
+        break
+    return essais
+
+
+class Francophonie:
+    """
+    Ce qu'on sait des chaînes qui parlent français, et comment on les reconnaît dans une liste.
+
+    Quatre signaux en union, du plus sûr au plus grossier. L'identifiant de flux est exact. Le suffixe
+    de pays du `tvg-id` l'est presque. Le nom dépouillé se compare à la table, **en écartant les noms
+    qu'une chaîne non francophone porte aussi** — sans quoi « Sport TV » ferait entrer le Portugal.
+    Le groupe et le préfixe ne coûtent rien et rattrapent les listes qui n'étiquettent rien d'autre :
+    mesurés à zéro sur iptv-org, qui met des genres dans ses groupes, et à 100 % sur Free-TV France.
+    """
+
+    def __init__(self, ids: Set[str], noms: Set[str]) -> None:
+        self.ids = ids
+        self.noms = noms
+
+    def reconnait(self, nom: str, attributs: Dict[str, str]) -> bool:
+        identifiant = (attributs.get("tvg-id") or "").split("@")[0]
+        if identifiant and identifiant in self.ids:
+            return True
+        if "." in identifiant and identifiant.rsplit(".", 1)[-1].lower() in PAYS_FRANCOPHONES:
+            return True
+        if any(ecriture in self.noms for ecriture in ecritures_possibles(nom)):
+            return True
+        groupe = (attributs.get("group-title") or "").lower()
+        if groupe and any(mot in groupe for mot in MOTS_DE_GROUPE):
+            return True
+        return bool(PREFIXE_DE_PAYS.match(nom))
+
+
+def indexer_la_francophonie(feeds_json: str, chaines_json: str) -> Francophonie:
+    """Croiser les flux — qui portent la langue — et les chaînes — qui portent les noms."""
+    ids = {
+        str(flux.get("channel"))
+        for flux in json.loads(feeds_json)
+        if "fra" in (flux.get("languages") or []) and flux.get("channel")
+    }
+    francophones: Set[str] = set()
+    etrangers: Set[str] = set()
+    for chaine in json.loads(chaines_json):
+        if chaine.get("closed"):
+            continue
+        cible = francophones if chaine.get("id") in ids else etrangers
+        for appellation in [chaine.get("name")] + list(chaine.get("alt_names") or []):
+            if isinstance(appellation, str) and appellation.strip():
+                cible.add(compacter(appellation))
+    """
+    Un nom que porte aussi une chaîne non francophone n'identifie rien.
+
+    C'est la même prudence que la table de pays du serveur : mieux vaut ignorer un homonyme que de
+    faire entrer le monde entier par lui. Mesuré : 204 écritures écartées à ce titre.
+    """
+    return Francophonie(ids, francophones - etrangers)
+
+
+async def charger_la_francophonie() -> Optional[Francophonie]:
+    """
+    La table, depuis le disque si elle y est fraîche, sinon depuis Internet.
+
+    Un échec de téléchargement rend la copie périmée plutôt que rien. S'il n'y a **aucune** copie, on
+    rend `None` : le filtre se désactive alors franchement — tout garder est un défaut visible, tout
+    jeter faute de savoir serait un désastre silencieux.
+    """
+    chemin = os.path.join(SCRIPT_DIR, CACHE_FRANCOPHONE)
+    garde: Optional[Dict[str, str]] = None
+    try:
+        with open(chemin, encoding="utf-8") as fichier:
+            enveloppe = json.load(fichier)
+        garde = {"feeds": enveloppe["feeds"], "chaines": enveloppe["chaines"]}
+        if time.time() - float(enveloppe.get("lu_le", 0)) < FRAICHEUR_REFERENCE_S:
+            return indexer_la_francophonie(garde["feeds"], garde["chaines"])
+    except Exception:
+        pass
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True,
+                                     headers={"User-Agent": "FlixTunes"}) as client:
+            feeds, chaines = await asyncio.gather(
+                client.get(FEEDS_IPTV_ORG), client.get(CHAINES_IPTV_ORG),
+            )
+        feeds.raise_for_status()
+        chaines.raise_for_status()
+        index = indexer_la_francophonie(feeds.text, chaines.text)
+        with open(chemin, "w", encoding="utf-8") as fichier:
+            json.dump({"lu_le": time.time(), "feeds": feeds.text, "chaines": chaines.text}, fichier)
+        logger.info(f"Référence francophone : {len(index.ids)} chaînes, {len(index.noms)} écritures")
+        return index
+    except Exception as erreur:
+        if garde:
+            logger.warning(f"Référence francophone périmée réutilisée ({erreur})")
+            return indexer_la_francophonie(garde["feeds"], garde["chaines"])
+        logger.error(f"Référence francophone indisponible : le filtre est désactivé ({erreur})")
+        return None
 
 
 def analyze_m3u(contenu: str) -> Tuple[List[Dict[str, object]], int]:
@@ -439,6 +635,7 @@ def analyze_m3u(contenu: str) -> Tuple[List[Dict[str, object]], int]:
     entrees: List[Dict[str, object]] = []
     ecartees = 0
     dernier_nom = ""
+    derniers_attributs: Dict[str, str] = {}
     entetes: Dict[str, str] = {}
 
     for ligne_brute in contenu.splitlines():
@@ -449,6 +646,7 @@ def analyze_m3u(contenu: str) -> Tuple[List[Dict[str, object]], int]:
 
         if minuscule.startswith("#extinf:"):
             dernier_nom = nom_de_lextinf(ligne)
+            derniers_attributs = attributs_de_lextinf(ligne)
             entetes = {}
             continue
         if minuscule.startswith("#extvlcopt:http-user-agent="):
@@ -468,7 +666,13 @@ def analyze_m3u(contenu: str) -> Tuple[List[Dict[str, object]], int]:
         if not lisible_par_flixtunes(url) or not cle:
             ecartees += 1
             continue
-        entrees.append({"name": dernier_nom, "cle": cle, "flux_url": url, "headers": propres})
+        entrees.append({
+            "name": dernier_nom, "cle": cle, "flux_url": url, "headers": propres,
+            "tvg_id": derniers_attributs.get("tvg-id", ""),
+            "groupe": derniers_attributs.get("group-title", ""),
+            "logo": derniers_attributs.get("tvg-logo", ""),
+            "attributs": derniers_attributs,
+        })
 
     unique: Dict[str, Dict[str, object]] = {}
     for entree in entrees:
@@ -606,7 +810,7 @@ async def traiter_une_liste(
     cache: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], "asyncio.Task[bool]"],
     verrou: asyncio.Semaphore,
     journal: List[Dict[str, object]],
-    exigeante: bool,
+    francophonie: Optional["Francophonie"],
     deja_vues: Dict[str, str],
 ) -> Optional[Dict[str, object]]:
     try:
@@ -642,20 +846,39 @@ async def traiter_une_liste(
     deja_vues[empreinte_liste] = nom
 
     """
-    Le critère de contenu, sur les listes découvertes seulement.
+    Le tri francophone, entrée par entrée, **avant** de sonder.
 
-    Les listes fixes sont un choix délibéré : les soumettre au même test retirerait « Free-TV France »,
-    qui porte TF1 et M6 mais pas Canal+ — vérifié —, et les bouquets gratuits, qui n'en portent aucun.
-    L'intention est d'arrêter d'importer le monde entier, pas de jeter ce qu'on a choisi.
+    Il remplace le critère TF1 + M6 + Canal+, qui jugeait une liste entière sur trois noms et se
+    trompait dans les deux sens. Chaque entrée est confrontée à la table des langues ; celles qui ne
+    sont reconnues par aucun des quatre signaux ne sont ni sondées, ni transmises.
 
-    Le test se fait **avant** de sonder : une liste écartée ne coûte alors qu'un téléchargement, et non
-    quatre cents sondes de flux.
+    **Le garde-fou.** Si la liste est reconnue francophone à `PART_FRANCOPHONE_SUFFISANTE` ou plus, on
+    la garde **entière**, entrées non identifiées comprises : sur une liste française, ce qui n'est pas
+    étiqueté est français, et une chaîne absente d'iptv-org ne mérite pas d'être perdue pour ça. Le
+    filtre strict ne frappe donc que les fourre-tout mondiaux — ceux pour lesquels il a été écrit.
+
+    Rien de tout ceci n'est appliqué si la table n'a pas pu être chargée : le filtre se désactive
+    franchement plutôt que de tout jeter faute de savoir.
     """
-    if exigeante:
-        trouvees = porte_les_chaines_requises(entrees)
-        if len(trouvees) < len(CHAINES_REQUISES):
-            manquantes = [c for c in CHAINES_REQUISES if c not in trouvees]
-            logger.info(f"« {nom} » écartée : il lui manque {', '.join(manquantes)}")
+    part_francophone: Optional[float] = None
+    entiere = True
+    if francophonie is not None:
+        reconnues = [
+            entree for entree in entrees
+            if francophonie.reconnait(str(entree.get("name", "")), dict(entree.get("attributs", {})))
+        ]
+        part = len(reconnues) / len(entrees)
+        part_francophone = round(part * 100, 1)
+        if part >= PART_FRANCOPHONE_SUFFISANTE:
+            logger.info(f"« {nom} » : {part:.0%} francophone, gardée entière ({len(entrees)} entrées)")
+        elif reconnues:
+            logger.info(
+                f"« {nom} » : {len(reconnues)}/{len(entrees)} entrées francophones retenues ({part:.0%})"
+            )
+            entrees = reconnues
+            entiere = False
+        else:
+            logger.info(f"« {nom} » écartée : aucune entrée francophone sur {len(entrees)}")
             return None
 
     await hotes.resoudre({urlparse(str(e["flux_url"])).hostname or "" for e in entrees} - {""})
@@ -716,10 +939,20 @@ async def traiter_une_liste(
         f"« {nom} » : {joignables}/{total} chaînes ({pourcentage} %) — "
         f"{flux_actifs}/{len(entrees)} flux, {ecartees} écartée(s)"
     )
+    """
+    Ce que FlixTunes reçoit de cette liste, et qu'il n'aura pas à redécouvrir.
+
+    `part_francophone` et `entiere` disent **comment** la liste a été traitée : à 100 % elle est
+    passée telle quelle, à 5 % elle a été réduite à sa part française. C'est le renseignement qui
+    manquait pour ranger les listes dans un menu autrement que par leur seul taux de flux vivants —
+    une liste mondiale rabotée à trente chaînes vaut moins qu'une liste française entière de trente
+    chaînes, et rien ne le disait.
+    """
     return {
         "nom": nom, "url": url, "chaines": total, "joignables": joignables,
         "pourcentage": pourcentage, "classement": classement(pourcentage),
         "flux": len(entrees), "flux_joignables": flux_actifs, "ecartees": ecartees,
+        "part_francophone": part_francophone, "entiere": entiere,
     }
 
 
@@ -732,6 +965,16 @@ async def traiter_les_listes(listes: Dict[str, str]) -> Tuple[List[Dict[str, obj
     maintenant à `LISTES_EN_PARALLELE` de front, sous un plafond commun de connexions qui empêche de
     saturer sa propre carte réseau — c'est-à-dire de mesurer sa file d'attente au lieu des hébergeurs.
     """
+    """
+    La table des langues est chargée **une fois**, avant tout le reste.
+
+    Vingt mégaoctets lus une fois par semaine, contre un filtre appliqué des centaines de milliers de
+    fois : le rapport ne se discute pas. Si elle manque, `charger_la_francophonie` rend `None` et le
+    filtre se désactive — on garde tout, ce qui est un défaut visible, plutôt que de tout jeter faute
+    de savoir, qui serait un désastre silencieux.
+    """
+    francophonie = await charger_la_francophonie()
+
     journal: List[Dict[str, object]] = []
     retenues: List[Dict[str, object]] = []
     cache: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], "asyncio.Task[bool]"] = {}
@@ -750,13 +993,11 @@ async def traiter_les_listes(listes: Dict[str, str]) -> Tuple[List[Dict[str, obj
     deja_vues: Dict[str, str] = {}
 
     async with httpx.AsyncClient(limits=plafond, timeout=delais, follow_redirects=True, http2=True) as client:
-        fixes = set(PUBLIC_PLAYLISTS.values())
-
         async def une(nom: str, url: str) -> None:
             async with portes:
                 mesure = await traiter_une_liste(
                     client, nom, url, hotes, cache, verrou, journal,
-                    exigeante=url not in fixes, deja_vues=deja_vues,
+                    francophonie=francophonie, deja_vues=deja_vues,
                 )
             if mesure:
                 retenues.append(mesure)
