@@ -56,6 +56,8 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
@@ -189,6 +191,25 @@ class LecteurDirectActivity : ComponentActivity() {
      * Zéro tant que tout va bien : on part **au bord du flux**, et l'on ne paie du retard que
      * lorsqu'il est mérité.
      */
+    /**
+     * Ce qu'on sait de la lecture en cours, pour ne pas condamner une source vivante.
+     *
+     * `depuisLecture` est l'instant où l'image est apparue pour la dernière fois. Une adresse qui a
+     * joué dix minutes puis s'est interrompue n'est pas morte — elle a rencontré un incident. Sans
+     * cette date, les deux cas étaient indiscernables et traités pareil : abandon, et échec inscrit
+     * au classement.
+     *
+     * `reprises` compte les redémarrages tentés **sur la même adresse**, `relancesLentes` ceux tentés
+     * après que toutes les adresses ont été épuisées. Les deux se remettent à zéro dès que l'image
+     * revient : ce qui est compté, c'est une série d'échecs, pas une vie entière.
+     */
+    private var depuisLecture = 0L
+    private var reprises = 0
+    private var relancesLentes = 0
+    private var repriseEnCours: Job? = null
+    /** Ce qui a coupé, et au bout de combien de temps — dit à l'écran plutôt que deviné. */
+    private var dernierIncident: String? = null
+
     private var securite by mutableIntStateOf(0)
     private var blocages = mutableListOf<Long>()
     /** Réparations tentées sur l'adresse en cours : une seule, après quoi la source est bien en cause. */
@@ -227,6 +248,24 @@ class LecteurDirectActivity : ComponentActivity() {
          * mécanisme prévu pour exactement ce cas, et on ne le lui demandait pas.
          */
         lecteur = ExoPlayer.Builder(this)
+            /*
+             * **Six tentatives au lieu de trois, et pour une raison arithmétique.**
+             *
+             * Un direct ne se charge pas une fois : il redemande la playlist toutes les huit secondes,
+             * et un segment aussi souvent — environ **900 requêtes par heure**. La politique par
+             * défaut réessaie trois fois en trois secondes ; une coupure Wi-Fi de cinq secondes
+             * l'épuise. Sur neuf cents tirages, en rater un devient une certitude, et c'est là toute
+             * l'explication du « ça coupe au bout d'un moment » : plus on regarde longtemps, plus
+             * c'est sûr d'arriver.
+             *
+             * Six tentatives couvrent une quinzaine de secondes d'interruption. Le prix est qu'une
+             * source réellement morte met une quinzaine de secondes à être déclarée telle, au lieu de
+             * trois — un prix qu'on paie une fois, contre une coupure qu'on payait toutes les heures.
+             */
+            .setMediaSourceFactory(
+                DefaultMediaSourceFactory(this)
+                    .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(6)),
+            )
             .setLoadControl(
                 DefaultLoadControl.Builder()
                     .setBufferDurationsMs(15_000, 60_000, 2_500, 5_000)
@@ -253,6 +292,32 @@ class LecteurDirectActivity : ComponentActivity() {
                     if (error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED && reparations < 1) {
                         reparations += 1
                         prepare()
+                        return
+                    }
+                    /*
+                     * **Réessayer la même adresse avant de l'abandonner.**
+                     *
+                     * Le code portait cette phrase : « le reste — le réseau, le format — est une vraie
+                     * panne ». Elle est fausse, et c'est votre observation qui l'établit : vous
+                     * relancez la même chaîne, la même adresse, et elle repart **immédiatement**. Une
+                     * erreur réseau au milieu d'un direct n'accuse donc pas l'adresse, elle accuse une
+                     * seconde de réseau.
+                     *
+                     * On réessaie trois fois, espacées de 2, 5 puis 10 secondes — croissantes parce
+                     * qu'une coupure qui dure ne se répare pas en insistant vite. Le compteur repart à
+                     * zéro dès que l'image revient : ce qui condamne une source, c'est une série
+                     * d'échecs, pas un échec de temps en temps.
+                     */
+                    if (reprises < REPRISES_MAX) {
+                        reprises += 1
+                        dernierIncident = "réseau (${error.errorCodeName})"
+                        val attente = ATTENTES_REPRISE_MS[reprises - 1]
+                        if (reprises > 1) message = getString(R.string.direct_reprise, reprises, REPRISES_MAX)
+                        repriseEnCours?.cancel()
+                        repriseEnCours = lifecycleScope.launch {
+                            delay(attente)
+                            lecteur?.prepare()
+                        }
                         return
                     }
                     suivante()
@@ -511,14 +576,61 @@ class LecteurDirectActivity : ComponentActivity() {
         val morte = essai ?: return
         essai = null
         reparations = 0
+        reprises = 0
+        /*
+         * **Une adresse qui a joué n'est pas une adresse morte.**
+         *
+         * L'échec était inscrit au classement quoi qu'il arrive — y compris pour une adresse qui
+         * venait de diffuser une heure sans faute et qu'une seconde de réseau avait interrompue. On
+         * fabriquait ainsi de fausses mauvaises notes sur les sources les plus regardées, c'est-à-dire
+         * sur les meilleures. Ne compte désormais que l'adresse qui n'a **jamais** tenu l'image
+         * `DUREE_QUI_DISCULPE_MS` : celle-là n'a rien prouvé, et son échec veut dire quelque chose.
+         */
+        val aTenu = depuisLecture > 0 && System.currentTimeMillis() - depuisLecture > DUREE_QUI_DISCULPE_MS
         val identifiant = chaine?.id
-        if (identifiant != null) {
+        if (identifiant != null && !aTenu) {
             lifecycleScope.launch { runCatching { api.resultatChaineDirect(profileId, identifiant, morte, false) } }
         }
         rang += 1
-        if (rang >= minOf(adresses.size, REPLIS)) { echec = true; message = getString(R.string.direct_aucune_source); return }
+        if (rang >= minOf(adresses.size, REPLIS)) { plusAucuneSource(); return }
         message = getString(R.string.direct_source_essai, rang + 1, adresses.size)
         jouerRang()
+    }
+
+    /**
+     * Toutes les adresses ont échoué : on insiste, lentement, puis on le dit.
+     *
+     * Un téléviseur ne renonce pas parce qu'un émetteur a hoqueté. Mais insister sans fin devant une
+     * chaîne réellement morte n'est pas de la ténacité, c'est un écran noir qui ment — il faut donc
+     * que la source **fasse ses preuves**. Six relances espacées de dix secondes, soit une minute :
+     * assez pour traverser une coupure de réseau domestique, trop peu pour maquiller une panne.
+     *
+     * Ce qui est repris, c'est la **première** adresse et non la dernière essayée : c'est celle que
+     * la course a désignée comme la meilleure, et l'ordre d'abandon n'a rien changé à ce classement.
+     *
+     * Et le message final **dit ce qui a été mesuré** — le nombre de tentatives et la nature du
+     * dernier incident — au lieu d'un « aucune source ne répond » qui ne permettait ni de comprendre
+     * ni de corriger.
+     */
+    private fun plusAucuneSource() {
+        if (relancesLentes < RELANCES_LENTES) {
+            relancesLentes += 1
+            message = getString(R.string.direct_relance_lente, relancesLentes, RELANCES_LENTES)
+            rang = 0
+            repriseEnCours?.cancel()
+            repriseEnCours = lifecycleScope.launch {
+                delay(INTERVALLE_RELANCE_MS)
+                jouerRang()
+            }
+            return
+        }
+        echec = true
+        val incident = dernierIncident
+        message = if (incident != null) {
+            getString(R.string.direct_aucune_source_mesuree, adresses.size, relancesLentes, incident)
+        } else {
+            getString(R.string.direct_aucune_source)
+        }
     }
 
     /**
@@ -835,6 +947,21 @@ class LecteurDirectActivity : ComponentActivity() {
                      * qu'on a demandé au lecteur, et ne bouge que lorsqu'on le lui demande.
                      */
                     enPause = !joueur.playWhenReady
+                    /*
+                     * L'image avance : la série d'échecs est finie.
+                     *
+                     * Remettre les compteurs à zéro ici plutôt qu'à l'ouverture est ce qui distingue
+                     * « trois incidents d'affilée » de « trois incidents dans la soirée ». Le second
+                     * ne dit rien contre la source.
+                     */
+                    if (joueur.isPlaying) {
+                        depuisLecture = System.currentTimeMillis()
+                        if (reprises > 0 || relancesLentes > 0) {
+                            reprises = 0
+                            relancesLentes = 0
+                            message = null
+                        }
+                    }
                     /*
                      * Sortir de la fenêtre par l'arrière : on rattrape avant que l'image ne se fige.
                      *
@@ -1270,6 +1397,35 @@ class LecteurDirectActivity : ComponentActivity() {
          * un segment que l'hébergeur vient de retirer.
          */
         private const val MARGE_ARRIERE_MS = 20_000L
+
+        /**
+         * Combien de fois on redémarre **la même adresse** avant de la mettre en cause.
+         *
+         * Trois, espacées de 2, 5 puis 10 secondes : croissantes, parce qu'une coupure qui dure ne se
+         * répare pas en insistant vite, et qu'insister vite ne fait qu'épuiser le compteur avant que
+         * le réseau ne soit revenu.
+         */
+        private const val REPRISES_MAX = 3
+        private val ATTENTES_REPRISE_MS = longArrayOf(2_000L, 5_000L, 10_000L)
+
+        /**
+         * La durée de lecture qui disculpe une adresse.
+         *
+         * Trente secondes d'image sans faute prouvent que l'adresse est bonne et que l'hébergeur
+         * répond. Ce qui l'interrompt ensuite est un incident, pas un verdict, et l'inscrire au
+         * classement reviendrait à noter le réseau sous le nom de la source.
+         */
+        private const val DUREE_QUI_DISCULPE_MS = 30_000L
+
+        /**
+         * L'insistance quand plus rien ne répond : six relances, dix secondes d'écart.
+         *
+         * Une minute en tout. Assez pour traverser une coupure de réseau domestique — le cas que l'on
+         * veut absolument survivre —, trop peu pour maquiller une chaîne réellement éteinte : au bout
+         * du compte on le dit, avec le chiffre.
+         */
+        private const val RELANCES_LENTES = 6
+        private const val INTERVALLE_RELANCE_MS = 10_000L
 
         /** La barre s'efface après cette accalmie. */
         private const val REPOS_BARRE_MS = 3_500L

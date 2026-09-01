@@ -170,6 +170,39 @@ const MARGE_ARRIERE_S = 20;
  */
 const RATTRAPAGE_MAX = 1.06;
 
+/**
+ * Combien de fois on redémarre **la même adresse** avant de la mettre en cause.
+ *
+ * Le code disait : « une erreur fatale de réseau sur un direct ne se répare pas en réessayant la même
+ * adresse ». C'est faux, et l'observation l'établit : relancer la même chaîne, sur la même adresse,
+ * la fait repartir **immédiatement**. Une erreur réseau au milieu d'un direct n'accuse donc pas
+ * l'adresse, elle accuse une seconde de réseau.
+ *
+ * Trois reprises espacées de 2, 5 puis 10 s — croissantes, parce qu'une coupure qui dure ne se répare
+ * pas en insistant vite, et qu'insister vite épuise le compteur avant que le réseau ne soit revenu.
+ */
+const REPRISES_MAX = 3;
+const ATTENTES_REPRISE_MS = [2_000, 5_000, 10_000];
+
+/**
+ * La durée de lecture qui disculpe une adresse.
+ *
+ * Trente secondes d'image sans faute prouvent que l'adresse est bonne. Ce qui l'interrompt ensuite est
+ * un incident, pas un verdict — l'inscrire au classement reviendrait à noter le réseau sous le nom de
+ * la source, et à dégrader les adresses les plus regardées, c'est-à-dire les meilleures.
+ */
+const DUREE_QUI_DISCULPE_MS = 30_000;
+
+/**
+ * L'insistance quand plus rien ne répond : six relances, dix secondes d'écart.
+ *
+ * Une minute en tout. Assez pour traverser une coupure de réseau domestique — le cas qu'on veut
+ * absolument survivre —, trop peu pour maquiller une chaîne réellement éteinte : au bout du compte on
+ * le dit, avec le chiffre. La source doit faire ses preuves, l'insistance n'en tient pas lieu.
+ */
+const RELANCES_LENTES = 6;
+const INTERVALLE_RELANCE_MS = 10_000;
+
 function horodatage(secondes: number): string {
   const entier = Math.max(0, Math.round(secondes));
   const minutes = Math.floor(entier / 60);
@@ -202,6 +235,12 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
   const rangRef = useRef(0);
   const [message, setMessage] = useState<string | null>("Ouverture de la chaîne…");
   const [echec, setEchec] = useState(false);
+  /** L'instant où l'image a été vue pour la dernière fois : ce qui distingue un incident d'une panne. */
+  const depuisLecture = useRef(0);
+  const reprises = useRef(0);
+  const relancesLentes = useRef(0);
+  /** Ce qui a coupé, dit à l'écran plutôt que deviné. */
+  const dernierIncident = useRef<string | null>(null);
   /** L'adresse en cours d'essai, pour ne rapporter au serveur que ce qu'on a réellement tenté. */
   const essai = useRef<string | null>(null);
   const [fenetre, setFenetre] = useState<Fenetre | null>(null);
@@ -322,11 +361,48 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
       setMessage("Nouvel essai par le serveur…");
       return;
     }
-    void api.resultatChaineLive(chaine.id, morte, false).catch(() => undefined);
+    /*
+     * **Une adresse qui a joué n'est pas une adresse morte.**
+     *
+     * L'échec était inscrit quoi qu'il arrive — y compris pour une adresse qui venait de diffuser une
+     * heure sans faute et qu'une seconde de réseau avait interrompue. On fabriquait ainsi de fausses
+     * mauvaises notes sur les sources les plus regardées, c'est-à-dire les meilleures. Ne compte
+     * désormais que l'adresse qui n'a **jamais** tenu l'image trente secondes : celle-là n'a rien
+     * prouvé, et son échec veut dire quelque chose.
+     */
+    const aTenu = depuisLecture.current > 0 && Date.now() - depuisLecture.current > DUREE_QUI_DISCULPE_MS;
+    if (!aTenu) void api.resultatChaineLive(chaine.id, morte, false).catch(() => undefined);
+    reprises.current = 0;
     const disponibles = Math.min(adresses.length, REPLIS);
     const prochain = rangRef.current + 1;
     if (prochain >= disponibles) {
-      setMessage("Aucune source ne répond pour cette chaîne.");
+      /*
+       * Toutes les adresses ont échoué : on insiste, lentement, puis on le dit.
+       *
+       * Un téléviseur ne renonce pas parce qu'un émetteur a hoqueté. Mais insister sans fin devant une
+       * chaîne réellement morte n'est pas de la ténacité, c'est un écran noir qui ment : la source
+       * doit **faire ses preuves**. Six relances de dix secondes, soit une minute — assez pour
+       * traverser une coupure domestique, trop peu pour maquiller une panne.
+       *
+       * On reprend la **première** adresse, celle que la course a désignée comme la meilleure : l'ordre
+       * dans lequel on vient de les abandonner n'a rien changé à ce classement.
+       */
+      if (relancesLentes.current < RELANCES_LENTES) {
+        relancesLentes.current += 1;
+        setMessage(`Plus aucune source ne répond, nouvelle tentative (${relancesLentes.current}/${RELANCES_LENTES})…`);
+        window.setTimeout(() => {
+          rangRef.current = 0;
+          setParRelais(false);
+          setRang(0);
+        }, INTERVALLE_RELANCE_MS);
+        return;
+      }
+      // Le message dit ce qui a été mesuré, au lieu d'un constat qui ne permet ni de comprendre ni de
+      // corriger.
+      const incident = dernierIncident.current;
+      setMessage(incident
+        ? `Aucune des ${adresses.length} source(s) ne répond après ${relancesLentes.current} relances. Dernier incident : ${incident}.`
+        : "Aucune source ne répond pour cette chaîne.");
       setEchec(true);
       return;
     }
@@ -381,6 +457,15 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
       if (annule) return;
       setMessage(null);
       window.clearTimeout(minuteur);
+      /*
+       * L'image avance : la série d'échecs est finie.
+       *
+       * Remettre les compteurs à zéro ici plutôt qu'à l'ouverture distingue « trois incidents
+       * d'affilée » de « trois incidents dans la soirée ». Le second ne dit rien contre la source.
+       */
+      depuisLecture.current = Date.now();
+      reprises.current = 0;
+      relancesLentes.current = 0;
       // C'est l'adresse d'origine qu'on note, jamais celle du relais : le classement porte sur la
       // source, et le relais n'est qu'un chemin pour y aller.
       void api.resultatChaineLive(chaine.id, entree.url, true).catch(() => undefined);
@@ -419,6 +504,20 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
           enableWorker: true, lowLatencyMode: false, backBufferLength: 60,
           maxBufferLength: 30, liveSyncDurationCount: 3, capLevelToPlayerSize: false,
           maxLiveSyncPlaybackRate: RATTRAPAGE_MAX,
+          /*
+           * **La tolérance interne, élargie, et pour une raison arithmétique.**
+           *
+           * Un direct redemande la playlist toutes les huit secondes, et un segment aussi souvent —
+           * environ **900 requêtes par heure**. Les valeurs par défaut abandonnent après quelques
+           * secondes ; sur neuf cents tirages, en rater un devient une certitude. C'est là toute
+           * l'explication du « ça coupe au bout d'un moment » : plus on regarde longtemps, plus c'est
+           * sûr d'arriver. Ces reprises-ci se font **sous** l'image, sans que rien ne se voie.
+           */
+          manifestLoadingMaxRetry: 4,
+          levelLoadingMaxRetry: 6,
+          fragLoadingMaxRetry: 6,
+          levelLoadingRetryDelay: 1_000,
+          fragLoadingRetryDelay: 1_000,
         });
         hlsRef.current = hls;
         /*
@@ -537,8 +636,29 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
             hls.recoverMediaError();
             return;
           }
-          // Une erreur fatale de réseau sur un direct ne se répare pas en réessayant la même
-          // adresse : la source est en panne, et la suivante est déjà connue.
+          /*
+           * **Réessayer la même adresse avant de l'abandonner.**
+           *
+           * Ce qui se trouvait ici affirmait le contraire — « la source est en panne, et la suivante
+           * est déjà connue ». L'observation la dément : relancer la même adresse répare
+           * instantanément. Ce qui meurt, c'est la session en cours, pas la source.
+           *
+           * `startLoad` reprend le chargement sur le lecteur existant, sans le détruire : le décodeur
+           * reste en place, et la reprise coûte le remplissage du tampon au lieu d'une reconstruction
+           * complète.
+           */
+          if (reprises.current < REPRISES_MAX) {
+            reprises.current += 1;
+            dernierIncident.current = `réseau (${donnees.details})`;
+            if (reprises.current > 1) {
+              setMessage(`Reprise de la source (${reprises.current}/${REPRISES_MAX})…`);
+            }
+            window.setTimeout(() => {
+              if (annule) return;
+              hlsRef.current?.startLoad();
+            }, ATTENTES_REPRISE_MS[reprises.current - 1]);
+            return;
+          }
           hls.destroy();
           hlsRef.current = null;
           suivante();

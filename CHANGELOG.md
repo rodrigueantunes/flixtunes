@@ -1,5 +1,41 @@
 # Journal des versions
 
+## 0.5.7.r14 — une seconde de réseau n'est pas une source morte
+
+La chaîne coupait encore. Le coupable n'était pas un seuil : c'est une phrase écrite dans les deux
+lecteurs, et elle est fausse.
+
+> « Une erreur fatale de réseau sur un direct ne se répare pas en réessayant la même adresse. »
+
+L'observation la dément sans appel : relancer la même chaîne, sur la même adresse, la fait repartir
+**immédiatement**. Ce qui meurt, c'est la session en cours — pas la source.
+
+- **Pourquoi ça coupait « au bout d'un moment ».** Un direct ne se charge pas une fois : il redemande
+  la playlist toutes les 8 s, et un segment aussi souvent — environ **900 requêtes par heure**. La
+  politique de reprise par défaut tient trois secondes ; une coupure Wi-Fi de cinq l'épuise. Sur neuf
+  cents tirages, en rater un devient une certitude : plus on regarde longtemps, plus c'est sûr
+  d'arriver. D'où le délai variable, et d'où le fait que relancer répare toujours.
+- **On réessaie maintenant la même adresse** — trois fois, à 2, 5 puis 10 s. Croissantes, parce
+  qu'une coupure qui dure ne se répare pas en insistant vite : insister vite ne fait qu'épuiser le
+  compteur avant que le réseau ne soit revenu. Côté Web, `startLoad` reprend sur le lecteur existant
+  sans le détruire ; côté Android, `prepare` sans reconstruire.
+- **La tolérance interne est élargie** — 6 tentatives côté ExoPlayer, 4 à 6 côté hls.js — pour que la
+  plupart des incidents ne remontent **jamais** jusqu'à l'erreur. Le prix est qu'une source réellement
+  morte met une quinzaine de secondes à être déclarée telle au lieu de trois : on le paie une fois,
+  contre une coupure qu'on payait toutes les heures.
+- **Une adresse qui a joué n'est plus déclarée morte.** L'échec était inscrit au classement quoi qu'il
+  arrive, y compris pour une adresse qui venait de diffuser une heure sans faute. On fabriquait ainsi
+  de fausses mauvaises notes sur les sources **les plus regardées, c'est-à-dire les meilleures**. Seule
+  compte désormais l'adresse qui n'a jamais tenu l'image trente secondes.
+- **On ne finit plus sur « aucune source ».** Six relances espacées de dix secondes, soit une minute :
+  assez pour traverser une coupure de réseau domestique, trop peu pour maquiller une chaîne éteinte —
+  la source doit faire ses preuves, l'insistance n'en tient pas lieu. C'est la **première** adresse
+  qu'on reprend, celle que la course a désignée comme la meilleure.
+- **Et le message final dit ce qui a été mesuré** : le nombre de sources, le nombre de relances et la
+  nature du dernier incident, au lieu d'un constat qui ne permettait ni de comprendre ni de corriger.
+  Après deux hypothèses, il fallait cesser de deviner.
+- 271 tests Web, TypeScript sans erreur.
+
 ## 0.5.7.r13 — le remède qui coupait l'image
 
 Une chaîne coupait au bout d'un moment, et relancer le direct réparait. La cause est de notre fait.

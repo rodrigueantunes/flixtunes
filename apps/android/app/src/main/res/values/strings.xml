@@ -208,6 +208,9 @@
   <string name="direct_sources">%1$d sources</string>
   <string name="direct_ouverture">Ouverture de la chaîne…</string>
   <string name="direct_source_essai">Source %1$d sur %2$d…</string>
+  <string name="direct_reprise">Reprise de la source (%1$d/%2$d)…</string>
+  <string name="direct_relance_lente">Plus aucune source ne répond, nouvelle tentative (%1$d/%2$d)…</string>
+  <string name="direct_aucune_source_mesuree">Aucune des %1$d source(s) ne répond après %2$d relances. Dernier incident : %3$s.</string>
   <string name="direct_aucune_source">Aucune source ne répond pour cette chaîne.</string>
   <string name="direct_numero_saisi">Chaîne %1$s</string>
   <!-- La barre du direct : ce qu'elle montre tient dans la fenêtre que la chaîne publie encore. -->
