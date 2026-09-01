@@ -30,6 +30,7 @@ retrouver un chiffre qu'on avait mesuré, et son filtre de fiabilité cesse de t
 """
 import asyncio
 import datetime
+import hashlib
 import json
 import logging
 import os
@@ -141,6 +142,8 @@ projet en deux requêtes — et les projets qui collectionnent des listes en con
 GITHUB_DEPOTS = [
     "iptv m3u france",
     "iptv playlist tnt",
+    "chaines francaises m3u",
+    "playlist tv francaise",
     "iptv-org",
     "free iptv m3u",
 ]
@@ -244,6 +247,7 @@ async def depots_github(client: httpx.AsyncClient) -> Dict[str, str]:
     """
     trouvees: Dict[str, str] = {}
     vus: Set[str] = set()
+    arbres: List[Tuple[str, str]] = []
     for requete in GITHUB_DEPOTS:
         try:
             reponse = await client.get(
@@ -264,30 +268,47 @@ async def depots_github(client: httpx.AsyncClient) -> Dict[str, str]:
             if not plein or plein in vus:
                 continue
             vus.add(plein)
+            arbres.append((plein, branche))
+
+    """
+    Les arbres sont demandés **de front**, et non l'un après l'autre.
+
+    Quatre-vingts dépôts interrogés en file, à un aller-retour chacun, font une minute d'attente avant
+    que la première liste ne soit téléchargée — pendant laquelle le réseau ne fait rien. Six requêtes
+    de front suffisent à l'effacer ; on n'en met pas plus, parce que l'API de GitHub compte les rafales
+    autant que le total et répond 403 à qui la bouscule.
+    """
+    portes = asyncio.Semaphore(6)
+
+    async def lire_un_arbre(plein: str, branche: str) -> List[str]:
+        async with portes:
             try:
                 arbre = await client.get(
                     f"https://api.github.com/repos/{plein}/git/trees/{branche}",
                     params={"recursive": "1"},
                 )
                 if arbre.status_code != 200:
-                    continue
+                    return []
+                return [
+                    noeud.get("path", "") for noeud in arbre.json().get("tree", [])
+                    if str(noeud.get("path", "")).lower().endswith((".m3u", ".m3u8"))
+                ]
             except Exception:
-                continue
+                return []
 
-            fichiers = [
-                noeud.get("path", "") for noeud in arbre.json().get("tree", [])
-                if str(noeud.get("path", "")).lower().endswith((".m3u", ".m3u8"))
-            ]
-            for chemin in fichiers[:GITHUB_MAX_FICHIERS_PAR_DEPOT]:
-                base = os.path.splitext(os.path.basename(chemin))[0]
-                # Ce qui s'annonce étranger ne sera pas téléchargé : le critère de contenu s'appliquera
-                # aux autres, et n'aura pas à trancher ce que le nom disait déjà.
-                if any(mot in chemin.lower() for mot in NOMS_ECARTES):
-                    continue
-                trouvees.setdefault(
-                    f"{base} ({plein})",
-                    f"https://raw.githubusercontent.com/{plein}/{branche}/{chemin}",
-                )
+    for (plein, branche), fichiers in zip(
+        arbres, await asyncio.gather(*(lire_un_arbre(p, b) for p, b in arbres))
+    ):
+        for chemin in fichiers[:GITHUB_MAX_FICHIERS_PAR_DEPOT]:
+            base = os.path.splitext(os.path.basename(chemin))[0]
+            # Ce qui s'annonce étranger ne sera pas téléchargé : le critère de contenu s'appliquera
+            # aux autres, et n'aura pas à trancher ce que le nom disait déjà.
+            if any(mot in chemin.lower() for mot in NOMS_ECARTES):
+                continue
+            trouvees.setdefault(
+                f"{base} ({plein})",
+                f"https://raw.githubusercontent.com/{plein}/{branche}/{chemin}",
+            )
     return trouvees
 
 
@@ -582,23 +603,43 @@ async def traiter_une_liste(
     nom: str,
     url: str,
     hotes: VerdictHotes,
-    cache: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], bool],
+    cache: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], "asyncio.Task[bool]"],
     verrou: asyncio.Semaphore,
     journal: List[Dict[str, object]],
     exigeante: bool,
+    deja_vues: Dict[str, str],
 ) -> Optional[Dict[str, object]]:
     try:
         reponse = await client.get(url, timeout=PLAYLIST_DOWNLOAD_TIMEOUT)
         if reponse.status_code != 200:
             logger.warning(f"Liste « {nom} » injoignable (HTTP {reponse.status_code})")
             return None
-        entrees, ecartees = analyze_m3u(reponse.text)
+        corps = reponse.text
+        entrees, ecartees = analyze_m3u(corps)
     except Exception as erreur:
         logger.warning(f"Liste ignorée « {nom} » : {erreur}")
         return None
 
     if not entrees:
         return None
+
+    """
+    Deux copies du même fichier ne sont pas deux listes.
+
+    Les dépôts de listes se recopient les uns les autres — une fourche de projet en porte l'intégralité
+    sous une autre adresse. Rien ne s'en apercevait : l'adresse diffère, le contenu non. On la traitait
+    donc entièrement pour aboutir au même chiffre, et FlixTunes se retrouvait avec deux entrées de menu
+    pour un seul bouquet.
+
+    Aucune chaîne n'est perdue en écartant l'une des deux, par construction : leurs octets sont
+    identiques.
+    """
+    empreinte_liste = hashlib.sha256(corps.encode("utf-8", "replace")).hexdigest()
+    jumelle = deja_vues.get(empreinte_liste)
+    if jumelle is not None:
+        logger.info(f"« {nom} » écartée : copie exacte de « {jumelle} »")
+        return None
+    deja_vues[empreinte_liste] = nom
 
     """
     Le critère de contenu, sur les listes découvertes seulement.
@@ -620,15 +661,29 @@ async def traiter_une_liste(
     await hotes.resoudre({urlparse(str(e["flux_url"])).hostname or "" for e in entrees} - {""})
 
     async def sonder(entree: Dict[str, object]) -> Tuple[Dict[str, object], bool]:
+        """
+        Une adresse n'est sondée qu'une fois, **même si huit listes la demandent en même temps**.
+
+        Le cache ne retenait que des résultats, et n'était donc écrit qu'une fois la sonde finie. Huit
+        listes avançant de front, les huit trouvaient le cache vide et sondaient la même adresse
+        ensemble : le cache ne servait qu'aux retardataires. Ce n'est pas un détail de bord — les
+        listes découvertes se recopient énormément, et c'est exactement quand elles se ressemblent que
+        la collision arrive.
+
+        Ce qui est mis en cache est maintenant la **sonde en cours** et non son résultat : la première
+        liste la lance, les sept autres attendent la même.
+        """
         adresse = str(entree["flux_url"])
         propres = dict(entree.get("headers", {}))
         empreinte = (adresse, tuple(sorted(propres.items())))
-        if empreinte in cache:
-            return entree, cache[empreinte]
-        async with verrou:
-            vivant = await check_flux(client, adresse, propres, hotes)
-        cache[empreinte] = vivant
-        return entree, vivant
+        en_cours = cache.get(empreinte)
+        if en_cours is None:
+            async def mesurer() -> bool:
+                async with verrou:
+                    return await check_flux(client, adresse, propres, hotes)
+            en_cours = asyncio.create_task(mesurer())
+            cache[empreinte] = en_cours
+        return entree, await en_cours
 
     """
     Une chaîne est joignable si **l'une** de ses adresses répond.
@@ -679,7 +734,7 @@ async def traiter_les_listes(listes: Dict[str, str]) -> Tuple[List[Dict[str, obj
     """
     journal: List[Dict[str, object]] = []
     retenues: List[Dict[str, object]] = []
-    cache: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], bool] = {}
+    cache: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], "asyncio.Task[bool]"] = {}
     hotes = VerdictHotes()
 
     delais = httpx.Timeout(
@@ -692,6 +747,7 @@ async def traiter_les_listes(listes: Dict[str, str]) -> Tuple[List[Dict[str, obj
     )
     verrou = asyncio.Semaphore(MAX_STREAM_CONCURRENCY)
     portes = asyncio.Semaphore(LISTES_EN_PARALLELE)
+    deja_vues: Dict[str, str] = {}
 
     async with httpx.AsyncClient(limits=plafond, timeout=delais, follow_redirects=True, http2=True) as client:
         fixes = set(PUBLIC_PLAYLISTS.values())
@@ -699,7 +755,8 @@ async def traiter_les_listes(listes: Dict[str, str]) -> Tuple[List[Dict[str, obj
         async def une(nom: str, url: str) -> None:
             async with portes:
                 mesure = await traiter_une_liste(
-                    client, nom, url, hotes, cache, verrou, journal, exigeante=url not in fixes,
+                    client, nom, url, hotes, cache, verrou, journal,
+                    exigeante=url not in fixes, deja_vues=deja_vues,
                 )
             if mesure:
                 retenues.append(mesure)

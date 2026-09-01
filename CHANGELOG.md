@@ -1,5 +1,33 @@
 # Journal des versions
 
+## 0.5.7.r12 — la même adresse sondée huit fois
+
+Mené pendant la construction de la r11, donc versé ici. Ne touche que `tools/tv_playlist_checker.py`,
+qui ne fait partie d'aucun artefact : la r11 livrée reste celle qui a été construite.
+
+- **Une adresse n'était pas sondée une fois mais huit.** Le cache des sondes ne retenait que des
+  *résultats*, et n'était donc écrit qu'une fois la sonde terminée. Les huit listes qui avancent de
+  front trouvaient toutes le cache vide au même instant et sondaient la même adresse ensemble ; il ne
+  servait qu'aux retardataires. Ce n'est pas un cas de bord : les listes de GitHub se recopient
+  énormément, et c'est précisément quand elles se ressemblent que la collision arrive. Ce qui est mis
+  en cache est maintenant la **sonde en cours**, que les sept autres attendent. Mesuré sur huit listes
+  distinctes partageant quarante adresses : **320 sondes avant, 40 après**, et les huit rapportent
+  toujours 40/40 chaînes.
+- **Une copie exacte n'est plus retraitée.** Une fourche de dépôt porte le même fichier sous une autre
+  adresse ; rien ne s'en apercevait, puisque l'adresse diffère et le contenu non. On la téléchargeait,
+  l'analysait et la sondait entièrement pour aboutir au même chiffre, et FlixTunes recevait deux
+  entrées de menu pour un seul bouquet. La comparaison porte sur les octets : aucune chaîne perdue,
+  par construction.
+- **Les arbres de dépôts sont lus de front**, six à la fois. Quatre-vingts dépôts interrogés en file
+  font une minute d'attente avant le premier téléchargement, réseau au repos. Six et pas davantage :
+  l'API de GitHub compte les rafales autant que le total, et répond 403 à qui la bouscule.
+- **Deux requêtes de dépôts francophones en plus** — `chaines francaises m3u`, `playlist tv
+  francaise` : plus de volume pertinent en amont, pour que le critère TF1 + M6 + Canal+ ait moins à
+  jeter en aval. La recherche par dépôts est **gardée** : l'amputer aurait divisé le volume découvert,
+  alors que le compromis voulu est de ratisser large puis de trier durement.
+- Six vérifications : partage des sondes, copies exactes, critère appliqué aux découvertes et pas aux
+  listes fixes, requêtes de code dérivées du critère.
+
 ## 0.5.7.r11 — le fournisseur qui ne livrait rien, et les listes qu'on choisit
 
 - **Les quatre adresses du bouquet gratuit répondaient 404.** Le fournisseur « Chaînes » de FlixTunes
