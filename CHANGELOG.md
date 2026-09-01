@@ -1,5 +1,43 @@
 # Journal des versions
 
+## 0.5.7.r13 — le remède qui coupait l'image
+
+Une chaîne coupait au bout d'un moment, et relancer le direct réparait. La cause est de notre fait.
+
+- **Le recul de sécurité nous poussait hors de la fenêtre.** Après trois bégaiements, le lecteur
+  reculait derrière le direct — Web `liveSyncDurationCount` 3 → 5, Android `CIBLE_DIRECT_S` 24 +
+  `RECUL_S` 16. Dans les deux cas **40 s derrière le direct**, quelle que soit la chaîne. Or la
+  fenêtre médiane mesurée fait **61 s** : il restait 21 s de marge. Et sur les **8 % de chaînes dont
+  la fenêtre est plus courte que 40 s**, reculer plaçait le point de lecture *hors de la fenêtre
+  sur-le-champ*. On tenait un moment, puis on coupait — et relancer réparait, parce que relancer
+  repart au bord.
+- **Le recul est maintenant plafonné par la fenêtre de la chaîne**, des deux côtés : on calcule ce
+  qu'elle peut payer, `largeur − 20 s de marge arrière − la cible`, et si elle ne peut rien payer on
+  **ne recule pas**. Mieux vaut une source qui bégaie qu'une source qu'on vient de faire sortir de sa
+  propre fenêtre ; le comptage des blocages continue et décidera du repli si elle ne tient pas.
+- **Côté Web, rien ne rattrapait la dérive.** `maxLiveSyncPlaybackRate` valait 1 — c'est-à-dire
+  désactivé : une fois le retard pris, il restait, et s'ajoutait au suivant. À **1,06**, une minute de
+  lecture reprend 3,4 s sans que personne ne le voie ni ne l'entende, et la marge arrière se
+  reconstitue au lieu de s'éroder jusqu'à la coupure. C'est le mécanisme prévu pour exactement ce
+  cas, et on ne le lui demandait pas.
+- **Côté Android, le rattrapage était trop timide** — 1,03×, soit deux minutes pour reprendre 3,4 s,
+  moins vite que la dérive ne s'installait. Porté à **1,06×** ; le rééchantillonnage d'ExoPlayer
+  conserve la hauteur du son.
+- **Le recul Android repréparait le flux**, donc relâchait le décodeur et vidait le tampon : deux à
+  trois secondes d'écran noir. On soignait un bégaiement par une coupure — le remède se voyait plus
+  que le mal. Un `seekTo` en arrière obtient le même retard sans rien démonter.
+- **Et le rattrapage se fait en silence.** Un bandeau « fin de la fenêtre » s'affichait à chaque
+  correction, annonçant au spectateur une anomalie alors que le but est qu'il ne s'aperçoive de rien.
+  Ce qui doit se voir, c'est une source qu'on abandonne ; pas une seconde de retard qu'on reprend. Le
+  retour ne se colle plus au bord non plus — 12 s derrière, sans quoi la dérive suivante est
+  immédiate.
+- 271 tests Web, 892 tests serveur, TypeScript sans erreur.
+
+**Ce qui n'est pas prouvé.** Le mécanisme ci-dessus est démontré par les chiffres — 40 s de recul
+contre 61 s de fenêtre médiane — mais je n'ai pas pu reproduire la coupure sur le téléviseur. Une
+expiration de jeton côté hébergeur produirait le même symptôme et serait réparée de la même façon par
+un relancement. Si la coupure persiste, c'est cette piste-là qu'il faudra instrumenter.
+
 ## 0.5.7.r12 — le tri passe de la liste à la chaîne
 
 Aucun artefact n'étant sorti pour cette révision, le travail sur le filtre francophone complète

@@ -216,7 +216,6 @@
   <string name="direct_revenir_direct">Revenir au direct</string>
   <string name="direct_pause">Mettre en pause</string>
   <string name="direct_reprendre_lecture">Reprendre</string>
-  <string name="direct_fin_fenetre">Fin de la fenêtre : retour au direct.</string>
   <!-- Le retard pris de nous-mêmes après des blocages répétés : il s'annonce, sinon il inquiète. -->
   <string name="direct_securite">+%1$d s de sécurité</string>
   <string name="direct_sources_titre">Sources</string>

@@ -145,6 +145,31 @@ const FENETRE_MINIMALE_S = 2 * SEGMENT_TYPE_S;
 /** Le direct, c'est le bord à quelques secondes près : au-delà, on est en différé et on le dit. */
 const MARGE_DIRECT_S = 12;
 
+/**
+ * Ce qu'on refuse de laisser entre le point de lecture et le bord **arrière** de la fenêtre.
+ *
+ * C'est la marge qui manquait. Reculer coûte du retard, et le retard se prend quelque part : dans la
+ * fenêtre, qui n'est pas infinie. Trois bégaiements faisaient reculer de 3 à 5 segments — **40 s
+ * derrière le direct** — alors que la fenêtre médiane mesurée fait 61 s. Il restait 21 s ; et sur les
+ * 8 % de chaînes dont la fenêtre est plus courte que 40 s, reculer jetait le lecteur **hors de la
+ * fenêtre sur-le-champ**. L'image tenait un moment, puis coupait, et relancer réparait — parce que
+ * relancer repart au bord.
+ *
+ * Vingt secondes, soit deux segments et demi : de quoi absorber un rechargement sans se retrouver à
+ * demander un segment que l'hébergeur vient de retirer.
+ */
+const MARGE_ARRIERE_S = 20;
+
+/**
+ * La vitesse de rattrapage, et pourquoi elle vaut mieux qu'un saut.
+ *
+ * hls.js sait revenir vers le direct **en accélérant imperceptiblement** plutôt qu'en sautant. Le
+ * réglage existait et valait 1 — c'est-à-dire désactivé : une fois la dérive prise, elle restait.
+ * À 1,06, une minute de lecture rattrape 3,4 s de retard ; personne ne l'entend ni ne le voit, et la
+ * marge arrière se reconstitue toute seule au lieu de s'éroder jusqu'à la coupure.
+ */
+const RATTRAPAGE_MAX = 1.06;
+
 function horodatage(secondes: number): string {
   const entier = Math.max(0, Math.round(secondes));
   const minutes = Math.floor(entier / 60);
@@ -180,6 +205,8 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
   /** L'adresse en cours d'essai, pour ne rapporter au serveur que ce qu'on a réellement tenté. */
   const essai = useRef<string | null>(null);
   const [fenetre, setFenetre] = useState<Fenetre | null>(null);
+  /** La même, lisible depuis les rappels de hls.js, qui ne revoient pas le rendu. */
+  const fenetreRef = useRef<Fenetre | null>(null);
   const [barreVisible, setBarreVisible] = useState(true);
   const [choixOuvert, setChoixOuvert] = useState(false);
   /** Le menu s'ouvre court : la suite se demande, et se referme avec lui. */
@@ -391,6 +418,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
         const hls = new HlsClass({
           enableWorker: true, lowLatencyMode: false, backBufferLength: 60,
           maxBufferLength: 30, liveSyncDurationCount: 3, capLevelToPlayerSize: false,
+          maxLiveSyncPlaybackRate: RATTRAPAGE_MAX,
         });
         hlsRef.current = hls;
         /*
@@ -402,10 +430,26 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
          */
         reagirALInstabilite.current = () => {
           blocages.current = [];
-          if (hls.config.liveSyncDurationCount < 5) {
-            hls.config.liveSyncDurationCount = 5;
+          /*
+           * **Reculer, mais jamais plus loin que la fenêtre ne le permet.**
+           *
+           * Le recul était fixe : cinq segments, quelle que soit la chaîne. Sur la fenêtre médiane il
+           * laissait 21 s de marge ; sur une fenêtre de 30 s il plaçait le point de lecture derrière
+           * le bord arrière, c'est-à-dire dans le vide. On calcule donc le recul que cette chaîne-ci
+           * peut payer, et l'on ne recule pas si elle ne peut rien payer du tout — mieux vaut une
+           * source un peu instable qu'une source qu'on vient de faire sortir de sa propre fenêtre.
+           */
+          const segment = Math.round(hls.levels[hls.currentLevel]?.details?.targetduration ?? SEGMENT_TYPE_S);
+          const largeur = fenetreRef.current ? fenetreRef.current.fin - fenetreRef.current.debut : 0;
+          const segmentsPayables = largeur > 0
+            ? Math.floor((largeur - MARGE_ARRIERE_S) / segment)
+            : 5;
+          const vise = Math.min(5, segmentsPayables);
+          if (vise > hls.config.liveSyncDurationCount) {
+            const gagnes = vise - hls.config.liveSyncDurationCount;
+            hls.config.liveSyncDurationCount = vise;
             silenceJusqua.current = Date.now() + REPIT_APRES_RECUL_MS;
-            setSecurite(2 * Math.round(hls.levels[hls.currentLevel]?.details?.targetduration ?? SEGMENT_TYPE_S));
+            setSecurite(gagnes * segment);
             return;
           }
           if (rangRef.current + 1 >= Math.min(adresses.length, REPLIS)) return;
@@ -548,7 +592,25 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
       if (!element.seekable.length) { setFenetre(null); return; }
       const debut = element.seekable.start(0);
       const fin = element.seekable.end(element.seekable.length - 1);
-      setFenetre({ debut, fin, position: element.currentTime, enPause: element.paused });
+      const releve = { debut, fin, position: element.currentTime, enPause: element.paused };
+      fenetreRef.current = releve;
+      setFenetre(releve);
+
+      /*
+       * **Le bord arrière approche : on rattrape sans le dire.**
+       *
+       * Le saut au direct existe déjà, mais il se voit — l'image bondit. Ici on agit **avant**, quand
+       * il reste encore de la marge, et de la seule manière qui ne se remarque pas : en laissant le
+       * rattrapage de hls.js faire son travail, et en ne le contrariant plus. Un saut ne subsiste que
+       * si la marge tombe sous un segment, c'est-à-dire quand il n'y a plus rien à négocier.
+       */
+      if (!element.paused && fin - debut > FENETRE_MINIMALE_S) {
+        const marge = releve.position - debut;
+        if (marge > 0 && marge < SEGMENT_TYPE_S) {
+          silenceJusqua.current = Date.now() + 4_000;
+          element.currentTime = fin - MARGE_DIRECT_S;
+        }
+      }
     };
     const minuteur = window.setInterval(relever, 250);
     return () => window.clearInterval(minuteur);

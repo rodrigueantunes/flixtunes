@@ -476,7 +476,16 @@ class LecteurDirectActivity : ComponentActivity() {
                         MediaItem.LiveConfiguration.Builder()
                             .setTargetOffsetMs(cible)
                             .setMinPlaybackSpeed(0.97f)
-                            .setMaxPlaybackSpeed(1.03f)
+                            /*
+                             * 1,06× et non 1,03× pour **revenir** vers la cible.
+                             *
+                             * C'est la vitesse à laquelle on rattrape un retard pris, et elle était
+                             * trop timide : à 1,03× il faut deux minutes pour reprendre 3,4 s, si
+                             * bien que la dérive gagnait plus vite qu'on ne la rattrapait. À 1,06×
+                             * une minute suffit, et cela ne s'entend pas — le rééchantillonnage
+                             * d'ExoPlayer conserve la hauteur du son.
+                             */
+                            .setMaxPlaybackSpeed(1.06f)
                             .build(),
                     )
                     .build(),
@@ -732,12 +741,34 @@ class LecteurDirectActivity : ComponentActivity() {
     private fun reagirALInstabilite() {
         blocages.clear()
         if (securite == 0) {
-            securite = RECUL_S
-            // Le recul reprépare le flux : le juger pendant qu'il se remplit reviendrait à le
-            // condamner pour le remède qu'on vient de lui donner.
-            silenceJusqua = System.currentTimeMillis() + REPIT_APRES_RECUL_MS
-            jouerRang(reprendre = false)
-            return
+            /*
+             * **Reculer dans la fenêtre, et non reconstruire le lecteur.**
+             *
+             * Le recul repréparait le flux : décodeur relâché, tampon vidé, écran noir de deux à trois
+             * secondes. On soignait un bégaiement par une coupure — le remède se voyait plus que le
+             * mal. Un `seekTo` en arrière obtient le même retard sans rien démonter.
+             *
+             * **Et jamais plus loin que la fenêtre ne le permet.** Le recul était le même pour toutes
+             * les chaînes ; on calcule maintenant ce que celle-ci peut payer. Si elle ne peut rien
+             * payer, on ne recule pas : mieux vaut une source qui bégaie qu'une source qu'on vient de
+             * faire sortir de sa propre fenêtre. Le comptage des blocages continue, et c'est lui qui
+             * décidera du repli si elle ne tient vraiment pas.
+             */
+            val joueur = lecteur
+            val fenetreMs = joueur?.duration ?: 0L
+            val payableMs = fenetreMs - MARGE_ARRIERE_MS - CIBLE_DIRECT_S * 1_000L
+            if (joueur != null && fenetreMs > 0 && payableMs > 0) {
+                val reculMs = minOf(RECUL_S * 1_000L, payableMs)
+                securite = (reculMs / 1_000L).toInt()
+                silenceJusqua = System.currentTimeMillis() + REPIT_APRES_RECUL_MS
+                joueur.seekTo((joueur.currentPosition - reculMs).coerceAtLeast(MARGE_ARRIERE_MS))
+                return
+            }
+            if (fenetreMs > 0) {
+                // La fenêtre est trop courte pour acheter quoi que ce soit : on le note, on ne recule
+                // pas, et l'on laisse le comptage faire son travail.
+                securite = 0
+            }
         }
         // L'automatique s'arrête à REPLIS essais ; la main, elle, va où elle veut.
         if (rang + 1 < minOf(adresses.size, REPLIS)) {
@@ -813,9 +844,19 @@ class LecteurDirectActivity : ComponentActivity() {
                      * `ERROR_CODE_BEHIND_LIVE_WINDOW`, mais l'attendre voudrait dire attendre l'erreur.
                      */
                     if (fenetreMs > FENETRE_MINIMALE_MS && positionMs in 1 until FENETRE_MINIMALE_MS) {
-                        rejoindreDirect()
-                        message = getString(R.string.direct_fin_fenetre)
-                        lifecycleScope.launch { delay(4_000); message = null }
+                        /*
+                         * **En silence.**
+                         *
+                         * Un bandeau annonçait « fin de la fenêtre » à chaque rattrapage. Il disait au
+                         * spectateur qu'il venait de se passer quelque chose d'anormal, alors que le
+                         * but est précisément qu'il ne s'en aperçoive pas. Ce qui doit se voir, c'est
+                         * une source qu'on abandonne ; pas une seconde de retard qu'on reprend.
+                         *
+                         * Et l'on ne rejoint plus le bord exact : `MARGE_DIRECT_MS` derrière lui,
+                         * parce que se coller au direct rend la prochaine dérive immédiate.
+                         */
+                        joueur.seekTo((fenetreMs - MARGE_DIRECT_MS).coerceAtLeast(0))
+                        silenceJusqua = System.currentTimeMillis() + REPIT_APRES_GESTE_MS
                     }
                 }
                 delay(250)
@@ -1213,6 +1254,22 @@ class LecteurDirectActivity : ComponentActivity() {
 
         /** Sous deux segments, une fenêtre ne mérite pas de barre : elle ne promettrait rien. */
         private const val FENETRE_MINIMALE_MS = 16_000L
+
+        /**
+         * Ce qu'on refuse de laisser entre le point de lecture et le bord **arrière** de la fenêtre.
+         *
+         * C'est la marge qui manquait, et l'origine des coupures au bout d'un moment. Reculer coûte du
+         * retard, et ce retard se prend dans la fenêtre — qui n'est pas infinie. Le recul était fixe :
+         * `CIBLE_DIRECT_S` + `RECUL_S`, soit **40 s derrière le direct**, quelle que soit la chaîne.
+         * Sur la fenêtre médiane mesurée — 61 s — il restait 21 s ; sur les 8 % de chaînes dont la
+         * fenêtre est plus courte que 40 s, reculer plaçait le point de lecture **hors de la fenêtre
+         * sur-le-champ**. L'image tenait un moment, puis coupait, et relancer réparait, parce que
+         * relancer repart au bord.
+         *
+         * Vingt secondes, soit deux segments et demi : de quoi absorber un rechargement sans réclamer
+         * un segment que l'hébergeur vient de retirer.
+         */
+        private const val MARGE_ARRIERE_MS = 20_000L
 
         /** La barre s'efface après cette accalmie. */
         private const val REPOS_BARRE_MS = 3_500L
