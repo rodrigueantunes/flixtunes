@@ -114,6 +114,16 @@ class LecteurDirectActivity : ComponentActivity() {
     private var adresses: List<String> = emptyList()
     /** Ce que le serveur sait de chaque adresse — définition et débit —, pour le dire dans la liste. */
     private var qualites: List<Pair<Int?, Int?>> = emptyList()
+    /**
+     * Le menu regroupe ce qui se ressemble, la liste garde tout.
+     *
+     * Mesuré sur le corpus : 7 559 adresses de 1 976 chaînes ne diffèrent de leur voisine que par un
+     * jeton dans la requête. Le menu en listait quatre visiblement identiques, et l'on choisissait à
+     * l'aveugle. Chaque groupe garde l'index de son meilleur membre — celui que le serveur a classé en
+     * tête — et le repli automatique continue de parcourir chaque adresse : deux jetons ne se valent
+     * pas, l'un peut être périmé quand l'autre fonctionne.
+     */
+    private var groupes: List<Triple<Int, Pair<Int?, Int?>, Int>> = emptyList()
     /** La chaîne quittée, pour y revenir d'une touche — le second geste d'un téléviseur. */
     private var precedente: String? = null
     private var rang = 0
@@ -139,6 +149,14 @@ class LecteurDirectActivity : ComponentActivity() {
     /** La liste des sources, ouverte à la touche verte. */
     private var choixOuvert by mutableStateOf(false)
     private var choixIndex by mutableIntStateOf(0)
+    /**
+     * Le menu s'ouvre court : huit sources, puis le reste sur demande.
+     *
+     * Le regroupement ramenait la pire chaîne de 78 lignes à 42 — toujours illisible. Le serveur les
+     * a classées par échecs, définition et débit : les huit premières sont les meilleures qu'on
+     * connaisse, et celui qui cherche la neuvième sait ce qu'il fait.
+     */
+    private var toutesLesSources by mutableStateOf(false)
 
     /**
      * Le retour ferme la liste des sources avant de quitter la chaîne.
@@ -152,8 +170,16 @@ class LecteurDirectActivity : ComponentActivity() {
         override fun handleOnBackPressed() { montrerLesSources(false) }
     }
 
+    /** Les groupes affichés : les huit meilleurs, ou tous si on l'a demandé. */
+    private fun groupesVisibles(): List<Triple<Int, Pair<Int?, Int?>, Int>> =
+        if (toutesLesSources) groupes else groupes.take(SOURCES_VISIBLES)
+
+    /** Y a-t-il une ligne « voir les autres » au bout de la liste ? */
+    private fun ligneVoirPlus(): Boolean = !toutesLesSources && groupes.size > SOURCES_VISIBLES
+
     private fun montrerLesSources(ouvert: Boolean) {
         choixOuvert = ouvert
+        if (!ouvert) toutesLesSources = false
         fermerLeChoix.isEnabled = ouvert
         if (ouvert) commandesVisibles = true
     }
@@ -367,6 +393,14 @@ class LecteurDirectActivity : ComponentActivity() {
                  */
                 val retenues = details.sources
                 qualites = retenues.map { it.hauteur to it.debit }
+                val vus = LinkedHashMap<String, Triple<Int, Pair<Int?, Int?>, Int>>()
+                retenues.forEachIndexed { index, source ->
+                    val cle = source.empreinte.ifBlank { source.url }
+                    val connu = vus[cle]
+                    if (connu == null) vus[cle] = Triple(index, source.hauteur to source.debit, 1)
+                    else vus[cle] = connu.copy(third = connu.third + 1)
+                }
+                groupes = vus.values.toList()
                 /*
                  * La course ne sonde que les douze premières, pas les soixante-dix.
                  *
@@ -539,8 +573,19 @@ class LecteurDirectActivity : ComponentActivity() {
         if (choixOuvert) {
             when (code) {
                 KeyEvent.KEYCODE_DPAD_UP -> { choixIndex = (choixIndex - 1).coerceAtLeast(0); return true }
-                KeyEvent.KEYCODE_DPAD_DOWN -> { choixIndex = (choixIndex + 1).coerceAtMost(adresses.lastIndex); return true }
-                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> { choisirSource(choixIndex); return true }
+                KeyEvent.KEYCODE_DPAD_DOWN -> {
+                    val dernier = groupesVisibles().lastIndex + if (ligneVoirPlus()) 1 else 0
+                    choixIndex = (choixIndex + 1).coerceAtMost(dernier)
+                    return true
+                }
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                    val visibles = groupesVisibles()
+                    // La dernière ligne déplie le reste au lieu d'ouvrir une source.
+                    if (ligneVoirPlus() && choixIndex == visibles.size) { toutesLesSources = true; return true }
+                    // Le curseur parcourt les groupes ; ce qu'on ouvre est le meilleur membre du groupe.
+                    visibles.getOrNull(choixIndex)?.let { choisirSource(it.first) }
+                    return true
+                }
                 // Le retour n'est pas écouté ici : il passe par `OnBackPressedDispatcher`, seul chemin
                 // que le geste des téléphones récents emprunte encore.
                 KeyEvent.KEYCODE_ESCAPE -> { montrerLesSources(false); return true }
@@ -572,7 +617,10 @@ class LecteurDirectActivity : ComponentActivity() {
         if (code == KeyEvent.KEYCODE_CHANNEL_UP || code == KeyEvent.KEYCODE_PAGE_UP) { voisine(1); return true }
         if (code == KeyEvent.KEYCODE_CHANNEL_DOWN || code == KeyEvent.KEYCODE_PAGE_DOWN) { voisine(-1); return true }
         if (code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN) {
-            if (adresses.size > 1) { choixIndex = rang; montrerLesSources(true) }
+            if (groupes.size > 1) {
+                choixIndex = groupes.indexOfFirst { it.first == rang }.coerceAtLeast(0)
+                montrerLesSources(true)
+            }
             return true
         }
         // Reculer et avancer : la croix horizontale et les touches de transport disent la même chose.
@@ -951,8 +999,9 @@ class LecteurDirectActivity : ComponentActivity() {
                         fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(10.dp))
                     LazyColumn(state = etatListe, modifier = Modifier.heightIn(max = 300.dp)) {
-                    itemsIndexed(adresses) { index, _ ->
-                        val (hauteur, debit) = qualites.getOrNull(index) ?: (null to null)
+                    itemsIndexed(groupesVisibles()) { rangAffiche, groupe ->
+                        val (index, qualite, doublons) = groupe
+                        val (hauteur, debit) = qualite
                         Column(
                             Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp))
                                 .background(
@@ -963,9 +1012,9 @@ class LecteurDirectActivity : ComponentActivity() {
                         ) {
                             Text(
                                 getString(
-                                    if (index == 0) R.string.direct_source_recommandee else R.string.direct_source_rang,
-                                    index + 1,
-                                ),
+                                    if (rangAffiche == 0) R.string.direct_source_recommandee else R.string.direct_source_rang,
+                                    rangAffiche + 1,
+                                ) + if (doublons > 1) getString(R.string.direct_source_adresses, doublons) else "",
                                 color = if (index == rang) BleuClair else Color.White,
                                 fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
                             )
@@ -978,6 +1027,23 @@ class LecteurDirectActivity : ComponentActivity() {
                                 },
                                 color = Muet, fontSize = 12.sp,
                             )
+                        }
+                    }
+                    if (ligneVoirPlus()) item {
+                        Column(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp))
+                                .background(
+                                    if (choixIndex == groupesVisibles().size) Color.White.copy(alpha = .12f)
+                                    else Color.Transparent,
+                                )
+                                .clickable { toutesLesSources = true }
+                                .padding(horizontal = 14.dp, vertical = 9.dp),
+                        ) {
+                            Text(
+                                getString(R.string.direct_source_voir_plus, groupes.size - SOURCES_VISIBLES),
+                                color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(getString(R.string.direct_source_voir_plus_detail), color = Muet, fontSize = 12.sp)
                         }
                     }
                     }
@@ -1117,6 +1183,9 @@ class LecteurDirectActivity : ComponentActivity() {
 
         /** Ce que la course sonde à l'ouverture : les mieux classées, pas les soixante-dix. */
         private const val COURSE_MAX = 12
+
+        /** Ce que le menu montre avant de proposer le reste : les huit que le serveur classe en tête. */
+        private const val SOURCES_VISIBLES = 8
 
         /** Au-delà, on n'attend plus : une adresse muette trois secondes fera perdre du temps. */
         private const val DELAI_COURSE_MS = 3_000L

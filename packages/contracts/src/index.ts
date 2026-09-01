@@ -1115,6 +1115,14 @@ export interface SourceChaine {
   /** Le débit de cette variante, en bits par seconde. */
   debit?: number | null;
   /**
+   * Ce qui distingue deux adresses **pour l'œil** : l'hôte et le chemin, sans la requête.
+   *
+   * Deux adresses qui ne diffèrent que par un jeton sont la même à l'écran, et le menu en listait
+   * quatre identiques. C'est une empreinte d'affichage, pas d'équivalence : le repli continue de
+   * parcourir chaque adresse, parce que deux jetons ne se valent pas.
+   */
+  empreinte?: string;
+  /**
    * La même adresse, mais relayée par le serveur.
    *
    * Elle n'est pas le chemin normal : un navigateur essaie l'adresse directe d'abord, et n'y revient

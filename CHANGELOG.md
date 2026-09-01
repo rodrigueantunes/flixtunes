@@ -1,5 +1,29 @@
 # Journal des versions
 
+## 0.5.7.r10 — un menu de sources qu'on peut lire
+
+- **Les sources identiques sont regroupées.** Mesuré sur le corpus : **7 559 adresses de 1 976
+  chaînes** ne diffèrent de leur voisine que par un jeton dans la requête. Le menu en listait quatre
+  visiblement identiques, et l'on choisissait à l'aveugle. L'empreinte — hôte et chemin, requête
+  ignorée — est calculée **par le serveur** et voyage avec chaque adresse : les deux clients
+  regroupent de la même façon, sans que le calcul existe deux fois ni puisse diverger.
+- **Le regroupement s'arrête à l'affichage, et c'est délibéré.** Un jeton n'est pas décoratif : deux
+  jetons ne se valent pas, l'un peut être périmé quand l'autre fonctionne. Le repli automatique
+  continue donc de parcourir **chaque** adresse. Regrouper pour lire, jamais pour jeter.
+- **Le menu s'arrête à huit, et propose le reste.** Le regroupement seul ramenait la pire chaîne du
+  corpus de 78 lignes à 42 — toujours illisible. Le serveur les ayant classées par échecs, définition
+  et débit, les huit premières sont les meilleures qu'on connaisse ; celui qui cherche la neuvième
+  sait ce qu'il fait, et elle est à un geste. Sur Android la croix parcourt les groupes, et la
+  dernière ligne déplie au lieu d'ouvrir une source.
+- **Ce que ça coûte, mesuré sur le pire cas du corpus** — *The World Poker Tour*, 78 adresses : la
+  requête passe de 0,048 à **0,090 ms**. Quarante-deux microsecondes, à l'ouverture d'une chaîne
+  seulement.
+- **Et ce que ça rapporte, dit franchement.** 2,7 % des chaînes du corpus en profitent, 3,7 % des
+  françaises, et **deux des vingt-six de la TNT** — soit trois lignes de menu économisées sur celles
+  qu'on regarde vraiment. C'est cosmétique, et le gain réel est ailleurs : un menu qui s'arrête à huit
+  lignes se lit, un menu de 78 ne se lit pas.
+- 892 tests serveur, 271 tests Web, le Kotlin compile, lint passe.
+
 ## 0.5.7.r9 — ce que le NAS avait à dire
 
 *Trois jours de chiffres pris sur un poste de développement, et une mesure sur la vraie machine qui

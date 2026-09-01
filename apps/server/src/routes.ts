@@ -40,6 +40,7 @@ import { resoudreIdentifiantExterne } from "./tmdb.js";
 import { saveProviderConfiguration } from "./provider-settings.js";
 import {
   adresseRelayee,
+  empreinteDAffichage,
   estUnManifeste,
   lireAdresseRelayee,
   recupererSansSortirDuPublic,
@@ -812,7 +813,16 @@ export async function registerRoutes(app: FastifyInstance) {
       void sonderLesSources(request.params.id)
         .catch((cause) => app.log.debug({ err: cause }, "Sonde de qualité des sources interrompue"));
     }
-    return { ...chaine, sources: chaine.sources.map((source) => ({ ...source, relais: adresseRelayee(source.url) })) };
+    /*
+     * L'empreinte voyage avec chaque adresse : les deux clients regroupent alors de la même façon,
+     * sans que le calcul ait à exister deux fois — et sans qu'il puisse diverger.
+     */
+    return {
+      ...chaine,
+      sources: chaine.sources.map((source) => ({
+        ...source, relais: adresseRelayee(source.url), empreinte: empreinteDAffichage(source.url),
+      })),
+    };
   });
 
   /**

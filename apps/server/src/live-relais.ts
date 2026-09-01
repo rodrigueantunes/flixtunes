@@ -112,6 +112,29 @@ export async function hoteAutorise(hote: string): Promise<boolean> {
   return autorise;
 }
 
+/**
+ * Ce qui distingue deux adresses **pour l'œil** : l'hôte et le chemin, sans la requête.
+ *
+ * Mesuré sur le corpus : 7 559 adresses de 1 976 chaînes ne diffèrent de leur voisine que par un
+ * jeton dans la requête. Le menu des sources en listait donc quatre qui étaient visiblement la même,
+ * et l'on choisissait à l'aveugle entre des lignes identiques.
+ *
+ * **C'est une empreinte d'affichage, pas d'équivalence.** Deux jetons ne se valent pas — l'un peut
+ * être périmé quand l'autre fonctionne —, et c'est pourquoi le regroupement s'arrête à ce que l'on
+ * montre : le repli automatique continue de parcourir chaque adresse, une par une. Regrouper pour
+ * lire, jamais pour jeter.
+ */
+export function empreinteDAffichage(url: string): string {
+  try {
+    const analysee = new URL(url);
+    const chemin = analysee.pathname.replace(/\/{2,}/g, "/").replace(/\/+$/, "");
+    const port = analysee.port && !["80", "443"].includes(analysee.port) ? `:${analysee.port}` : "";
+    return `${analysee.hostname.toLowerCase()}${port}${chemin}`;
+  } catch {
+    return url;
+  }
+}
+
 /** Ce qu'une récupération surveillée rend : la réponse, et l'adresse **finale** qui l'a donnée. */
 export interface ReponseSuivie { reponse: Response; url: string }
 

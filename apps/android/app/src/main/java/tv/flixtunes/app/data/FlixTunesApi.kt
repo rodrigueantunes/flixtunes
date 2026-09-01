@@ -341,6 +341,7 @@ class FlixTunesApi(
                     // se lirait comme « mesurée à rien ».
                     source.optInt("hauteur").takeIf { source.has("hauteur") && !source.isNull("hauteur") },
                     source.optInt("debit").takeIf { source.has("debit") && !source.isNull("debit") },
+                    source.optString("empreinte"),
                 )
             },
         )

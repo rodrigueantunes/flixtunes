@@ -311,6 +311,13 @@ data class SourceChaine(
     val echecs: Int,
     val hauteur: Int? = null,
     val debit: Int? = null,
+    /**
+     * Ce qui distingue deux adresses **pour l'œil** : l'hôte et le chemin, sans la requête.
+     *
+     * Calculée par le serveur, pour que les deux clients regroupent de la même façon. C'est une
+     * empreinte d'affichage, pas d'équivalence : le repli parcourt toujours chaque adresse.
+     */
+    val empreinte: String = "",
 )
 
 data class ChaineDetaillee(val chaine: ChaineDirect, val sources: List<SourceChaine>)

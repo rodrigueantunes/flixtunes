@@ -41,8 +41,42 @@ const REPLIS = 8;
  */
 const COURSE_MAX = 12;
 
+/**
+ * Combien de sources le menu montre avant de proposer le reste.
+ *
+ * Le regroupement ramenait la pire chaîne du corpus de 78 lignes à 42 — mesuré, et toujours
+ * illisible. Or le serveur les a classées par échecs, définition et débit : les huit premières sont
+ * les meilleures qu'on connaisse, et celui qui cherche la neuvième sait ce qu'il fait. Le reste est
+ * à un geste, pas caché.
+ */
+const SOURCES_VISIBLES = 8;
+
 /** Une adresse, son doublon relayé et ce que le serveur sait d'elle. */
-interface SourceLisible { url: string; relais: string | null; hauteur: number | null; debit: number | null }
+interface SourceLisible {
+  url: string; relais: string | null; hauteur: number | null; debit: number | null;
+  /** Ce qui distingue deux adresses pour l'œil : l'hôte et le chemin, sans la requête. */
+  empreinte: string;
+}
+
+/**
+ * Le menu regroupe ce qui se ressemble, la liste garde tout.
+ *
+ * Mesuré sur le corpus : 7 559 adresses de 1 976 chaînes ne diffèrent de leur voisine que par un
+ * jeton dans la requête. Le menu en listait quatre visiblement identiques, et l'on choisissait à
+ * l'aveugle. Chaque groupe garde **l'index de son meilleur membre** — celui que le serveur a classé
+ * en tête — et le repli automatique, lui, continue de parcourir chaque adresse : deux jetons ne se
+ * valent pas, l'un peut être périmé quand l'autre fonctionne.
+ */
+function regrouperLesSources(adresses: SourceLisible[]): Array<{ index: number; source: SourceLisible; doublons: number }> {
+  const groupes = new Map<string, { index: number; source: SourceLisible; doublons: number }>();
+  adresses.forEach((source, index) => {
+    const cle = source.empreinte || source.url;
+    const connu = groupes.get(cle);
+    if (connu) { connu.doublons += 1; return; }
+    groupes.set(cle, { index, source, doublons: 1 });
+  });
+  return [...groupes.values()];
+}
 
 /**
  * Ce qu'on dit d'une source dans le menu.
@@ -148,6 +182,8 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
   const [fenetre, setFenetre] = useState<Fenetre | null>(null);
   const [barreVisible, setBarreVisible] = useState(true);
   const [choixOuvert, setChoixOuvert] = useState(false);
+  /** Le menu s'ouvre court : la suite se demande, et se referme avec lui. */
+  const [toutesLesSources, setToutesLesSources] = useState(false);
   /**
    * Le retard de sécurité pris après des blocages répétés, en secondes.
    *
@@ -180,6 +216,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
         const declarees = details.sources.map((source) => ({
           url: source.url, relais: source.relais ?? null,
           hauteur: source.hauteur ?? null, debit: source.debit ?? null,
+          empreinte: source.empreinte ?? source.url,
         }));
         /*
          * La course, avant d'ouvrir quoi que ce soit.
@@ -221,6 +258,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
     blocages.current = [];
     setFenetre(null);
     setChoixOuvert(false);
+    setToutesLesSources(false);
   }, [chaine.id]);
 
   /**
@@ -283,6 +321,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
    */
   const choisirSource = useCallback((index: number) => {
     setChoixOuvert(false);
+    setToutesLesSources(false);
     if (index === rangRef.current && !parRelais) return;
     essai.current = null;
     rangRef.current = index;
@@ -609,6 +648,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
   }, [basculerPause, onChaine, onClose, precedente, rejoindreDirect, sauter]);
 
   const sources = adresses.length;
+  const groupesDeSources = regrouperLesSources(adresses);
   const avance = fenetre && largeurFenetre > 0
     ? Math.min(100, Math.max(0, (fenetre.position - fenetre.debut) / largeurFenetre * 100))
     : 100;
@@ -646,15 +686,26 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
     </div>
 
     {choixOuvert && <ul className="lecteur-direct-choix" role="listbox" aria-label="Sources de la chaîne">
-      {adresses.map((entree, index) => (
-        <li key={entree.url}>
+      {(toutesLesSources ? groupesDeSources : groupesDeSources.slice(0, SOURCES_VISIBLES))
+        .map(({ index, source, doublons }, rangAffiche) => (
+        <li key={source.empreinte || source.url}>
           <button type="button" role="option" aria-selected={index === rang}
             className={index === rang ? "actif" : undefined} onClick={() => choisirSource(index)}>
-            <b>Source {index + 1}{index === 0 ? " · recommandée" : ""}</b>
-            <small>{index === rang && parRelais ? "relayée par le serveur" : decrireSource(entree)}</small>
+            <b>
+              Source {rangAffiche + 1}{rangAffiche === 0 ? " · recommandée" : ""}
+              {/* Le compte se dit : savoir qu'une source a trois adresses explique qu'elle tienne mieux. */}
+              {doublons > 1 ? ` · ${doublons} adresses` : ""}
+            </b>
+            <small>{index === rang && parRelais ? "relayée par le serveur" : decrireSource(source)}</small>
           </button>
         </li>
       ))}
+      {!toutesLesSources && groupesDeSources.length > SOURCES_VISIBLES && <li>
+        <button type="button" onClick={() => setToutesLesSources(true)}>
+          <b>Voir les {groupesDeSources.length - SOURCES_VISIBLES} autres</b>
+          <small>classées après les huit meilleures</small>
+        </button>
+      </li>}
     </ul>}
 
     {/*

@@ -225,6 +225,10 @@
   <string name="direct_source_definition">%1$dp</string>
   <string name="direct_source_debit">%1$dp · %2$s Mb/s</string>
   <string name="direct_source_inconnue">Non mesurée</string>
+  <!-- Le compte se dit : savoir qu'une source a trois adresses explique qu'elle tienne mieux. -->
+  <string name="direct_source_adresses"> · %1$d adresses</string>
+  <string name="direct_source_voir_plus">Voir les %1$d autres</string>
+  <string name="direct_source_voir_plus_detail">classées après les huit meilleures</string>
   <!-- La source répond mais hoquette : on passe à la suivante en le disant, sans la déclarer morte. -->
   <string name="direct_source_instable">Source instable, passage à la %1$d…</string>
   <string name="erreur_serveur_introuvable">Serveur FlixTunes introuvable</string>
