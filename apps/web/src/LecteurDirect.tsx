@@ -20,8 +20,26 @@ import { courirLesAdresses } from "./course-adresses";
  * devant l'écran n'a rien demandé d'autre que de regarder la chaîne.
  */
 
-/** Au-delà, on ne s'acharne pas : quatre adresses mortes disent que la chaîne l'est. */
-const REPLIS = 4;
+/**
+ * Le nombre d'adresses que le **repli automatique** essaie avant de renoncer.
+ *
+ * Il ne borne pas la liste : toutes les adresses restent choisissables à la main. Il borne
+ * l'acharnement, ce qui n'est pas la même chose — la coupure à quatre rendait les autres
+ * inatteignables **même volontairement**, et sur une chaîne qui en porte douze, huit disparaissaient
+ * sans que rien ne le dise. Huit essais de douze secondes font déjà une minute et demie devant un
+ * écran noir, et la course a de toute façon mis devant celles qui répondent.
+ */
+const REPLIS = 8;
+
+/**
+ * Combien d'adresses la course sonde à l'ouverture.
+ *
+ * Toutes, c'était une mauvaise idée : mesuré sur le corpus, 356 chaînes en portent plus de vingt et
+ * la pire en a **78**. Autant de requêtes lancées d'un coup pour choisir laquelle ouvrir est un coût
+ * que personne n'a demandé. Le serveur les a déjà classées — échecs, définition, débit — : sonder les
+ * douze premières suffit à écarter les mortes, et les suivantes gardent leur rang derrière.
+ */
+const COURSE_MAX = 12;
 
 /** Une adresse, son doublon relayé et ce que le serveur sait d'elle. */
 interface SourceLisible { url: string; relais: string | null; hauteur: number | null; debit: number | null }
@@ -173,7 +191,10 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
          *
          * Une seule adresse ne se court pas contre elle-même : la fonction rend la liste telle quelle.
          */
-        const ordonnees = await courirLesAdresses(declarees);
+        const ordonnees = [
+          ...await courirLesAdresses(declarees.slice(0, COURSE_MAX)),
+          ...declarees.slice(COURSE_MAX),
+        ];
         if (annule) return;
         rangRef.current = 0;
         setRang(0);
@@ -587,7 +608,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
     return () => window.removeEventListener("keydown", auClavier);
   }, [basculerPause, onChaine, onClose, precedente, rejoindreDirect, sauter]);
 
-  const sources = Math.min(adresses.length, REPLIS);
+  const sources = adresses.length;
   const avance = fenetre && largeurFenetre > 0
     ? Math.min(100, Math.max(0, (fenetre.position - fenetre.debut) / largeurFenetre * 100))
     : 100;
@@ -625,7 +646,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
     </div>
 
     {choixOuvert && <ul className="lecteur-direct-choix" role="listbox" aria-label="Sources de la chaîne">
-      {adresses.slice(0, REPLIS).map((entree, index) => (
+      {adresses.map((entree, index) => (
         <li key={entree.url}>
           <button type="button" role="option" aria-selected={index === rang}
             className={index === rang ? "actif" : undefined} onClick={() => choisirSource(index)}>

@@ -31,6 +31,15 @@ const DELAI_MS = 5_000;
 /** Un manifeste maître fait quelques kilo-octets. Au-delà, on ne lit pas : ce n'en est pas un. */
 const TAILLE_MAX = 256 * 1024;
 
+/**
+ * Combien d'adresses on mesure à chaque ouverture.
+ *
+ * Quatre laissaient une chaîne à douze adresses inachevée pendant trois visites, et le menu proposait
+ * donc des sources sans qualité connue là où le classement en avait le plus besoin. Huit requêtes de
+ * quelques kilo-octets, lancées **après** la réponse au client, restent invisibles pour lui.
+ */
+const SONDES_PAR_OUVERTURE = 8;
+
 export interface QualiteSource {
   /** La hauteur de la meilleure variante déclarée, en pixels. `null` si le manifeste n'en déclare pas. */
   hauteur: number | null;
@@ -117,7 +126,7 @@ export async function sonderUneSource(url: string): Promise<QualiteSource | null
 export async function sonderLesSources(channelId: string): Promise<number> {
   const limite = new Date(Date.now() - FRAICHEUR_MS).toISOString();
   const aSonder = db.prepare(`SELECT url FROM live_channel_urls
-    WHERE channel_id = ? AND (sonde_le IS NULL OR sonde_le < ?) LIMIT 4`)
+    WHERE channel_id = ? AND (sonde_le IS NULL OR sonde_le < ?) LIMIT ${SONDES_PAR_OUVERTURE}`)
     .all(channelId, limite) as unknown as Array<{ url: string }>;
   if (!aSonder.length) return 0;
 

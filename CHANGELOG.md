@@ -1,5 +1,32 @@
 # Journal des versions
 
+## 0.5.7.r7 — toutes les sources, des icônes qu'on voit, et l'image qui répond au doigt
+
+- **On limitait bien à quatre sources, et à trois endroits.** Le menu n'en listait que quatre, le
+  repli n'en essayait que quatre, et sur Android les autres **n'arrivaient même pas** au client :
+  `details.sources.take(4)`. Sur une chaîne qui en porte douze, huit disparaissaient sans que rien ne
+  le dise. Deux choses étaient confondues et sont maintenant séparées : **la patience de
+  l'automatique** reste bornée — huit essais de douze secondes font déjà une minute et demie devant un
+  écran noir —, **le choix manuel ne l'est plus**.
+- **Mais tout sonder d'un coup aurait été pire.** Mesuré sur le corpus : **356 chaînes portent plus de
+  vingt adresses, et la pire en a 78**. Lancer soixante-dix-huit requêtes pour choisir laquelle ouvrir
+  est un coût que personne n'a demandé. La course sonde les **douze premières** — le serveur les a
+  déjà classées par échecs, définition et débit — et les suivantes gardent leur rang derrière, toujours
+  choisissables. Les listes défilent au lieu de sortir de l'écran, et sur Android le défilement suit le
+  curseur de la télécommande.
+- **Le bouton lecture ne s'affichait pas sur le téléviseur.** Les icônes étaient des caractères
+  Unicode — `⏵`, `⏸`, `⏭`, du bloc *Miscellaneous Technical*. Un navigateur de bureau a de quoi les
+  afficher, **la police d'un téléviseur Android non** : il n'y avait tout simplement rien. Elles sont
+  désormais **dessinées** — un triangle, deux barres —, ce qui ne dépend d'aucune police.
+- **Le tactile ne faisait rien sur téléphone.** Rien n'était touchable en dehors des commandes
+  elles-mêmes : une fois effacées au bout de trois secondes et demie, plus rien ne pouvait les
+  rappeler — il n'y a pas de télécommande pour cela. Elles devenaient définitivement inatteignables.
+  L'image entière répond maintenant au doigt, sans ondulation : c'est une image de télévision qu'on
+  touche, pas un bouton.
+- **Le serveur mesure huit adresses par ouverture au lieu de quatre**, sinon une chaîne à douze
+  adresses restait sans qualité connue pendant trois visites — là où le classement en a le plus besoin.
+- 876 tests serveur, 271 tests Web, le Kotlin compile, lint passe.
+
 ## 0.5.7.r6 — la télécommande, la source qui hoquette, et le cadre oublié
 
 *Six retours d'un second essai au salon. Deux d'entre eux étaient des fonctions inaccessibles plutôt

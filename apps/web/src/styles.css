@@ -770,8 +770,9 @@ h1, h2 { font-family: "Manrope", sans-serif; }
 .lecteur-direct-sources { padding: 0; border: 0; background: none; color: inherit; font: inherit;
   text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; }
 .lecteur-direct-sources:hover, .lecteur-direct-sources:focus-visible { color: #dbe4f7; }
+/* Une chaîne peut porter soixante-dix adresses : la liste défile plutôt que de sortir de l'écran. */
 .lecteur-direct-choix { position: absolute; top: 5.4rem; left: 2rem; z-index: 2; min-width: 16rem; margin: 0;
-  padding: .4rem; list-style: none; border: 1px solid #2c4066; border-radius: 12px; background: #0b1220f2;
+  max-height: min(60vh, 26rem); overflow-y: auto; padding: .4rem; list-style: none; border: 1px solid #2c4066; border-radius: 12px; background: #0b1220f2;
   box-shadow: 0 22px 60px #000b; }
 .lecteur-direct-choix button { width: 100%; display: grid; gap: .1rem; padding: .55rem .7rem; border: 0;
   border-radius: 9px; background: none; color: white; text-align: left; cursor: pointer; }

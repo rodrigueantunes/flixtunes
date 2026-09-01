@@ -8,7 +8,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -17,8 +19,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
@@ -28,11 +32,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -346,9 +356,27 @@ class LecteurDirectActivity : ComponentActivity() {
         runCatching { api.chaineDirect(profileId, chaineId) }
             .onSuccess { details ->
                 chaine = details.chaine
-                val retenues = details.sources.take(REPLIS)
+                /*
+                 * **Toutes les adresses sont gardées**, et non les quatre premières.
+                 *
+                 * Le repli automatique s'arrête au bout de quelques essais, et c'est très bien : il ne
+                 * doit pas s'acharner. Mais couper la liste à la source rendait les autres
+                 * inatteignables **même à la main** — sur une chaîne qui en porte douze, huit
+                 * disparaissaient sans que rien ne le dise. Ce qui est borné, c'est la patience de
+                 * l'automatique ; le choix, lui, ne l'est pas.
+                 */
+                val retenues = details.sources
                 qualites = retenues.map { it.hauteur to it.debit }
-                adresses = courirLesAdresses(retenues.map { it.url })
+                /*
+                 * La course ne sonde que les douze premières, pas les soixante-dix.
+                 *
+                 * Mesuré sur le corpus : 356 chaînes portent plus de vingt adresses et la pire en a
+                 * 78. Autant de requêtes lancées d'un coup pour choisir laquelle ouvrir est un coût
+                 * que personne n'a demandé. Le serveur les a déjà classées ; les suivantes gardent
+                 * leur rang derrière, et restent choisissables à la main.
+                 */
+                val urls = retenues.map { it.url }
+                adresses = courirLesAdresses(urls.take(COURSE_MAX)) + urls.drop(COURSE_MAX)
                 jouerRang()
             }
             .onFailure { echec = true; message = getString(R.string.direct_aucune_source) }
@@ -445,7 +473,7 @@ class LecteurDirectActivity : ComponentActivity() {
             lifecycleScope.launch { runCatching { api.resultatChaineDirect(profileId, identifiant, morte, false) } }
         }
         rang += 1
-        if (rang >= adresses.size) { echec = true; message = getString(R.string.direct_aucune_source); return }
+        if (rang >= minOf(adresses.size, REPLIS)) { echec = true; message = getString(R.string.direct_aucune_source); return }
         message = getString(R.string.direct_source_essai, rang + 1, adresses.size)
         jouerRang()
     }
@@ -663,7 +691,8 @@ class LecteurDirectActivity : ComponentActivity() {
             jouerRang(reprendre = false)
             return
         }
-        if (rang + 1 < adresses.size) {
+        // L'automatique s'arrête à REPLIS essais ; la main, elle, va où elle veut.
+        if (rang + 1 < minOf(adresses.size, REPLIS)) {
             message = getString(R.string.direct_source_instable, rang + 2)
             essai = null
             reparations = 0
@@ -744,7 +773,23 @@ class LecteurDirectActivity : ComponentActivity() {
                 delay(250)
             }
         }
-        Box(Modifier.fillMaxSize().background(Color.Black)) {
+        /*
+         * **L'image entière répond au doigt.**
+         *
+         * Rien n'était tactile en dehors des commandes elles-mêmes : une fois qu'elles s'étaient
+         * effacées au bout de trois secondes et demie, plus rien sur un téléphone ne pouvait les
+         * rappeler — il n'y a pas de télécommande pour appeler `reveiller`. Les commandes devenaient
+         * donc définitivement inatteignables, ce qui se voyait comme « le tactile ne fonctionne pas ».
+         *
+         * Sans ondulation ni surbrillance : c'est une image de télévision qu'on touche, pas un bouton.
+         */
+        val toucher = remember { MutableInteractionSource() }
+        Box(
+            Modifier.fillMaxSize().background(Color.Black)
+                .clickable(interactionSource = toucher, indication = null) {
+                    if (commandesVisibles && lecteur?.isPlaying == true) commandesVisibles = false else reveiller()
+                },
+        ) {
             AndroidView(
                 /*
                  * `keepScreenOn` : le téléviseur s'endormait pendant qu'on regardait.
@@ -840,17 +885,15 @@ class LecteurDirectActivity : ComponentActivity() {
                         .background(Encre.copy(alpha = .82f)).padding(24.dp, 16.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        if (enPause) "⏵" else "⏸",
+                    Box(
                         Modifier.clickable { basculerPause() }
-                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
                             .semantics {
                                 contentDescription = getString(
                                     if (enPause) R.string.direct_reprendre_lecture else R.string.direct_pause,
                                 )
                             },
-                        color = Color.White, fontSize = 20.sp,
-                    )
+                    ) { IconeLecture(enPause) }
                     Spacer(Modifier.width(14.dp))
                     if (fenetreUtile) {
                         Box(
@@ -874,13 +917,11 @@ class LecteurDirectActivity : ComponentActivity() {
                     )
                     if (!auDirect && fenetreUtile) {
                         Spacer(Modifier.width(10.dp))
-                        Text(
-                            "⏭",
+                        Box(
                             Modifier.clickable { rejoindreDirect() }
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                .padding(horizontal = 8.dp, vertical = 6.dp)
                                 .semantics { contentDescription = getString(R.string.direct_revenir_direct) },
-                            color = Color.White, fontSize = 18.sp,
-                        )
+                        ) { IconeDirect() }
                     }
                 }
             }
@@ -893,6 +934,15 @@ class LecteurDirectActivity : ComponentActivity() {
              * refaire ce travail dans son coin. Une source non mesurée le dit plutôt que d'inventer.
              */
             if (choixOuvert) {
+                /*
+                 * La liste défile, et suit le curseur.
+                 *
+                 * Une chaîne peut porter soixante-dix adresses : une colonne fixe les dessinerait
+                 * hors de l'écran, et la croix déplacerait une sélection qu'on ne verrait plus. Le
+                 * défilement va chercher la ligne retenue à chaque déplacement.
+                 */
+                val etatListe = rememberLazyListState()
+                LaunchedEffect(choixIndex) { etatListe.animateScrollToItem(choixIndex) }
                 Column(
                     Modifier.align(Alignment.Center).clip(RoundedCornerShape(14.dp))
                         .background(Encre.copy(alpha = .95f)).padding(18.dp),
@@ -900,7 +950,8 @@ class LecteurDirectActivity : ComponentActivity() {
                     Text(getString(R.string.direct_sources_titre), color = Muet, fontSize = 12.sp,
                         fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(10.dp))
-                    adresses.forEachIndexed { index, _ ->
+                    LazyColumn(state = etatListe, modifier = Modifier.heightIn(max = 300.dp)) {
+                    itemsIndexed(adresses) { index, _ ->
                         val (hauteur, debit) = qualites.getOrNull(index) ?: (null to null)
                         Column(
                             Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp))
@@ -929,6 +980,7 @@ class LecteurDirectActivity : ComponentActivity() {
                             )
                         }
                     }
+                    }
                 }
             }
 
@@ -951,6 +1003,59 @@ class LecteurDirectActivity : ComponentActivity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) masquerBarresSysteme()
+    }
+
+    /**
+     * Les icônes du lecteur sont **dessinées**, pas écrites.
+     *
+     * Elles étaient des caractères Unicode — `⏵`, `⏸`, `⏭`, du bloc « Miscellaneous Technical ». Un
+     * navigateur de bureau a de quoi les afficher ; la police d'un téléviseur Android, non : le
+     * bouton n'apparaissait tout simplement pas, relevé au salon. Un triangle et deux barres ne
+     * dépendent d'aucune police et se rendent partout de la même façon.
+     */
+    @Composable
+    private fun IconeLecture(enPause: Boolean, taille: Dp = 20.dp) {
+        if (enPause) {
+            Canvas(Modifier.size(taille)) {
+                drawPath(
+                    Path().apply {
+                        moveTo(size.width * .18f, 0f)
+                        lineTo(size.width * .92f, size.height / 2f)
+                        lineTo(size.width * .18f, size.height)
+                        close()
+                    },
+                    Color.White,
+                )
+            }
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(taille * .22f)) {
+                repeat(2) {
+                    Box(
+                        Modifier.width(taille * .28f).height(taille)
+                            .clip(RoundedCornerShape(2.dp)).background(Color.White),
+                    )
+                }
+            }
+        }
+    }
+
+    /** Rejoindre le direct : le même triangle, buté contre une barre. */
+    @Composable
+    private fun IconeDirect(taille: Dp = 18.dp) {
+        Row(horizontalArrangement = Arrangement.spacedBy(taille * .12f), verticalAlignment = Alignment.CenterVertically) {
+            Canvas(Modifier.size(taille * .8f)) {
+                drawPath(
+                    Path().apply {
+                        moveTo(0f, 0f)
+                        lineTo(size.width, size.height / 2f)
+                        lineTo(0f, size.height)
+                        close()
+                    },
+                    Color.White,
+                )
+            }
+            Box(Modifier.width(taille * .18f).height(taille * .8f).clip(RoundedCornerShape(1.dp)).background(Color.White))
+        }
     }
 
     /** Un retard se lit en minutes et secondes, jamais en millisecondes. */
@@ -1000,7 +1105,18 @@ class LecteurDirectActivity : ComponentActivity() {
         const val EXTRA_CHANNEL_ID = "chaine"
 
         /** Au-delà, on ne s'acharne pas : quatre adresses mortes disent que la chaîne l'est. */
-        private const val REPLIS = 4
+        /**
+         * Le nombre d'adresses que le **repli automatique** essaie avant de renoncer.
+         *
+         * Il ne borne plus la liste : toutes les adresses restent choisissables à la main. Il borne
+         * l'acharnement, ce qui n'est pas la même chose — huit essais de douze secondes font déjà une
+         * minute et demie devant un écran noir, et la course a de toute façon mis devant celles qui
+         * répondent.
+         */
+        private const val REPLIS = 8
+
+        /** Ce que la course sonde à l'ouverture : les mieux classées, pas les soixante-dix. */
+        private const val COURSE_MAX = 12
 
         /** Au-delà, on n'attend plus : une adresse muette trois secondes fera perdre du temps. */
         private const val DELAI_COURSE_MS = 3_000L
