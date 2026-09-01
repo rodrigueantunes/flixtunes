@@ -229,6 +229,9 @@ class LecteurDirectActivity : ComponentActivity() {
     /** Ce qui a coupé, et au bout de combien de temps — dit à l'écran plutôt que deviné. */
     private var dernierIncident: String? = null
 
+    /** Le plafond de débit imposé, `Int.MAX_VALUE` tant qu'on n'a rien cédé. */
+    private var plafondDebit = Int.MAX_VALUE
+
     private var securite by mutableIntStateOf(0)
     private var blocages = mutableListOf<Long>()
     /** Réparations tentées sur l'adresse en cours : une seule, après quoi la source est bien en cause. */
@@ -296,7 +299,20 @@ class LecteurDirectActivity : ComponentActivity() {
             )
             .setLoadControl(
                 DefaultLoadControl.Builder()
-                    .setBufferDurationsMs(15_000, 60_000, 2_500, 5_000)
+                    /*
+                     * **Repartir avec cinq secondes de tampon garantissait de retomber.**
+                     *
+                     * `bufferForPlaybackAfterRebufferMs` valait 5 000 : après un blocage, ExoPlayer
+                     * relançait l'image dès qu'il avait cinq secondes d'avance — c'est-à-dire à un
+                     * souffle de la panne dont on sortait. Un réseau qui vient de faiblir refaiblit ;
+                     * on repartait donc pour retomber aussitôt, et c'est la mécanique même du
+                     * bégaiement en boucle. Vingt secondes : on ne redémarre qu'avec de quoi tenir.
+                     *
+                     * Le premier démarrage, lui, reste court — 2,5 s. Attendre vingt secondes avant la
+                     * première image ferait passer une ouverture normale pour une panne, et la marge
+                     * se constitue de toute façon dans les secondes qui suivent.
+                     */
+                    .setBufferDurationsMs(20_000, 60_000, 2_500, 20_000)
                     .build(),
             )
             .build().apply {
@@ -387,7 +403,12 @@ class LecteurDirectActivity : ComponentActivity() {
                      * secondes produit six rechargements d'affilée, et les compter séparément
                      * abandonnait une chaîne qui fonctionne pour une minute difficile.
                      */
-                    if (securite == 0) {
+                    /*
+                     * Le seuil qui séparait les deux comptages était « ai-je encore du retard à
+                     * acheter ». La marge étant désormais prise d'emblée, la question n'a plus de
+                     * sens ; celle qui la remplace est « ai-je encore de la qualité à céder ».
+                     */
+                    if (plafondDebit == Int.MAX_VALUE) {
                         blocages = blocages.filter { maintenant - it < MEMOIRE_BLOCAGES_MS }.toMutableList()
                         blocages.add(maintenant)
                         if (blocages.size < BLOCAGES_AVANT_RECUL) return
@@ -471,6 +492,7 @@ class LecteurDirectActivity : ComponentActivity() {
         // Une chaîne neuve n'a rien prouvé : ni l'adresse en cours, ni aucune des autres.
         fluxDeclareStable = false
         dejaVuStable = false
+        plafondDebit = Int.MAX_VALUE
         depuisLecture = 0L
         reprises = 0
         relancesLentes = 0
@@ -569,13 +591,31 @@ class LecteurDirectActivity : ComponentActivity() {
              * sécurité que les blocages ont fait gagner. C'est le seul levier réel — grossir le
              * tampon ne sert à rien quand il n'y a pas plus de média publié devant soi.
              */
-            val cible = (CIBLE_DIRECT_S + securite) * 1_000L
+            /*
+             * **La marge est prise d'emblée, et non achetée après trois bégaiements.**
+             *
+             * Un direct ne permet pas de faire des réserves : on ne met en tampon que ce qui est déjà
+             * publié devant le point de lecture, si bien que le tampon maximal possible **est** la
+             * distance au bord du direct. Elle valait 24 s pour toutes les chaînes : toute
+             * interruption de plus de 24 s coupait, sans recours. Et on ne l'agrandissait qu'après
+             * coup — on rechargeait la sécurité au moment d'arriver au bout.
+             *
+             * On vise donc `CIBLE_MAX_S` dès l'ouverture. Les bornes disent à ExoPlayer ce qu'il a le
+             * droit de faire quand la fenêtre ne suit pas : `minOffsetMs` est le plancher sous lequel
+             * il ne doit pas se rapprocher du bord, `maxOffsetMs` le plafond de décalage qu'on
+             * accepte. Sur une chaîne à fenêtre courte, il se rabattra de lui-même sur ce que la
+             * fenêtre permet — c'est le mécanisme prévu pour cela, et il évite d'avoir à repréparer
+             * le flux pour corriger une cible.
+             */
+            val cible = CIBLE_MAX_S * 1_000L
             setMediaItem(
                 MediaItem.Builder()
                     .setUri(source)
                     .setLiveConfiguration(
                         MediaItem.LiveConfiguration.Builder()
                             .setTargetOffsetMs(cible)
+                            .setMinOffsetMs(CIBLE_DIRECT_S * 1_000L)
+                            .setMaxOffsetMs((CIBLE_MAX_S + 20) * 1_000L)
                             .setMinPlaybackSpeed(0.97f)
                             /*
                              * 1,06× et non 1,03× pour **revenir** vers la cible.
@@ -899,35 +939,21 @@ class LecteurDirectActivity : ComponentActivity() {
      */
     private fun reagirALInstabilite() {
         blocages.clear()
-        if (securite == 0) {
-            /*
-             * **Reculer dans la fenêtre, et non reconstruire le lecteur.**
-             *
-             * Le recul repréparait le flux : décodeur relâché, tampon vidé, écran noir de deux à trois
-             * secondes. On soignait un bégaiement par une coupure — le remède se voyait plus que le
-             * mal. Un `seekTo` en arrière obtient le même retard sans rien démonter.
-             *
-             * **Et jamais plus loin que la fenêtre ne le permet.** Le recul était le même pour toutes
-             * les chaînes ; on calcule maintenant ce que celle-ci peut payer. Si elle ne peut rien
-             * payer, on ne recule pas : mieux vaut une source qui bégaie qu'une source qu'on vient de
-             * faire sortir de sa propre fenêtre. Le comptage des blocages continue, et c'est lui qui
-             * décidera du repli si elle ne tient vraiment pas.
-             */
-            val joueur = lecteur
-            val fenetreMs = joueur?.duration ?: 0L
-            val payableMs = fenetreMs - MARGE_ARRIERE_MS - CIBLE_DIRECT_S * 1_000L
-            if (joueur != null && fenetreMs > 0 && payableMs > 0) {
-                val reculMs = minOf(RECUL_S * 1_000L, payableMs)
-                securite = (reculMs / 1_000L).toInt()
-                silenceJusqua = System.currentTimeMillis() + REPIT_APRES_RECUL_MS
-                joueur.seekTo((joueur.currentPosition - reculMs).coerceAtLeast(MARGE_ARRIERE_MS))
-                return
-            }
-            if (fenetreMs > 0) {
-                // La fenêtre est trop courte pour acheter quoi que ce soit : on le note, on ne recule
-                // pas, et l'on laisse le comptage faire son travail.
-                securite = 0
-            }
+        /*
+         * **Il n'y a plus de marge à acheter : elle est prise d'emblée.**
+         *
+         * Le recul existait parce que la latence de départ était petite — 24 s — et qu'on l'agrandissait
+         * après coup. On vise maintenant `CIBLE_MAX_S` dès l'ouverture ; il ne reste rien à gagner de
+         * ce côté, et insister ne ferait que sortir de la fenêtre par l'arrière.
+         *
+         * Le levier restant est le **débit**. On allège d'un cran, ce qui réduit immédiatement ce
+         * qu'il y a à télécharger, et l'on s'accorde un répit avant de juger de nouveau. La
+         * surveillance du tampon rendra la qualité d'elle-même dès que la marge sera refaite : on ne
+         * s'enferme pas dans une image dégradée pour un mauvais moment.
+         */
+        if (allegerLeDebit()) {
+            silenceJusqua = System.currentTimeMillis() + REPIT_APRES_RECUL_MS
+            return
         }
         // L'automatique s'arrête à REPLIS essais ; la main, elle, va où elle veut.
         if (rang + 1 < minOf(adresses.size, REPLIS)) {
@@ -936,8 +962,46 @@ class LecteurDirectActivity : ComponentActivity() {
             reparations = 0
             rang += 1
             securite = 0
+            // La nouvelle adresse n'a rien fait pour mériter un plafond : elle repart entière.
+            plafondDebit = Int.MAX_VALUE
             jouerRang()
         }
+    }
+
+    /**
+     * Alléger d'un cran ce qu'il y a à télécharger, et dire si c'était encore possible.
+     *
+     * On plafonne le débit vidéo à 70 % de ce que la variante en cours consomme : ExoPlayer choisit
+     * alors la meilleure variante sous ce plafond. Rendre `false` quand il n'y a plus rien à céder est
+     * ce qui autorise l'appelant à passer au dernier recours — changer de source.
+     */
+    private fun allegerLeDebit(): Boolean {
+        val joueur = lecteur ?: return false
+        val actuel = joueur.videoFormat?.bitrate ?: return false
+        if (actuel <= 0) return false
+        val vise = (actuel * 0.7).toInt()
+        if (vise < DEBIT_PLANCHER || vise >= plafondDebit) return false
+        plafondDebit = vise
+        joueur.trackSelectionParameters = joueur.trackSelectionParameters.buildUpon()
+            .setMaxVideoBitrate(vise)
+            .build()
+        return true
+    }
+
+    /**
+     * Rendre la qualité quand le tampon est refait.
+     *
+     * L'allègement ne vaut que le temps du mauvais passage. Sans cette restitution, une minute
+     * difficile condamnerait la soirée entière à une image dégradée — et le spectateur n'aurait aucun
+     * moyen de savoir pourquoi.
+     */
+    private fun rendreLeDebit() {
+        val joueur = lecteur ?: return
+        if (plafondDebit == Int.MAX_VALUE) return
+        plafondDebit = Int.MAX_VALUE
+        joueur.trackSelectionParameters = joueur.trackSelectionParameters.buildUpon()
+            .setMaxVideoBitrate(Int.MAX_VALUE)
+            .build()
     }
 
     /**
@@ -1001,6 +1065,28 @@ class LecteurDirectActivity : ComponentActivity() {
                      * « trois incidents d'affilée » de « trois incidents dans la soirée ». Le second
                      * ne dit rien contre la source.
                      */
+                    /*
+                     * **Le tampon, surveillé en permanence — c'est ici que se joue « ne jamais arriver
+                     * au bout ».**
+                     *
+                     * Tout le reste du lecteur est réactif : on attend le bégaiement, l'image figée,
+                     * l'erreur. Ce relevé-ci regarde ce qui **descend**, et agit pendant qu'il reste du
+                     * temps. Un tampon qui fond se voit dix secondes à l'avance ; dix secondes
+                     * suffisent à changer de variante, alors qu'à zéro il ne reste plus qu'à réparer.
+                     */
+                    if (joueur.isPlaying) {
+                        val tamponMs = (joueur.bufferedPosition - joueur.currentPosition)
+                            .coerceAtLeast(0)
+                        when {
+                            tamponMs < TAMPON_CRITIQUE_MS -> {
+                                // Une image moins fine vaut infiniment mieux qu'une image arrêtée.
+                                allegerLeDebit()
+                                allegerLeDebit()
+                            }
+                            tamponMs < TAMPON_BAS_MS -> allegerLeDebit()
+                            tamponMs >= TAMPON_RETABLI_MS -> rendreLeDebit()
+                        }
+                    }
                     if (joueur.isPlaying) {
                         if (depuisLecture == 0L) depuisLecture = System.currentTimeMillis()
                         if (!fluxDeclareStable &&
@@ -1484,6 +1570,32 @@ class LecteurDirectActivity : ComponentActivity() {
          * acquise achètent quinze secondes d'obstination. La symétrie n'est pas une coquetterie, elle
          * rend le réglage explicable — et donc corrigeable.
          */
+        /**
+         * Le décalage visé par rapport au bord du direct, et donc le tampon maximal possible.
+         *
+         * La fenêtre médiane du corpus fait 61 s. En gardant les 20 s de marge arrière, on peut se
+         * tenir à 40 s du bord : **la marge grandit de 65 %** par rapport aux 24 s d'origine. Le
+         * plafond est un choix explicite — c'est le décalage maximal qu'on accepte entre l'image et
+         * le temps réel, et au-delà le « direct » cesserait d'en être un.
+         */
+        private const val CIBLE_MAX_S = 40
+
+        /**
+         * Les trois seuils du tampon, et pourquoi on regarde la **descente** plutôt que le fond.
+         *
+         * Personne ne surveillait l'avance du tampon. On ne découvrait donc le problème qu'à zéro,
+         * c'est-à-dire une fois l'image figée — trop tard pour faire autre chose que réparer. En
+         * dessous de dix secondes on allège d'un cran, en dessous de cinq on allège deux fois, et à
+         * dix-huit on rend tout : la qualité maximale revient d'elle-même, sans que personne n'ait à
+         * la redemander.
+         */
+        private const val TAMPON_BAS_MS = 10_000L
+        private const val TAMPON_CRITIQUE_MS = 5_000L
+        private const val TAMPON_RETABLI_MS = 18_000L
+
+        /** En dessous, alléger n'a plus de sens : c'est déjà la variante la plus basse du flux. */
+        private const val DEBIT_PLANCHER = 150_000
+
         private const val SEUIL_STABILITE_MS = 15_000L
 
         /** Six tentatives internes ≈ quinze secondes, réservées au flux déclaré stable. */

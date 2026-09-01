@@ -1,5 +1,50 @@
 # Journal des versions
 
+## 0.5.7.r15 — la sécurité cesse d'être un remède pour devenir un état
+
+Tout ce que les r13 et r14 avaient construit était **réactif** : on attendait l'incident. La marge de
+sécurité, elle, n'était achetée qu'après trois bégaiements — on rechargeait la sécurité au moment
+précis où l'on arrivait au bout.
+
+- **Le fait central : la marge était une constante, et elle était petite.** Un direct ne permet pas de
+  faire des réserves — on ne met en tampon que ce qui est **déjà publié devant** le point de lecture.
+  Le tampon maximal possible **est** donc la distance au bord du direct, et elle valait 24 s pour
+  toutes les chaînes. Conséquence : toute interruption de plus de 24 s coupait, sans recours. Côté
+  Web, `maxBufferLength: 30` ne servait même à rien — on demandait 30 s de tampon là où la latence
+  n'en autorisait que 24.
+- **La marge est maintenant prise dès l'ouverture et adaptée à chaque chaîne** : sa fenêtre mesurée
+  moins les 20 s de marge arrière, plafonnée à **40 s**. Sur la fenêtre médiane du corpus — 61 s — la
+  marge passe de 24 à 40 s, soit **65 % de plus**, sans rien coûter d'autre qu'un décalage assumé
+  entre l'image et le temps réel. Recalculée en continu côté Web ; bornée par `minOffsetMs` /
+  `maxOffsetMs` côté Android, qui se rabat de lui-même sur ce que la fenêtre permet.
+- **Après un blocage, Android repartait avec cinq secondes de tampon.**
+  `bufferForPlaybackAfterRebufferMs` valait 5 000 : on relançait l'image à un souffle de la panne dont
+  on sortait. Un réseau qui vient de faiblir refaiblit — c'est la mécanique même du bégaiement en
+  boucle. Porté à **20 s**. Le premier démarrage reste court, 2,5 s : attendre vingt secondes avant la
+  première image ferait passer une ouverture normale pour une panne.
+- **Personne ne surveillait le tampon.** Le relevé regardait la fenêtre et l'image figée, jamais
+  l'avance disponible. On ne découvrait donc le problème **qu'à zéro**, trop tard pour faire autre
+  chose que réparer. Les deux lecteurs regardent maintenant ce qui **descend** : sous 10 s on allège
+  d'un cran, sous 5 s de deux, et à 18 s on rend tout. La qualité maximale revient d'elle-même, sans
+  que personne ait à la redemander.
+- **Aucun des deux lecteurs n'avait de configuration d'adaptation de débit.** Les défauts
+  s'appliquaient, et ils privilégient la qualité. Or si le réseau est **durablement** plus lent que le
+  flux, aucune marge ne sauve : on vide à vitesse constante, et 24 s ou 40 s ne font que retarder
+  l'échéance. La seule réponse permanente est de consommer moins. `abrBandWidthFactor` passe de 0,95 à
+  0,7 — on ne prend une variante que si la bande passante la couvre avec 30 % de marge — et la
+  remontée est rendue prudente, remonter trop vite reproduisant la panne qu'on vient de fuir.
+- **Le recul disparaît des deux côtés**, faute d'objet : il n'y a plus de retard à acheter, il est
+  déjà pris. Le levier restant est le débit, et c'est lui qu'on actionne. Le seuil qui arbitrait entre
+  « reculer » et « changer de source » posait la question « ai-je encore du retard à acheter » ; il
+  pose maintenant « ai-je encore de la qualité à céder ».
+- 271 tests Web, TypeScript sans erreur.
+
+**Ce qui reste à éprouver sur l'appareil.** Le comportement d'ExoPlayer quand `targetOffsetMs`
+dépasse ce que la fenêtre permet est documenté comme borné par `minOffsetMs`/`maxOffsetMs`, mais je ne
+l'ai pas vu s'exécuter : sur une chaîne à fenêtre très courte, c'est le point à surveiller. Et les
+trois seuils de tampon — 10 s, 5 s, 18 s — sont raisonnés à partir des 8 s de segment du corpus, non
+mesurés sur un réseau réel qui faiblit.
+
 ## 0.5.7.r14 — une seconde de réseau n'est pas une source morte
 
 La chaîne coupait encore. Le coupable n'était pas un seuil : c'est une phrase écrite dans les deux

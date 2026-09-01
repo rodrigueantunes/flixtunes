@@ -206,6 +206,39 @@ const ATTENTES_REPRISE_MS = [2_000, 5_000, 10_000];
 const SEUIL_STABILITE_MS = 15_000;
 
 /**
+ * **La marge ne s'achète plus après coup : elle est là dès l'ouverture, et recalculée en permanence.**
+ *
+ * Un direct ne permet pas de faire des réserves : on ne met en tampon que ce qui est **déjà publié
+ * devant** le point de lecture. Le tampon maximal possible est donc exactement la distance au bord du
+ * direct — et elle valait 24 s, fixes, pour toutes les chaînes. Toute interruption réseau de plus de
+ * 24 s coupait, sans recours. Pire, cette marge n'était agrandie qu'**après trois bégaiements** :
+ * on rechargeait la sécurité au moment où l'on arrivait au bout.
+ *
+ * La fenêtre médiane du corpus fait 61 s. En gardant les 20 s de marge arrière, on peut se tenir à
+ * 40 s du bord : **la marge grandit de 65 %** sans rien coûter, et s'adapte à chaque chaîne au lieu
+ * d'un chiffre unique. Le plafond de 40 s est un choix explicite — c'est le décalage maximal qu'on
+ * accepte entre l'image et le temps réel.
+ */
+const CIBLE_MAX_S = 40;
+const CIBLE_MIN_S = 3 * SEGMENT_TYPE_S;
+
+/**
+ * Les deux seuils du tampon, et pourquoi on regarde la **descente** plutôt que le fond.
+ *
+ * Personne ne surveillait `buffered.end − currentTime`. On ne découvrait donc le problème qu'à zéro,
+ * c'est-à-dire une fois l'image figée — trop tard pour faire autre chose que réparer. Un tampon qui
+ * fond se voit dix secondes à l'avance, et dix secondes suffisent à changer de variante.
+ *
+ * En dessous de `TAMPON_BAS_S`, on plafonne la qualité d'un cran : moins d'octets à télécharger, le
+ * tampon se reconstitue. En dessous de `TAMPON_CRITIQUE_S`, on descend à la variante la plus basse
+ * disponible — à ce stade, une image moins fine vaut infiniment mieux qu'une image arrêtée. Et dès
+ * que le tampon est refait, le plafond est retiré : la qualité maximale revient d'elle-même.
+ */
+const TAMPON_BAS_S = 10;
+const TAMPON_CRITIQUE_S = 5;
+const TAMPON_RETABLI_S = 18;
+
+/**
  * L'insistance quand plus rien ne répond : six relances, dix secondes d'écart.
  *
  * Une minute en tout. Assez pour traverser une coupure de réseau domestique — le cas qu'on veut
@@ -573,8 +606,33 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
          */
         const hls = new HlsClass({
           enableWorker: true, lowLatencyMode: false, backBufferLength: 60,
-          maxBufferLength: 30, liveSyncDurationCount: 3, capLevelToPlayerSize: false,
+          /*
+           * `maxBufferLength` doit **dépasser** la latence visée, sans quoi il la borne.
+           *
+           * Il valait 30 s pour une latence de 24 : on demandait donc 30 s de tampon là où la latence
+           * n'en autorisait que 24, et le réglage ne servait à rien. Il vaut maintenant plus que le
+           * plafond de 40 s, pour que ce soit la latence — ce qu'on maîtrise — qui décide de la
+           * marge, et non un plafond oublié.
+           */
+          maxBufferLength: CIBLE_MAX_S + 10, liveSyncDurationCount: 3, capLevelToPlayerSize: false,
           maxLiveSyncPlaybackRate: RATTRAPAGE_MAX,
+          /*
+           * **L'adaptation de débit, réglée pour tenir plutôt que pour briller.**
+           *
+           * Aucun des deux lecteurs n'avait la moindre configuration d'adaptation : les défauts
+           * s'appliquaient, et ils privilégient la qualité. Or si le réseau est **durablement** plus
+           * lent que le flux, aucune marge ne sauve — on vide à vitesse constante, et 24 s ou 40 s ne
+           * font que retarder l'échéance. La seule réponse permanente est de consommer moins.
+           *
+           * `abrBandWidthFactor` à 0,7 au lieu de 0,95 : on ne s'autorise une variante que si la
+           * bande passante mesurée la couvre avec 30 % de marge. `abrBandWidthUpFactor` à 0,5 rend la
+           * remontée prudente — remonter trop vite reproduit la panne qu'on vient de fuir.
+           * `maxStarvationDelay` raccourci fait descendre dès que le tampon souffre, sans attendre.
+           */
+          abrBandWidthFactor: 0.7,
+          abrBandWidthUpFactor: 0.5,
+          maxStarvationDelay: 4,
+          maxLoadingDelay: 4,
           /*
            * **La tolérance interne, élargie, et pour une raison arithmétique.**
            *
@@ -609,17 +667,25 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
            * peut payer, et l'on ne recule pas si elle ne peut rien payer du tout — mieux vaut une
            * source un peu instable qu'une source qu'on vient de faire sortir de sa propre fenêtre.
            */
-          const segment = Math.round(hls.levels[hls.currentLevel]?.details?.targetduration ?? SEGMENT_TYPE_S);
-          const largeur = fenetreRef.current ? fenetreRef.current.fin - fenetreRef.current.debut : 0;
-          const segmentsPayables = largeur > 0
-            ? Math.floor((largeur - MARGE_ARRIERE_S) / segment)
-            : 5;
-          const vise = Math.min(5, segmentsPayables);
-          if (vise > hls.config.liveSyncDurationCount) {
-            const gagnes = vise - hls.config.liveSyncDurationCount;
-            hls.config.liveSyncDurationCount = vise;
+          /*
+           * **Il n'y a plus de marge à acheter : elle est déjà maximale.**
+           *
+           * Ce recul-ci existait parce que la latence de départ était petite — 24 s — et qu'on
+           * l'agrandissait après coup. Le relevé la prend maintenant d'emblée à tout ce que la fenêtre
+           * permet ; il ne reste donc rien à gagner de ce côté, et insister ne ferait que sortir de la
+           * fenêtre par l'arrière.
+           *
+           * Le levier restant est le **débit**. On plafonne la qualité d'un cran, ce qui allège
+           * immédiatement le téléchargement, et l'on s'accorde un répit avant de juger de nouveau. La
+           * surveillance du tampon lèvera ce plafond d'elle-même dès que la marge sera refaite : on
+           * ne s'enferme pas dans une image dégradée pour un mauvais moment.
+           */
+          const niveaux = hls.levels?.length ?? 0;
+          const plafond = hls.autoLevelCapping;
+          if (niveaux > 1 && plafond !== 0) {
+            hls.autoLevelCapping = Math.max(0, (plafond === -1 ? niveaux - 1 : plafond) - 1);
             silenceJusqua.current = Date.now() + REPIT_APRES_RECUL_MS;
-            setSecurite(gagnes * segment);
+            setSecurite(0);
             return;
           }
           if (rangRef.current + 1 >= Math.min(adresses.length, REPLIS)) return;
@@ -657,9 +723,15 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
             /*
              * **Les deux réactions n'ont pas le même prix, elles n'ont donc pas la même patience.**
              *
-             * Reculer ne coûte que du retard : c'est invisible, ça répare la plupart des bégaiements,
-             * et ça doit donc arriver **vite** — trois rechargements suffisent, rafale comprise.
-             * Changer de source coupe l'image : cela reste un dernier mot, et se mérite.
+             * Alléger le débit ne coûte que de la finesse d'image, et seulement le temps du mauvais
+             * passage : c'est presque invisible, ça répare la plupart des bégaiements, et ça doit donc
+             * arriver **vite** — trois rechargements suffisent, rafale comprise. Changer de source
+             * coupe l'image : cela reste un dernier mot, et se mérite.
+             *
+             * Le seuil qui séparait les deux était `liveSyncDurationCount < 5`, c'est-à-dire « ai-je
+             * encore du retard à acheter ». La marge étant désormais maximale d'emblée, la question
+             * n'a plus de sens ; celle qui la remplace est « ai-je encore de la qualité à céder », et
+             * `autoLevelCapping` y répond : −1 tant qu'on n'a rien cédé, 0 quand on est au plus bas.
              */
             const compter = () => {
               blocages.current = [...blocages.current, maintenant]
@@ -667,7 +739,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
               return blocages.current.length >= BLOCAGES_AVANT_RECUL;
             };
 
-            if (hls.config.liveSyncDurationCount < 5) {
+            if ((hls.levels?.length ?? 0) > 1 && hls.autoLevelCapping !== 0) {
               if (!compter()) return;
               reagirALInstabilite.current();
               return;
@@ -780,9 +852,67 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
         derniereImage = { temps: element.currentTime, instant: maintenant };
         reagirALInstabilite.current();
       }
+      /*
+       * **Le tampon, surveillé en permanence — c'est ici que se joue « ne jamais arriver au bout ».**
+       *
+       * Tout le reste du lecteur est réactif : on attend le bégaiement, l'image figée, l'erreur. Ce
+       * relevé-ci regarde ce qui **descend**, et agit pendant qu'il reste du temps. Un tampon qui fond
+       * se voit dix secondes à l'avance ; dix secondes suffisent à changer de variante, alors qu'à
+       * zéro il ne reste plus qu'à réparer.
+       */
+      const courant = hlsRef.current;
+      if (courant && !element.paused) {
+        let devant = 0;
+        for (let index = 0; index < element.buffered.length; index += 1) {
+          if (element.buffered.start(index) <= element.currentTime + 0.5
+            && element.buffered.end(index) > element.currentTime) {
+            devant = element.buffered.end(index) - element.currentTime;
+            break;
+          }
+        }
+        const niveaux = courant.levels?.length ?? 0;
+        if (niveaux > 1) {
+          const plafond = courant.autoLevelCapping;
+          if (devant > 0 && devant < TAMPON_CRITIQUE_S) {
+            // Une image moins fine vaut infiniment mieux qu'une image arrêtée.
+            if (plafond !== 0) courant.autoLevelCapping = 0;
+          } else if (devant > 0 && devant < TAMPON_BAS_S) {
+            const vise = Math.max(0, (plafond === -1 ? niveaux - 1 : plafond) - 1);
+            if (plafond === -1 || vise < plafond) courant.autoLevelCapping = vise;
+          } else if (devant >= TAMPON_RETABLI_S && plafond !== -1) {
+            // Le tampon est refait : la qualité maximale revient d'elle-même.
+            courant.autoLevelCapping = -1;
+          }
+        }
+      }
+
       if (!element.seekable.length) { setFenetre(null); return; }
       const debut = element.seekable.start(0);
       const fin = element.seekable.end(element.seekable.length - 1);
+
+      /*
+       * **La latence visée est recalculée sur la fenêtre réelle, en permanence.**
+       *
+       * Elle valait 3 segments — 24 s — pour toutes les chaînes, et n'était agrandie qu'après trois
+       * bégaiements. On rechargeait donc la sécurité au moment où l'on arrivait au bout. Elle est
+       * maintenant prise **dès que la fenêtre est connue**, c'est-à-dire dans les premières secondes,
+       * et vaut tout ce que la chaîne peut offrir : sa fenêtre moins la marge arrière, plafonnée au
+       * décalage qu'on s'autorise. Sur la fenêtre médiane, 40 s au lieu de 24.
+       *
+       * On n'écrit que si la valeur change : hls.js relit sa configuration à chaque segment, et la
+       * réécrire quatre fois par seconde le ferait dériver sans cesse vers une cible qui bouge.
+       */
+      if (courant) {
+        const segment = Math.round(
+          courant.levels?.[courant.currentLevel]?.details?.targetduration ?? SEGMENT_TYPE_S,
+        );
+        const payable = Math.min(CIBLE_MAX_S, Math.max(CIBLE_MIN_S, fin - debut - MARGE_ARRIERE_S));
+        const segments = Math.max(3, Math.floor(payable / Math.max(1, segment)));
+        if (courant.config.liveSyncDurationCount !== segments) {
+          courant.config.liveSyncDurationCount = segments;
+        }
+      }
+
       const releve = { debut, fin, position: element.currentTime, enPause: element.paused };
       fenetreRef.current = releve;
       setFenetre(releve);
