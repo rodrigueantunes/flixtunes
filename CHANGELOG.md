@@ -19,18 +19,29 @@ L'observation la dément sans appel : relancer la même chaîne, sur la même ad
   qu'une coupure qui dure ne se répare pas en insistant vite : insister vite ne fait qu'épuiser le
   compteur avant que le réseau ne soit revenu. Côté Web, `startLoad` reprend sur le lecteur existant
   sans le détruire ; côté Android, `prepare` sans reconstruire.
-- **La tolérance interne est élargie** — 6 tentatives côté ExoPlayer, 4 à 6 côté hls.js — pour que la
-  plupart des incidents ne remontent **jamais** jusqu'à l'erreur. Le prix est qu'une source réellement
-  morte met une quinzaine de secondes à être déclarée telle au lieu de trois : on le paie une fois,
-  contre une coupure qu'on payait toutes les heures.
+- **Et tout cela ne s'applique qu'à un flux déclaré stable.** Première version : la patience était
+  partout, y compris pendant la course d'ouverture — c'est-à-dire quinze secondes payées à *chaque*
+  adresse morte, au moment précis où l'on n'a rien à perdre et où l'on veut trouver vite. La patience
+  est un remède quand l'image est établie et un poison quand on cherche encore une source.
+
+  Un flux est donc **déclaré stable après 15 s d'image continue**. Avant : comportement rapide
+  d'origine, trois tentatives et l'on passe à la suivante — une source qui ne démarre pas n'atteint
+  jamais le seuil et reste traitée vite. Après : tolérance interne portée à 6 tentatives — une
+  quinzaine de secondes — et les trois reprises. **Quinze secondes d'image acquise achètent quinze
+  secondes d'obstination** ; la symétrie rend le réglage explicable, donc corrigeable.
+
+  La déclaration porte sur **l'adresse**, pas sur la chaîne, et repart à zéro quand on en change ou
+  qu'on zappe.
 - **Une adresse qui a joué n'est plus déclarée morte.** L'échec était inscrit au classement quoi qu'il
   arrive, y compris pour une adresse qui venait de diffuser une heure sans faute. On fabriquait ainsi
   de fausses mauvaises notes sur les sources **les plus regardées, c'est-à-dire les meilleures**. Seule
   compte désormais l'adresse qui n'a jamais tenu l'image trente secondes.
-- **On ne finit plus sur « aucune source ».** Six relances espacées de dix secondes, soit une minute :
-  assez pour traverser une coupure de réseau domestique, trop peu pour maquiller une chaîne éteinte —
-  la source doit faire ses preuves, l'insistance n'en tient pas lieu. C'est la **première** adresse
-  qu'on reprend, celle que la course a désignée comme la meilleure.
+- **On ne finit plus sur « aucune source »**, mais l'obstination est proportionnée à ce qui a été
+  prouvé. Six relances de dix secondes — une minute — quand une adresse de cette chaîne a déjà tenu
+  l'image : c'est le cas de la coupure de réseau domestique, et il mérite qu'on l'attende. **Deux
+  seulement quand rien n'a jamais démarré**, où insister reviendrait à faire patienter devant une
+  chaîne qui n'existe plus. C'est la **première** adresse qu'on reprend, celle que la course a
+  désignée comme la meilleure.
 - **Et le message final dit ce qui a été mesuré** : le nombre de sources, le nombre de relances et la
   nature du dernier incident, au lieu d'un constat qui ne permettait ni de comprendre ni de corriger.
   Après deux hypothèses, il fallait cesser de deviner.

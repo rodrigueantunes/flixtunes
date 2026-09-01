@@ -204,6 +204,25 @@ class LecteurDirectActivity : ComponentActivity() {
      * revient : ce qui est compté, c'est une série d'échecs, pas une vie entière.
      */
     private var depuisLecture = 0L
+    /**
+     * **La déclaration de flux stable**, et pourquoi tout en dépend.
+     *
+     * La patience est un remède quand l'image est établie, et un poison quand on cherche encore une
+     * source. Une tolérance de quinze secondes appliquée partout ferait payer quinze secondes à
+     * *chaque* adresse morte de la course d'ouverture — c'est-à-dire allonger l'attente précisément
+     * au moment où l'on n'a encore rien à perdre, et où l'on veut trouver vite.
+     *
+     * Un flux est donc déclaré stable quand il a tenu l'image `SEUIL_STABILITE_MS` d'affilée. Avant
+     * cette déclaration, on garde le comportement rapide : trois tentatives, et l'on passe à la
+     * suivante. Après, on devient patient — quinze secondes d'image acquise achètent quinze secondes
+     * d'obstination.
+     *
+     * La déclaration vaut pour l'adresse en cours et repart à zéro quand on en change : c'est cette
+     * source-ci qui a fait ses preuves, pas la chaîne.
+     */
+    private var fluxDeclareStable = false
+    /** Une adresse de cette chaîne a-t-elle déjà fait ses preuves ? Décide de l'obstination finale. */
+    private var dejaVuStable = false
     private var reprises = 0
     private var relancesLentes = 0
     private var repriseEnCours: Job? = null
@@ -264,7 +283,16 @@ class LecteurDirectActivity : ComponentActivity() {
              */
             .setMediaSourceFactory(
                 DefaultMediaSourceFactory(this)
-                    .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(6)),
+                    .setLoadErrorHandlingPolicy(object : DefaultLoadErrorHandlingPolicy() {
+                        /*
+                         * Six tentatives — une quinzaine de secondes — **une fois le flux déclaré
+                         * stable** ; les trois d'origine avant. La patience est ce qui sauve une
+                         * image établie d'une seconde de réseau, et ce qui ralentirait la recherche
+                         * d'une source qui n'a encore rien prouvé.
+                         */
+                        override fun getMinimumLoadableRetryCount(dataType: Int): Int =
+                            if (fluxDeclareStable) REPRISES_INTERNES_STABLE else super.getMinimumLoadableRetryCount(dataType)
+                    }),
             )
             .setLoadControl(
                 DefaultLoadControl.Builder()
@@ -308,7 +336,7 @@ class LecteurDirectActivity : ComponentActivity() {
                      * zéro dès que l'image revient : ce qui condamne une source, c'est une série
                      * d'échecs, pas un échec de temps en temps.
                      */
-                    if (reprises < REPRISES_MAX) {
+                    if (fluxDeclareStable && reprises < REPRISES_MAX) {
                         reprises += 1
                         dernierIncident = "réseau (${error.errorCodeName})"
                         val attente = ATTENTES_REPRISE_MS[reprises - 1]
@@ -440,6 +468,14 @@ class LecteurDirectActivity : ComponentActivity() {
         blocages.clear()
         montrerLesSources(false)
         reparations = 0
+        // Une chaîne neuve n'a rien prouvé : ni l'adresse en cours, ni aucune des autres.
+        fluxDeclareStable = false
+        dejaVuStable = false
+        depuisLecture = 0L
+        reprises = 0
+        relancesLentes = 0
+        repriseEnCours?.cancel()
+        dernierIncident = null
         // Ce qu'on quitte devient ce vers quoi on revient. Enregistré avant de charger : si la
         // nouvelle chaîne ne répond pas, le retour reste possible.
         chaine?.id?.takeIf { it != chaineId }?.let { precedente = it }
@@ -583,14 +619,16 @@ class LecteurDirectActivity : ComponentActivity() {
          * L'échec était inscrit au classement quoi qu'il arrive — y compris pour une adresse qui
          * venait de diffuser une heure sans faute et qu'une seconde de réseau avait interrompue. On
          * fabriquait ainsi de fausses mauvaises notes sur les sources les plus regardées, c'est-à-dire
-         * sur les meilleures. Ne compte désormais que l'adresse qui n'a **jamais** tenu l'image
-         * `DUREE_QUI_DISCULPE_MS` : celle-là n'a rien prouvé, et son échec veut dire quelque chose.
+         * sur les meilleures. Ne compte désormais que l'adresse qui n'a **jamais** été déclarée
+         * stable : celle-là n'a rien prouvé, et son échec veut dire quelque chose.
          */
-        val aTenu = depuisLecture > 0 && System.currentTimeMillis() - depuisLecture > DUREE_QUI_DISCULPE_MS
         val identifiant = chaine?.id
-        if (identifiant != null && !aTenu) {
+        if (identifiant != null && !fluxDeclareStable) {
             lifecycleScope.launch { runCatching { api.resultatChaineDirect(profileId, identifiant, morte, false) } }
         }
+        // La déclaration porte sur l'adresse : celle qu'on prend n'a encore rien prouvé.
+        fluxDeclareStable = false
+        depuisLecture = 0L
         rang += 1
         if (rang >= minOf(adresses.size, REPLIS)) { plusAucuneSource(); return }
         message = getString(R.string.direct_source_essai, rang + 1, adresses.size)
@@ -613,9 +651,18 @@ class LecteurDirectActivity : ComponentActivity() {
      * ni de corriger.
      */
     private fun plusAucuneSource() {
-        if (relancesLentes < RELANCES_LENTES) {
+        /*
+         * On s'obstine pour ce qui a marché, pas pour ce qui n'a jamais rien montré.
+         *
+         * Six relances — une minute — quand une adresse de cette chaîne a déjà tenu l'image : c'est le
+         * cas d'une coupure de réseau domestique, et il mérite qu'on l'attende. Deux seulement quand
+         * rien n'a jamais démarré : là, insister revient à faire patienter devant une chaîne qui
+         * n'existe plus.
+         */
+        val plafond = if (dejaVuStable) RELANCES_LENTES else RELANCES_SANS_PREUVE
+        if (relancesLentes < plafond) {
             relancesLentes += 1
-            message = getString(R.string.direct_relance_lente, relancesLentes, RELANCES_LENTES)
+            message = getString(R.string.direct_relance_lente, relancesLentes, plafond)
             rang = 0
             repriseEnCours?.cancel()
             repriseEnCours = lifecycleScope.launch {
@@ -955,11 +1002,22 @@ class LecteurDirectActivity : ComponentActivity() {
                      * ne dit rien contre la source.
                      */
                     if (joueur.isPlaying) {
-                        depuisLecture = System.currentTimeMillis()
-                        if (reprises > 0 || relancesLentes > 0) {
-                            reprises = 0
-                            relancesLentes = 0
-                            message = null
+                        if (depuisLecture == 0L) depuisLecture = System.currentTimeMillis()
+                        if (!fluxDeclareStable &&
+                            System.currentTimeMillis() - depuisLecture >= SEUIL_STABILITE_MS
+                        ) {
+                            fluxDeclareStable = true
+                            dejaVuStable = true
+                            /*
+                             * Les compteurs repartent **à la déclaration**, et non au retour de
+                             * l'image. Un flux qui revient deux secondes puis retombe n'a rien
+                             * prouvé ; le remettre à neuf lui offrirait une série d'échecs sans fin.
+                             */
+                            if (reprises > 0 || relancesLentes > 0) {
+                                reprises = 0
+                                relancesLentes = 0
+                                message = null
+                            }
                         }
                     }
                     /*
@@ -1415,7 +1473,24 @@ class LecteurDirectActivity : ComponentActivity() {
          * répond. Ce qui l'interrompt ensuite est un incident, pas un verdict, et l'inscrire au
          * classement reviendrait à noter le réseau sous le nom de la source.
          */
-        private const val DUREE_QUI_DISCULPE_MS = 30_000L
+        /**
+         * Ce qu'il faut d'image continue pour qu'un flux soit déclaré stable.
+         *
+         * Quinze secondes : deux segments de la médiane du corpus, plus une marge. Assez pour prouver
+         * que l'hébergeur envoie vraiment, trop peu pour retarder la course d'ouverture — une source
+         * qui ne démarre pas ne l'atteint jamais et reste traitée à l'ancienne, c'est-à-dire vite.
+         *
+         * Le même chiffre sert de tolérance une fois la déclaration acquise : quinze secondes d'image
+         * acquise achètent quinze secondes d'obstination. La symétrie n'est pas une coquetterie, elle
+         * rend le réglage explicable — et donc corrigeable.
+         */
+        private const val SEUIL_STABILITE_MS = 15_000L
+
+        /** Six tentatives internes ≈ quinze secondes, réservées au flux déclaré stable. */
+        private const val REPRISES_INTERNES_STABLE = 6
+
+        /** L'obstination finale quand rien n'a jamais démarré : deux essais, et l'on conclut. */
+        private const val RELANCES_SANS_PREUVE = 2
 
         /**
          * L'insistance quand plus rien ne répond : six relances, dix secondes d'écart.

@@ -185,13 +185,25 @@ const REPRISES_MAX = 3;
 const ATTENTES_REPRISE_MS = [2_000, 5_000, 10_000];
 
 /**
- * La durée de lecture qui disculpe une adresse.
+ * **La déclaration de flux stable**, et pourquoi tout en dépend.
  *
- * Trente secondes d'image sans faute prouvent que l'adresse est bonne. Ce qui l'interrompt ensuite est
- * un incident, pas un verdict — l'inscrire au classement reviendrait à noter le réseau sous le nom de
- * la source, et à dégrader les adresses les plus regardées, c'est-à-dire les meilleures.
+ * La patience est un remède quand l'image est établie, et un poison quand on cherche encore une
+ * source. Une tolérance de quinze secondes appliquée partout ferait payer quinze secondes à *chaque*
+ * adresse morte de la course d'ouverture — c'est-à-dire allonger l'attente précisément au moment où
+ * l'on n'a encore rien à perdre et où l'on veut trouver vite.
+ *
+ * Un flux est donc déclaré stable après `SEUIL_STABILITE_MS` d'image continue. Avant, on garde le
+ * comportement rapide : on passe à la suivante. Après, on devient patient. Quinze secondes : deux
+ * segments de la médiane du corpus, plus une marge — assez pour prouver que l'hébergeur envoie
+ * vraiment, trop peu pour retarder la course, qu'une source morte n'atteint jamais.
+ *
+ * Le même chiffre sert de tolérance une fois la déclaration acquise : quinze secondes d'image acquise
+ * achètent quinze secondes d'obstination. La symétrie rend le réglage explicable, donc corrigeable.
+ *
+ * La déclaration porte sur **l'adresse** et repart à zéro quand on en change : c'est cette source-ci
+ * qui a fait ses preuves, pas la chaîne.
  */
-const DUREE_QUI_DISCULPE_MS = 30_000;
+const SEUIL_STABILITE_MS = 15_000;
 
 /**
  * L'insistance quand plus rien ne répond : six relances, dix secondes d'écart.
@@ -202,6 +214,9 @@ const DUREE_QUI_DISCULPE_MS = 30_000;
  */
 const RELANCES_LENTES = 6;
 const INTERVALLE_RELANCE_MS = 10_000;
+
+/** L'obstination finale quand rien n'a jamais démarré : deux essais, et l'on conclut. */
+const RELANCES_SANS_PREUVE = 2;
 
 function horodatage(secondes: number): string {
   const entier = Math.max(0, Math.round(secondes));
@@ -237,6 +252,10 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
   const [echec, setEchec] = useState(false);
   /** L'instant où l'image a été vue pour la dernière fois : ce qui distingue un incident d'une panne. */
   const depuisLecture = useRef(0);
+  /** Cette adresse-ci a-t-elle fait ses preuves ? Et une adresse de cette chaîne l'a-t-elle jamais ? */
+  const fluxDeclareStable = useRef(false);
+  const dejaVuStable = useRef(false);
+  const declaration = useRef<number | undefined>(undefined);
   const reprises = useRef(0);
   const relancesLentes = useRef(0);
   /** Ce qui a coupé, dit à l'écran plutôt que deviné. */
@@ -268,6 +287,25 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
   const silenceJusqua = useRef(0);
   /** Depuis quand on est sur cette source : on ne zappe pas une chaîne qui vient de démarrer. */
   const depuisSource = useRef(0);
+
+  /**
+   * Une chaîne neuve n'a rien prouvé : ni l'adresse en cours, ni aucune des autres.
+   *
+   * Le composant n'est pas remonté quand on change de chaîne, si bien que ces références
+   * survivraient au zapping — la patience héritée de la chaîne précédente s'appliquerait à celle-ci,
+   * qui n'a encore rien montré, et ralentirait sa course d'ouverture.
+   */
+  useEffect(() => {
+    fluxDeclareStable.current = false;
+    dejaVuStable.current = false;
+    depuisLecture.current = 0;
+    reprises.current = 0;
+    relancesLentes.current = 0;
+    dernierIncident.current = null;
+    window.clearTimeout(declaration.current);
+    declaration.current = undefined;
+    return () => window.clearTimeout(declaration.current);
+  }, [chaine.id]);
 
   useEffect(() => {
     let annule = false;
@@ -370,8 +408,12 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
      * désormais que l'adresse qui n'a **jamais** tenu l'image trente secondes : celle-là n'a rien
      * prouvé, et son échec veut dire quelque chose.
      */
-    const aTenu = depuisLecture.current > 0 && Date.now() - depuisLecture.current > DUREE_QUI_DISCULPE_MS;
-    if (!aTenu) void api.resultatChaineLive(chaine.id, morte, false).catch(() => undefined);
+    if (!fluxDeclareStable.current) void api.resultatChaineLive(chaine.id, morte, false).catch(() => undefined);
+    // La déclaration porte sur l'adresse : celle qu'on prend n'a encore rien prouvé.
+    window.clearTimeout(declaration.current);
+    declaration.current = undefined;
+    fluxDeclareStable.current = false;
+    depuisLecture.current = 0;
     reprises.current = 0;
     const disponibles = Math.min(adresses.length, REPLIS);
     const prochain = rangRef.current + 1;
@@ -387,9 +429,16 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
        * On reprend la **première** adresse, celle que la course a désignée comme la meilleure : l'ordre
        * dans lequel on vient de les abandonner n'a rien changé à ce classement.
        */
-      if (relancesLentes.current < RELANCES_LENTES) {
+      /*
+       * On s'obstine pour ce qui a marché, pas pour ce qui n'a jamais rien montré. Six relances — une
+       * minute — quand une adresse de cette chaîne a déjà tenu l'image : c'est le cas d'une coupure de
+       * réseau domestique, et il mérite qu'on l'attende. Deux quand rien n'a jamais démarré, où
+       * insister revient à faire patienter devant une chaîne qui n'existe plus.
+       */
+      const plafond = dejaVuStable.current ? RELANCES_LENTES : RELANCES_SANS_PREUVE;
+      if (relancesLentes.current < plafond) {
         relancesLentes.current += 1;
-        setMessage(`Plus aucune source ne répond, nouvelle tentative (${relancesLentes.current}/${RELANCES_LENTES})…`);
+        setMessage(`Plus aucune source ne répond, nouvelle tentative (${relancesLentes.current}/${plafond})…`);
         window.setTimeout(() => {
           rangRef.current = 0;
           setParRelais(false);
@@ -463,9 +512,31 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
        * Remettre les compteurs à zéro ici plutôt qu'à l'ouverture distingue « trois incidents
        * d'affilée » de « trois incidents dans la soirée ». Le second ne dit rien contre la source.
        */
-      depuisLecture.current = Date.now();
-      reprises.current = 0;
-      relancesLentes.current = 0;
+      if (!depuisLecture.current) depuisLecture.current = Date.now();
+      /*
+       * La déclaration se prononce après quinze secondes d'image, et c'est **elle** qui remet les
+       * compteurs à neuf — pas le simple retour de l'image. Un flux qui revient deux secondes puis
+       * retombe n'a rien prouvé ; l'absoudre lui offrirait une série d'échecs sans fin.
+       */
+      if (!fluxDeclareStable.current && declaration.current === undefined) {
+        declaration.current = window.setTimeout(() => {
+          fluxDeclareStable.current = true;
+          dejaVuStable.current = true;
+          reprises.current = 0;
+          relancesLentes.current = 0;
+          /*
+           * La tolérance interne se relève **à la déclaration**. hls.js relit sa configuration à
+           * chaque chargement, si bien qu'il suffit de l'écrire ici : les reprises silencieuses
+           * passent de quelques secondes à une quinzaine, sans avoir ralenti la course d'ouverture.
+           */
+          const courant = hlsRef.current;
+          if (courant) {
+            courant.config.levelLoadingMaxRetry = 6;
+            courant.config.fragLoadingMaxRetry = 6;
+            courant.config.manifestLoadingMaxRetry = 4;
+          }
+        }, SEUIL_STABILITE_MS);
+      }
       // C'est l'adresse d'origine qu'on note, jamais celle du relais : le classement porte sur la
       // source, et le relais n'est qu'un chemin pour y aller.
       void api.resultatChaineLive(chaine.id, entree.url, true).catch(() => undefined);
@@ -513,9 +584,9 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
            * l'explication du « ça coupe au bout d'un moment » : plus on regarde longtemps, plus c'est
            * sûr d'arriver. Ces reprises-ci se font **sous** l'image, sans que rien ne se voie.
            */
-          manifestLoadingMaxRetry: 4,
-          levelLoadingMaxRetry: 6,
-          fragLoadingMaxRetry: 6,
+          manifestLoadingMaxRetry: 1,
+          levelLoadingMaxRetry: 3,
+          fragLoadingMaxRetry: 3,
           levelLoadingRetryDelay: 1_000,
           fragLoadingRetryDelay: 1_000,
         });
@@ -647,7 +718,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
            * reste en place, et la reprise coûte le remplissage du tampon au lieu d'une reconstruction
            * complète.
            */
-          if (reprises.current < REPRISES_MAX) {
+          if (fluxDeclareStable.current && reprises.current < REPRISES_MAX) {
             reprises.current += 1;
             dernierIncident.current = `réseau (${donnees.details})`;
             if (reprises.current > 1) {
