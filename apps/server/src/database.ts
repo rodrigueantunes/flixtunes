@@ -691,6 +691,23 @@ if (schemaListes && !schemaListes.sql.includes("'faible'")) {
 db.exec("UPDATE live_sources SET libelle = 'Chaînes' WHERE type = 'fast' AND libelle = 'Chaînes gratuites'");
 db.exec("CREATE INDEX IF NOT EXISTS idx_live_channels_pays ON live_channels(pays, numero)");
 /*
+ * L'index de la facette des pays — et c'est le NAS qui l'a réclamé.
+ *
+ * Le compte des pays met **186 ms sur l'AS5404T**, contre 24 ms sur un poste de développement : c'est
+ * de loin le point le plus lent de l'écran du direct, et il se déclenche à chaque ouverture et à
+ * chaque changement de filtre. Sur un SSD tiède la lenteur ne se voyait pas ; sur la machine où le
+ * produit tourne, elle se voit.
+ *
+ * La cause est que l'index existant porte `(pays, numero)` sans `adresses` : pour vérifier
+ * `adresses > 0`, SQLite devait aller chercher **chacune des 92 204 lignes** dans la table. L'index
+ * partiel ne contient que les chaînes joignables et que la colonne groupée — le compte devient un
+ * parcours d'index sans un seul accès à la table.
+ *
+ * Mesuré sur le corpus réel : **32,8 ms → 0,7 ms**, quarante-sept fois moins.
+ */
+db.exec(`CREATE INDEX IF NOT EXISTS idx_live_pays_facette
+  ON live_channels(pays) WHERE adresses > 0 AND pays IS NOT NULL`);
+/*
  * L'index du parcours, dans l'ordre exact du tri de la grille — et **partiel**, ce qui fait tout.
  *
  * La première écriture mettait `adresses` en tête, comme l'index qu'elle remplaçait. Mesuré sur

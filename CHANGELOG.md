@@ -1,5 +1,22 @@
 # Journal des versions
 
+## 0.5.7.r9 — ce que le NAS avait à dire
+
+*Trois jours de chiffres pris sur un poste de développement, et une mesure sur la vraie machine qui
+en corrige un. C'est exactement pour cela qu'on mesure là où ça tourne.*
+
+- **La facette des pays mettait 186 ms sur l'AS5404T**, contre 24 ms ici. C'était de loin le point le
+  plus lent de l'écran du direct, et il se déclenche à chaque ouverture et à chaque changement de
+  filtre. La cause : l'index portait `(pays, numero)` sans `adresses`, si bien que pour vérifier
+  `adresses > 0` SQLite allait chercher **chacune des 92 204 lignes** dans la table. Un index partiel
+  qui ne contient que les chaînes joignables et que la colonne groupée transforme le compte en
+  parcours d'index, sans un seul accès à la table : **32,8 ms → 0,7 ms** sur le corpus réel,
+  quarante-sept fois moins.
+- **Sur un SSD tiède, la lenteur ne se voyait pas.** J'avais annoncé que recompter les facettes coûtait
+  moins que l'ancien compte global — c'était vrai sur ma machine et sans intérêt sur la vôtre, où le
+  chiffre était sept fois plus élevé. La leçon vaut mieux que le correctif.
+- 888 tests serveur, 271 tests Web, le Kotlin compile, lint passe.
+
 ## 0.5.7.r8 — le script refait, et les chaînes enfin identifiées
 
 *Le script qui produit `m3u.json` était lent et trop confiant ; le fichier qu'il écrit ne savait
