@@ -13,8 +13,8 @@ import type { IdentiteWeb } from "./web-identite.js";
  * Cela reste invisible : le rayon Web est distinct, et la séparation se fait par le type de la
  * bibliothèque, exactement comme une bibliothèque « films » est déjà tenue hors du rayon des séries.
  *
- * Ce que le lecteur voit — l'arborescence réelle des dossiers — est rendu à part, depuis le chemin du
- * fichier. La saison n'est qu'un palier technique, et n'a pas à lui ressembler.
+ * Ce que la personne voit en ouvrant une chaîne reste **ses dossiers** : ce sont eux qui forment les
+ * paliers, et la date de publication ne sert qu'à ordonner les vidéos à l'intérieur.
  */
 
 /** Le jour zéro des numéros d'épisode. Une date de publication devient un entier ordonné. */
@@ -22,27 +22,37 @@ const JOUR_ZERO = Date.UTC(1970, 0, 1);
 const MILLISECONDES_PAR_JOUR = 86_400_000;
 
 /**
- * Le palier d'une vidéo : son année de publication.
+ * Le palier d'une vidéo : le dossier qui la contient, sous sa chaîne.
  *
- * Trois raisons de préférer l'année au dossier qui contient le fichier. Elle est **déterministe** —
- * aucune table de correspondance à tenir, donc rien qui puisse dériver entre deux analyses. Elle est
- * **ordonnée**, ce qui est précisément ce qu'on demande d'un tri par date de publication. Et elle
- * n'entre pas en concurrence avec l'arborescence : les dossiers restent affichés tels qu'ils sont,
- * puisqu'ils sont rendus depuis le chemin et non depuis le palier.
+ * C'est ce que la personne voit en ouvrant une chaîne, et c'est ce qu'elle a rangé elle-même — le
+ * plus souvent des playlists, parfois autre chose. Le palier ne peut donc pas être déduit d'une
+ * donnée de la vidéo : il **est** le dossier.
  *
- * Une vidéo sans date connue tombe au palier `0`, qui se lit « année inconnue » et se range en tête.
+ * Le catalogue ne connaît que trois niveaux, alors qu'une arborescence peut en compter plus. La clé
+ * retient donc le chemin relatif **entier**, en un seul palier : `Documentaires/2024/Asie` reste
+ * distinct de `Documentaires/2024`, et l'écran peut rendre la profondeur réelle en le redécoupant.
+ * Rien n'est aplati, rien n'est perdu.
+ *
+ * Une vidéo posée à la racine de la chaîne a pour clé la chaîne vide : elle n'est dans aucun dossier,
+ * et lui en inventer un serait afficher un rangement qui n'existe pas.
  */
-export function paliersDeLaVideo(identite: IdentiteWeb): number {
-  return identite.annee ?? 0;
+export function cleDuPalier(chemin: CheminWeb): string {
+  return chemin.dossiers.join("/");
+}
+
+/** Le nom d'un palier, tel qu'il s'affiche. L'écran redécoupe la profondeur ; ici on la rend lisible. */
+export function libelleDuPalier(cle: string, langue: string): string {
+  if (cle) return cle.split("/").join(" / ");
+  return langue === "fr-FR" ? "Hors dossier" : "No folder";
 }
 
 /**
  * Le rang d'une vidéo dans son palier : son jour de publication, compté depuis 1970.
  *
- * Le numéro d'épisode ordonne la fiche. Le déduire de la date plutôt que d'un compteur lui donne deux
- * propriétés qu'un compteur n'a pas : il ne dépend **d'aucune** des autres vidéos — donc une analyse
- * n'a pas besoin de les avoir toutes vues pour numéroter celle qu'elle traite — et il ne bouge jamais.
- * Ajouter une vidéo ancienne des mois plus tard ne renumérote rien : elle se glisse à sa place.
+ * C'est le tri demandé — par date de publication —, et le déduire de la date plutôt que d'un compteur
+ * lui donne deux propriétés qu'un compteur n'a pas : il ne dépend **d'aucune** des autres vidéos, donc
+ * une analyse n'a pas besoin de les avoir toutes vues pour numéroter celle qu'elle traite ; et il ne
+ * bouge jamais, donc ajouter une vidéo ancienne des mois plus tard ne renumérote pas les suivantes.
  *
  * Un compteur, lui, aurait décalé toutes les suivantes, et le décalage aurait déplacé des fiches déjà
  * rattachées à des progressions de lecture.
@@ -55,14 +65,16 @@ export function rangDansLePalier(identite: IdentiteWeb): number {
 }
 
 /**
- * Ce que l'appelant doit savoir faire : dire si un rang est déjà pris, dans ce palier, par un autre
- * fichier que celui-ci.
+ * Ce que l'appelant doit savoir faire : donner le numéro déjà attribué à un dossier de cette chaîne,
+ * ou en attribuer un nouveau.
  *
- * Deux vidéos publiées le même jour visent le même rang — c'est courant sur une chaîne active. Le
- * conflit ne peut se trancher qu'en base, puisqu'il dépend de ce qui a déjà été analysé ; ce module
- * se contente de décaler jusqu'à la première place libre. Le premier arrivé garde la sienne, ce qui
- * rend l'attribution stable d'une analyse à l'autre.
+ * Le catalogue range les saisons par un entier ; les dossiers, eux, ont des noms libres. La
+ * correspondance ne peut donc pas se calculer — elle se **retient**, et elle se retient là où vivent
+ * déjà les fiches, pas dans une table de plus. Un dossier connu garde son numéro, un dossier nouveau
+ * prend le suivant : l'attribution est stable, et l'ordre des paliers suit celui de leur découverte.
  */
+export type NumeroDePalier = (cle: string) => number;
+
 export type PlaceOccupee = (palier: number, rang: number) => boolean;
 
 /** Le premier rang libre à partir de celui que la date désigne. */
@@ -86,8 +98,13 @@ export function rangLibre(palier: number, souhaite: number, occupee: PlaceOccupe
  * Le titre de la vidéo suit la règle inverse : celui de la plateforme d'abord, parce qu'il est exact,
  * et le nom de fichier seulement à défaut.
  */
-export function episodeDepuisLeWeb(chemin: CheminWeb, identite: IdentiteWeb, occupee: PlaceOccupee): ParsedMedia {
-  const palier = paliersDeLaVideo(identite);
+export function episodeDepuisLeWeb(
+  chemin: CheminWeb,
+  identite: IdentiteWeb,
+  numeroDePalier: NumeroDePalier,
+  occupee: PlaceOccupee,
+): ParsedMedia {
+  const palier = numeroDePalier(cleDuPalier(chemin));
   const rang = rangLibre(palier, rangDansLePalier(identite), occupee);
   return {
     kind: "episode",
@@ -112,26 +129,4 @@ export function episodeDepuisLeWeb(chemin: CheminWeb, identite: IdentiteWeb, occ
       evidence: ["arborescence web", identite.publieeLe ? "date de publication" : "date inconnue"],
     },
   };
-}
-
-/**
- * Le nom d'un palier, tel qu'il s'affiche.
- *
- * « Saison 2024 » dirait faux pour une chaîne : ce palier est une année, et rien d'autre. Une vidéo
- * sans date connue est regroupée sous un libellé qui l'avoue.
- */
-export function libelleDuPalier(palier: number, langue: string): string {
-  if (palier > 0) return String(palier);
-  return langue === "fr-FR" ? "Sans date connue" : "Undated";
-}
-
-/**
- * Les dossiers traversés, tels que l'écran doit les rendre.
- *
- * Ils ne sont stockés nulle part : ils se relisent du chemin du fichier, qui est déjà en base. C'est
- * ce qui permet d'afficher une arborescence de profondeur quelconque alors que le catalogue, lui,
- * n'en connaît que trois niveaux.
- */
-export function cheminDAffichage(chemin: CheminWeb): string {
-  return chemin.dossiers.join(" / ");
 }
