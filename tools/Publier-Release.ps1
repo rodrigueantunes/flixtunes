@@ -85,11 +85,31 @@ $etiquette = "v$estampille"
 $section = [regex]::Match($journal, "(?ms)^##\s+$([regex]::Escape($estampille))\s.*?(?=^##\s+\d|\z)")
 if (-not $section.Success) { throw "Aucune section '## $estampille' dans CHANGELOG.md." }
 $lignes = $section.Value.Trim() -split "`r?`n"
-# Le titre de la section devient celui de la page GitHub : on ne le repete pas dans le corps, et l'on
-# retire l'estampille qu'il porte deja - sans quoi la page s'intitulerait 'FlixTunes 0.5.7.r26 -
-# 0.5.7.r26 - un ecran qui...', ce qui n'aide personne.
-$titre = $lignes[0] -replace '^##\s+', '' -replace "^$([regex]::Escape($estampille))\s*[-\u2014]\s*", ''
-$corps = (($lignes | Select-Object -Skip 1) -join "`n").Trim()
+
+# --- 3 bis. Deux textes, deux lecteurs ----------------------------------------------------------
+# Le journal des versions raconte le raisonnement, les mesures et les fausses pistes : c'est ce qui
+# le rend utile dans le depot, et hors sujet sur une page de telechargement. Quelqu'un qui installe
+# veut savoir ce qui change, techniquement, sans avoir a lire une enquete.
+#
+# Chaque entree peut donc porter un bloc `<!-- release -->` ... `<!-- /release -->` : c'est lui qui
+# part sur GitHub. A defaut, on publie la section entiere - mieux vaut un texte trop bavard qu'une
+# page vide -, et l'on previent pour que le bloc finisse par etre ecrit.
+$publiques = [regex]::Match($section.Value, '(?s)<!--\s*release\s*-->(.*?)<!--\s*/release\s*-->')
+# Le titre de la page suit une forme fixe : la version, puis le numero de revision en clair. Un
+# intitule stable se repere d'un coup d'oeil dans une liste de releases, la ou une phrase
+# differente a chaque fois oblige a lire pour situer. Ce qui change est dans la description :
+# c'est sa place, et elle a la longueur qu'il faut.
+#
+# Le e accentue de Revision est construit par son code de caractere : ce fichier reste en ASCII,
+# pour la raison donnee dans son en-tete.
+$numero = $Revision -replace '^r', ''
+$titre = "$Version R$([char]0xE9)vision $numero"
+if ($publiques.Success) {
+  $corps = $publiques.Groups[1].Value.Trim()
+} else {
+  Write-Warning "Pas de bloc <!-- release --> pour $estampille : la section entiere du journal est publiee."
+  $corps = (($lignes | Select-Object -Skip 1) -join "`n").Trim()
+}
 
 # Sans BOM : gh transmet le fichier tel quel, et un BOM apparaitrait comme un caractere parasite en
 # tete de la description publiee.
@@ -125,7 +145,7 @@ if ($distantes.Count -eq 0) {
 }
 
 $arguments = @("release", "create", $etiquette,
-  "--title", "FlixTunes $estampille - $titre",
+  "--title", $titre,
   "--notes-file", $notes,
   "--target", $commit)
 if ($Brouillon) { $arguments += "--draft" }

@@ -2,6 +2,28 @@
 
 ## 0.5.7.r26 — un écran qui ne savait pas dire « ça avance »
 
+<!-- release -->
+### Repérage des génériques
+
+- **L'état d'avancement expose l'épisode en cours dans la saison.** Les deux compteurs existants ne
+  peuvent pas refléter une seconde écoute : « épisodes écoutés » dérive de la colonne `ecoute_le`,
+  déjà renseignée pour ces épisodes, et « saisons traitées » n'avance qu'en fin de saison — soit un
+  quart d'heure pour une saison de vingt-deux épisodes. Le nouvel indicateur `episodeCourant`
+  (`fait` / `total`) distingue une passe qui progresse d'une passe arrêtée.
+- **La signature audio de la recherche rapide est bornée entre 12 s et 5 min**, comme le reste du
+  module de détection. Elle tire sa durée d'un repère en base ; un repère erroné conduisait à extraire
+  une fenêtre arbitrairement longue pour en faire un motif de recherche.
+
+### Publication des livraisons
+
+- **`tools/Publier-Release.ps1`** publie une livraison complète sur GitHub : client Android, APKG
+  ASUSTOR, `.msi` et `.deb` de bureau, archive des sources NAS, installateurs de serveur et fichier
+  d'empreintes SHA-256. La sélection se fait sur l'estampille de version, l'étiquette vise le commit
+  exact, et le script vérifie que ce commit est présent sur le dépôt distant avant tout téléversement.
+- L'authentification passe par GitHub CLI et reste locale : le script ne manipule aucun jeton.
+<!-- /release -->
+
+
 - **Les livraisons partent désormais sur GitHub**, `tools/Publier-Release.ps1`. **Tous** les fichiers
   d'une même estampille : client Android, APKG du NAS, `.msi` et `.deb` du bureau, archive des sources
   NAS, installateurs de serveur, empreintes. Rien n'est trié — ce qui a été construit ensemble
