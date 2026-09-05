@@ -201,6 +201,10 @@ const DELAI_OUVERTURE_MS = 25_000;
 const PERIODE_ETAT_MS = 250;
 
 export class Lecteur {
+  /** Vrai le temps d'un arrêt qu'on a demandé : ce qui suit n'est alors pas une panne. */
+  private arretDemande = false;
+  /** Le dernier départ inattendu de VLC, pour que l'interface puisse le dire au lieu de se figer. */
+  private derniereSortie: string | null = null;
   private processus: ChildProcess | null = null;
   private port = 0;
   private motDePasse = "";
@@ -317,6 +321,9 @@ export class Lecteur {
 
   /** Fin de la séance : VLC s'en va avec la fenêtre. */
   arreter(): void {
+    // On déclare l'intention avant de tuer : c'est ce qui distingue un départ voulu d'une panne, et
+    // sans quoi chaque fermeture propre serait signalée comme un incident.
+    this.arretDemande = true;
     if (this.horloge) { clearInterval(this.horloge); this.horloge = null; }
     this.processus?.kill();
     this.processus = null;
@@ -371,9 +378,29 @@ export class Lecteur {
     processus.stderr?.on("data", (morceau: Buffer) => {
       if (process.env.FLIXTUNES_VLC_VERBEUX === "1") console.log("[vlc]", String(morceau).trimEnd());
     });
-    processus.on("exit", () => {
+    /*
+     * **La mort de VLC ne se voyait pas.**
+     *
+     * On remettait `processus` à `null`, on arrêtait l'horloge, et c'était tout : personne n'était
+     * prévenu. L'image restait figée sur le dernier état publié et l'application paraissait bloquée,
+     * alors qu'elle allait très bien — c'est le lecteur qui était parti. Un plantage de décodeur, un
+     * fichier que VLC refuse, une mise à jour qui remplace le binaire sous nos pieds : trois causes
+     * réelles, aucun symptôme lisible.
+     *
+     * On distingue maintenant deux sorties. Celle **qu'on a demandée** — `arreter()` — est le cours
+     * normal et ne dit rien. Celle qui survient **pendant qu'on lisait** est une panne : elle est
+     * journalisée avec son code, et l'état publié repasse à l'arrêt pour que l'interface cesse
+     * d'afficher une lecture qui n'existe plus.
+     */
+    processus.on("exit", (code, signal) => {
+      const attendue = this.arretDemande;
       this.processus = null;
+      this.arretDemande = false;
       if (this.horloge) { clearInterval(this.horloge); this.horloge = null; }
+      if (attendue) return;
+      this.derniereSortie = `VLC s'est arrêté seul (code ${code ?? "?"}${signal ? `, signal ${signal}` : ""})`;
+      this.etat = { ...ETAT_INITIAL, erreur: this.derniereSortie };
+      this.publier(this.etat);
     });
     this.processus = processus;
     await this.attendreInterface();

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>FlixTunes — serveur injoignable</title>
+<!--
+  L'écran qui manquait.
+
+  Quand le serveur ne répondait pas, la fenêtre restait transparente et vide : ni message, ni bouton,
+  ni moyen d'en sortir — il n'y a ici ni barre d'adresse ni retour arrière. Lancer FlixTunes avant le
+  NAS suffisait à obtenir une application qui ne fait plus rien.
+
+  Cet écran dit trois choses, et pas une de plus : **quelle** adresse ne répond pas, qu'on **réessaie
+  tout seul**, et **où lire le journal** si l'attente ne donne rien. Le reste — diagnostiquer le
+  réseau — n'est pas son travail.
+
+  Les jetons de style sont recopiés de `serveur.html`, pour la même raison qu'elle les recopie : on ne
+  peut pas charger la feuille de style d'un serveur qui ne répond pas.
+-->
+<style>
+  :root { --encre: #080b12; --texte: #f7f9ff; --muet: #9ba5b9; --bleu: #2e6bff; --ligne: rgba(255,255,255,.1); }
+  html, body { margin: 0; height: 100%; }
+  body { display: grid; place-items: center; background: var(--encre); color: var(--texte);
+    font-family: "Segoe UI", system-ui, sans-serif; -webkit-app-region: drag; }
+  main { width: min(520px, 84vw); -webkit-app-region: no-drag; text-align: left; }
+  .enseigne { display: flex; align-items: center; margin-bottom: .55rem;
+    font: 800 2.3rem "Manrope", "Segoe UI", system-ui, sans-serif; letter-spacing: -.06em; color: #fff; }
+  .enseigne img { width: 62px; height: 62px; object-fit: contain; margin-right: .5rem;
+    filter: drop-shadow(0 10px 26px #1689ff55); }
+  .enseigne b { color: #79a8ff; font-weight: 800; }
+  h1 { font-size: 1.15rem; font-weight: 650; margin: 1.4rem 0 .4rem; }
+  p { color: var(--muet); line-height: 1.55; margin: .35rem 0; }
+  .adresse { color: var(--texte); font-family: "Cascadia Mono", Consolas, monospace; word-break: break-all; }
+  /* Le point qui bat dit que quelque chose se passe encore : un écran figé se confond avec un blocage. */
+  .attente { display: flex; align-items: center; gap: .55rem; margin-top: 1.1rem; color: var(--muet); }
+  .pouls { width: 9px; height: 9px; border-radius: 50%; background: var(--bleu); animation: battre 1.6s ease-in-out infinite; }
+  @keyframes battre { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+  .boutons { display: flex; gap: .6rem; margin-top: 1.5rem; }
+  button { -webkit-app-region: no-drag; font: 600 .92rem "Segoe UI", system-ui, sans-serif;
+    padding: .62rem 1.1rem; border-radius: .6rem; border: 1px solid var(--ligne);
+    background: rgba(255,255,255,.06); color: var(--texte); cursor: pointer; }
+  button.principal { background: var(--bleu); border-color: transparent; }
+  button:hover { filter: brightness(1.14); }
+  .journal { margin-top: 1.6rem; padding-top: 1rem; border-top: 1px solid var(--ligne); font-size: .83rem; }
+  .journal code { color: var(--muet); font-family: "Cascadia Mono", Consolas, monospace; word-break: break-all; }
+</style>
+</head>
+<body>
+<main>
+  <div class="enseigne"><img src="marque/flixtunes-logo.png" alt="">Flix<b>Tunes</b></div>
+
+  <h1>Le serveur ne répond pas</h1>
+  <p>FlixTunes n'a pas réussi à joindre <span class="adresse" id="adresse">le serveur enregistré</span>.</p>
+  <p>C'est le plus souvent un NAS qui n'a pas fini de démarrer, ou un réseau qui revient.</p>
+
+  <div class="attente"><span class="pouls"></span><span>Nouvel essai automatique toutes les cinq secondes…</span></div>
+
+  <div class="boutons">
+    <button class="principal" id="reessayer" type="button">Réessayer maintenant</button>
+    <button id="changer" type="button">Changer d'adresse</button>
+  </div>
+
+  <div class="journal" id="bloc-journal" hidden>
+    <p>Si cela dure, le journal dit ce qui s'est passé :</p>
+    <code id="chemin-journal"></code>
+  </div>
+</main>
+<script>
+  const parametres = new URLSearchParams(location.search);
+  const adresse = parametres.get("adresse");
+  if (adresse) document.getElementById("adresse").textContent = adresse;
+  const chemin = parametres.get("journal");
+  if (chemin) {
+    document.getElementById("chemin-journal").textContent = chemin;
+    document.getElementById("bloc-journal").hidden = false;
+  }
+  // Le pont n'est pas garanti : cette page peut s'afficher avant que le préchargement n'ait exposé
+  // quoi que ce soit. On dégrade sans casser plutôt que de lever dans un écran d'erreur.
+  const pont = window.flixtunesBureau;
+  document.getElementById("reessayer").addEventListener("click", () => {
+    if (adresse) location.replace(adresse);
+  });
+  document.getElementById("changer").addEventListener("click", () => {
+    if (pont && typeof pont.oublierServeur === "function") void pont.oublierServeur();
+  });
+</script>
+</body>
+</html>

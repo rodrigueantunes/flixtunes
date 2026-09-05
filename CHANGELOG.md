@@ -1,10 +1,57 @@
 # Journal des versions
 
+## 0.5.7.r17 — le client Windows cesse de tomber en silence
+
+Cinq correctifs issus d'un audit ciblé du client de bureau. Le fil commun : **une panne ne laissait
+aucune trace**, ce qui rendait « améliorer la fiabilité » impossible à mesurer.
+
+- **Il n'y avait aucun journal.** `console.log` n'existait que sous `FLIXTUNES_VLC_VERBEUX=1`, et la
+  sortie standard d'une application Electron empaquetée sous Windows ne va nulle part — ni console,
+  ni fichier. Quand l'application ne marchait pas, il n'y avait **rien à lire** : chaque incident se
+  diagnostiquait par déduction. `journal.ts` écrit désormais dans `userData`, horodaté, borné à un
+  demi-mégaoctet avec une génération de rechange, et **n'échoue jamais bruyamment** — un journal qui
+  lève ferait tomber ce qu'il devait expliquer.
+- **Le serveur injoignable donnait une fenêtre vide, définitivement.** Le chargement partait sans
+  filet — `void loadURL(...)`, sans `.catch`, sans `did-fail-load`. NAS pas encore démarré, adresse
+  changée, redémarrage en cours de séance : la fenêtre restait transparente et vide, et il n'y a ici
+  ni barre d'adresse ni retour arrière pour s'en sortir. Lancer FlixTunes avant le NAS suffisait.
+
+  Un écran d'attente le dit maintenant, **réessaie tout seul toutes les cinq secondes**, et laisse
+  changer d'adresse. Les deux chemins d'échec sont couverts : le rejet de `loadURL` pour un refus
+  immédiat, `did-fail-load` pour un serveur qui accepte puis coupe — n'en couvrir qu'un aurait laissé
+  la moitié des pannes sans écran.
+- **Deux chemins arrêtaient le processus principal sans un mot.** `setInterval(() => void promesse())`
+  n'attrape rien, et Node escalade un rejet non traité en arrêt du programme : l'application
+  disparaissait de l'écran, sans fenêtre d'erreur et sans trace. `unhandledRejection`,
+  `uncaughtException` et `render-process-gone` sont désormais journalisés, et l'on continue quand
+  c'est possible — une application ouverte avec une fonction en moins vaut mieux qu'une qui s'évapore.
+- **La mort de VLC ne se voyait pas.** On remettait le processus à `null` et on arrêtait l'horloge ;
+  personne n'était prévenu. L'image restait figée sur son dernier état et l'application paraissait
+  bloquée, alors que c'était le lecteur qui était parti — plantage de décodeur, fichier refusé, binaire
+  remplacé sous nos pieds. On distingue maintenant l'arrêt **demandé**, qui ne dit rien, de la sortie
+  **subie**, journalisée avec son code et rapportée à l'interface par le champ `erreur` qui existait
+  déjà.
+- **Rien n'empêchait deux instances**, donc deux VLC et deux écritures concurrentes sur
+  `reglages.json`. Un verrou d'instance unique ramène la fenêtre existante au premier plan ; le retour
+  anticipé dans `whenReady` évite qu'une seconde instance dessine ses fenêtres le temps de mourir,
+  `app.quit()` avant « prêt » n'en donnant pas la garantie.
+- **L'écriture des réglages est atomique** — fichier voisin puis renommage. Une coupure pendant
+  l'écriture laissait un JSON tronqué : la lecture le tolérait, mais l'adresse du serveur était perdue
+  et il fallait la ressaisir sans comprendre pourquoi. Le repli sur l'écriture directe est conservé
+  pour le cas où Windows refuse le renommage, un antivirus tenant parfois le fichier ouvert.
+- 20 tests de bureau, 893 tests serveur, 271 tests Web.
+
+**Ce qui n'est pas vérifié.** Ces cinq correctifs portent sur des chemins d'échec que je n'ai pas
+provoqués : je n'ai pas coupé le NAS en cours de séance, ni tué VLC pendant une lecture. La
+vérification est ici celle du code et des types, pas celle du terrain — et c'est précisément le
+journal, désormais présent, qui permettra de trancher au prochain incident.
+
 ## 0.5.7.r16 — la fenêtre a toujours le dernier mot
 
 - **Le `.deb` était refusé par `dpkg` pour un retour chariot.** Le paquet contient un premier membre
   `debian-binary` dont la politique Debian exige qu'il vaille exactement `2.0` **suivi d'un saut de
-  ligne**. Le bundler, exécuté sous Windows, y écrivait `2.0
+  ligne**. Le bundler, exécuté sous Windows, y écrivait `2.0
+
 `. `dpkg-deb` vérifie cet octet
   avant de regarder quoi que ce soit d'autre : le refus a donc lieu au tout premier membre de
   l'archive, ce qui explique qu'aucun message ne parle jamais de FlixTunes.

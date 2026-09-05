@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, Menu, shell } from "electron";
 import path from "node:path";
+import { cheminDuJournal, journal, ouvrirLeJournal } from "./journal.js";
 import { ecrireReglages, lireReglages, memeServeur, normaliserAdresse } from "./reglages.js";
 import { ETAT_INITIAL, Lecteur, trouverVlc } from "./vlc.js";
 
@@ -131,6 +132,26 @@ function ouvrirFenetres(): void {
    * écran, et seulement s'il y est — sans quoi elle fermerait des panneaux dont ce n'est pas le
    * rôle de la coque de s'occuper.
    */
+  /*
+   * `loadURL` rejette quand la connexion échoue d'emblée ; `did-fail-load` rattrape le reste — un
+   * serveur qui accepte puis coupe, une page qui n'existe plus, un certificat refusé. Les deux
+   * chemins existent réellement, et n'en couvrir qu'un laisserait la moitié des pannes sans écran.
+   *
+   * On ignore les chargements de sous-cadres et les annulations volontaires (`-3`), qui sont le
+   * cours normal d'une navigation et non des pannes.
+   */
+  fenetreInterface.webContents.on("did-fail-load", (_evenement, code, description, urlEchouee, principal) => {
+    if (!principal || code === -3) return;
+    const serveur = lireReglages(app.getPath("userData")).serveur;
+    if (!serveur || !urlEchouee.startsWith(serveur)) return;
+    journal.erreur(`Chargement interrompu (${code} ${description})`, urlEchouee);
+    montrerInjoignable(serveur);
+  });
+
+  fenetreInterface.webContents.on("render-process-gone", (_evenement, details) => {
+    journal.erreur("Le rendu de l'interface s'est arrêté", details);
+  });
+
   fenetreInterface.webContents.on("before-input-event", (evenement, entree) => {
     if (entree.type !== "keyDown") return;
     if (entree.key === "F11") { evenement.preventDefault(); basculerPleinEcran(); return; }
@@ -163,16 +184,52 @@ function ouvrirFenetres(): void {
   });
 }
 
-/** Le client Web s'il y a un serveur connu, sinon l'écran qui demande son adresse. */
+/**
+ * Le client Web s'il y a un serveur connu, sinon l'écran qui demande son adresse.
+ *
+ * **Et un écran d'attente quand le serveur ne répond pas.** Le chargement était lancé sans filet :
+ * `void loadURL(...)`, sans `.catch`, sans `did-fail-load`. Si le NAS n'était pas encore démarré, si
+ * son adresse avait changé, ou s'il redémarrait pendant la séance, la fenêtre restait **transparente
+ * et vide** — et il n'y a ici ni barre d'adresse ni bouton de retour pour s'en sortir. Lancer
+ * FlixTunes avant le NAS suffisait à obtenir une application qui ne fait plus rien.
+ */
 function afficher(): void {
   const reglages = lireReglages(app.getPath("userData"));
   if (!fenetreInterface) return;
   if (reglages.serveur) {
-    void fenetreInterface.loadURL(reglages.serveur);
+    journal.info("Chargement du client Web", reglages.serveur);
+    fenetreInterface.loadURL(reglages.serveur).catch((erreur: unknown) => {
+      journal.erreur("Le client Web n'a pas pu être chargé", erreur);
+      montrerInjoignable(reglages.serveur ?? "");
+    });
   } else {
     void fenetreInterface.loadFile(path.join(PAGES, "serveur.html"));
   }
   suivre();
+}
+
+/**
+ * L'écran d'attente, et la reprise qui l'accompagne.
+ *
+ * Un serveur injoignable n'est presque jamais un serveur mort : c'est un NAS qui démarre encore, un
+ * réseau qui revient, une veille dont on sort. La bonne réponse n'est donc pas un message d'erreur
+ * définitif mais **une attente qui réessaie**, et qui laisse la main pour changer d'adresse si
+ * l'attente ne donne rien.
+ */
+let repriseServeur: NodeJS.Timeout | null = null;
+
+function montrerInjoignable(adresse: string): void {
+  if (!fenetreInterface || fenetreInterface.isDestroyed()) return;
+  const parametres = new URLSearchParams({ adresse, journal: cheminDuJournal() ?? "" });
+  void fenetreInterface.loadFile(path.join(PAGES, "injoignable.html"), { search: parametres.toString() });
+  suivre();
+  if (repriseServeur) clearTimeout(repriseServeur);
+  // Cinq secondes : assez pour qu'un NAS finisse de démarrer sans qu'on l'interroge en rafale.
+  repriseServeur = setTimeout(() => {
+    repriseServeur = null;
+    const serveur = lireReglages(app.getPath("userData")).serveur;
+    if (serveur) afficher();
+  }, 5_000);
 }
 
 /*
@@ -184,7 +241,46 @@ function afficher(): void {
  */
 app.setName("FlixTunes");
 
+/**
+ * **Une seule instance, et les suivantes réveillent celle qui existe.**
+ *
+ * Rien ne l'empêchait. Deux lancements donnaient deux fenêtres, deux VLC dessinant chacun dans la
+ * sienne, et surtout deux écritures concurrentes sur `reglages.json` — dont l'une pouvait effacer
+ * l'autre. Un double-clic malheureux suffisait, et le symptôme — « l'application se comporte
+ * bizarrement » — ne désignait jamais sa cause.
+ */
+const instanceUnique = app.requestSingleInstanceLock();
+if (!instanceUnique) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (!fenetreVideo || fenetreVideo.isDestroyed()) return;
+    if (fenetreVideo.isMinimized()) fenetreVideo.restore();
+    fenetreVideo.focus();
+  });
+}
+
+/**
+ * Ce qui échappe à tout le reste.
+ *
+ * Deux chemins pouvaient arrêter le processus principal **sans un mot** : un `setInterval` qui
+ * appelle une promesse avec `void` — lequel n'attrape rien —, et les chargements de page lancés de
+ * la même façon. Node escalade un rejet non traité en arrêt du programme : l'application
+ * disparaissait de l'écran, sans fenêtre d'erreur et sans trace nulle part.
+ *
+ * On ne prétend pas réparer ce qu'on n'a pas prévu — on l'écrit, et on continue de vivre quand c'est
+ * possible. Une application qui reste ouverte avec une fonction en moins vaut mieux qu'une qui
+ * s'évapore.
+ */
+process.on("unhandledRejection", (raison) => journal.erreur("Promesse rejetée sans traitement", raison));
+process.on("uncaughtException", (erreur) => journal.erreur("Exception non rattrapée", erreur));
+
 app.whenReady().then(() => {
+  // `app.quit()` demandé avant « prêt » ne garantit pas que cet événement ne survienne pas : sans ce
+  // retour, une seconde instance dessinerait ses fenêtres le temps de mourir.
+  if (!instanceUnique) return;
+  ouvrirLeJournal(app.getPath("userData"));
+  journal.info(`FlixTunes démarre — Electron ${process.versions.electron}, ${process.platform}`);
   // Aucun menu : le client Web porte sa propre navigation, et un menu « Fichier / Édition » n'aurait
   // aucun sens devant une médiathèque.
   Menu.setApplicationMenu(null);
@@ -274,6 +370,7 @@ app.on("web-contents-created", (_evenement, contenu) => {
 });
 
 app.on("window-all-closed", () => {
+  journal.info("Dernière fenêtre fermée : arrêt");
   lecteur.arreter();
   app.quit();
 });

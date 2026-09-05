@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 /**
@@ -31,7 +31,32 @@ export function lireReglages(dossierDonnees: string): ReglagesBureau {
 
 export function ecrireReglages(dossierDonnees: string, reglages: ReglagesBureau): void {
   mkdirSync(dossierDonnees, { recursive: true });
-  writeFileSync(path.join(dossierDonnees, "reglages.json"), `${JSON.stringify(reglages, null, 2)}\n`, "utf8");
+  /*
+   * **On écrit à côté, puis on renomme.**
+   *
+   * L'écriture allait droit sur le fichier définitif. Une coupure de courant, une fermeture de
+   * session ou un arrêt brutal pendant ces quelques millisecondes laissait un JSON tronqué. La
+   * lecture le tolère — elle ne bloque pas le démarrage —, mais l'adresse du serveur était
+   * perdue, et il fallait la ressaisir sans jamais comprendre pourquoi.
+   *
+   * Un renommage sur le même volume est atomique sur les trois systèmes : à tout instant le
+   * fichier est soit l'ancien complet, soit le nouveau complet, jamais un mélange des deux.
+   */
+  const contenu = `${JSON.stringify(reglages, null, 2)}\n`;
+  const definitif = path.join(dossierDonnees, "reglages.json");
+  const provisoire = path.join(dossierDonnees, `reglages.json.${process.pid}.tmp`);
+  writeFileSync(provisoire, contenu, "utf8");
+  try {
+    renameSync(provisoire, definitif);
+  } catch {
+    /*
+     * Windows refuse parfois de renommer sur un fichier qu'un antivirus tient ouvert. Perdre le
+     * réglage pour cela serait absurde : on retombe sur l'écriture directe, moins sûre mais pas
+     * pire que ce qui existait avant.
+     */
+    writeFileSync(definitif, contenu, "utf8");
+    try { unlinkSync(provisoire); } catch { /* déjà parti */ }
+  }
 }
 
 /**
