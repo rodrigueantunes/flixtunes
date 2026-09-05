@@ -55,13 +55,15 @@
         "deb",
         "AppImage"
       ],
-      "icon": "ressources-paquet/icon.png",
+      "icon": "ressources-paquet/icones",
       "category": "AudioVideo",
       "description": "Client de bureau FlixTunes : le client Web, et la lecture par VLC.",
       "synopsis": "FlixTunes sur votre ordinateur",
       "executableName": "flixtunes"
     },
     "deb": {
+      "afterInstall": "ressources-paquet/apres-installation.sh",
+      "afterRemove": "ressources-paquet/apres-suppression.sh",
       "depends": [
         "libarchive13t64",
         "libaribb24-0t64",

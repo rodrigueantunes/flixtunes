@@ -1,5 +1,52 @@
 # Journal des versions
 
+## 0.5.7.r20 — l'application quittait au lancement, et n'avait pas d'icône
+
+Le `.deb` s'installe depuis la r19. Restaient deux défauts que seule une installation réelle pouvait
+révéler, tous deux relevés sur Ubuntu 26.04.
+
+- **L'application quittait aussitôt lancée, signal 5 — SIGTRAP.** Ce n'est pas FlixTunes qui tombe
+  mais le **bac à sable de Chromium**, qu'Electron embarque. Le script d'installation choisit entre
+  deux mécanismes :
+
+  ```bash
+  if ! { [[ -L /proc/self/ns/user ]] && unshare --user true; }; then
+      chmod 4755 chrome-sandbox   # pas d'espaces de noms : bac à sable SUID
+  else
+      chmod 0755 chrome-sandbox   # espaces de noms disponibles
+  fi
+  ```
+
+  Le test est fait par **root pendant l'installation**, et il réussit — d'où la seconde branche. Mais
+  à l'exécution l'utilisateur n'est pas root, et Ubuntu 24.04 a introduit
+  `kernel.apparmor_restrict_unprivileged_userns`, qui interdit les espaces de noms non privilégiés
+  aux binaires non confinés. `/opt` n'étant couvert par aucun profil, Chromium ne peut créer **ni
+  l'un ni l'autre** de ses bacs à sable et s'arrête net. Le test d'electron-builder mesure donc la
+  mauvaise chose : la capacité de root à l'installation, au lieu de celle de l'utilisateur à
+  l'exécution.
+
+  Le paquet pose maintenant le profil AppArmor que Ubuntu recommande aux paquets tiers — une seule
+  permission, `userns`, et `flags=(unconfined)` parce qu'il sert à **lever** une interdiction, pas à
+  en ajouter. Il est écrit par le script d'installation plutôt qu'embarqué : le paquet est construit
+  sous Windows, où l'on ne sait garantir ni les droits ni les fins de ligne d'un fichier destiné à
+  `/etc`. Si AppArmor est absent, on repose le bit SUID — l'autre mécanisme, celui qu'electron-builder
+  aurait choisi si son test avait dit vrai. Et le profil est retiré à la purge, jamais à une simple
+  désinstallation qui précède souvent une réinstallation.
+- **L'icône n'apparaissait jamais.** Elle était installée dans
+  `/usr/share/icons/hicolor/**1254x1254**/apps/`, taille reprise du fichier source. Or le thème
+  `hicolor` ne définit que 16, 22, 24, 32, 48, 64, 128, 256, 512 et `scalable` : un dossier
+  `1254x1254` n'est **jamais consulté**, et l'application gardait l'engrenage générique.
+
+  Plutôt que de renommer un fichier de 1254 px en « 512x512 » — ce qui aurait marché en mentant —,
+  le paquet emporte le logo **réellement en 512×512** qui sert déjà au client Web. Le cache d'icônes
+  est rafraîchi à l'installation, sans quoi le fichier serait en place mais ignoré jusqu'à la
+  prochaine session.
+
+**Ce que je ne peux pas vérifier d'ici.** Ni le lancement, ni l'affichage de l'icône : je n'ai pas de
+machine Ubuntu. Le diagnostic du SIGTRAP repose sur la concordance de quatre faits — le signal, le
+chemin `/opt`, la version d'Ubuntu et l'étiquette `third-party-packages` du rapport — et sur le
+mécanisme documenté par Ubuntu, pas sur une reproduction.
+
 ## 0.5.7.r19 — « Reprendre » reprenait au premier épisode, et le paquet ne s'installait pas
 
 - **Le `.deb` ne s'installait pas, et le message n'accusait pas le coupable.** `dpkg` rendait :
