@@ -6,6 +6,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.sp
+import tv.flixtunes.app.ui.OffreDuServeur
 import tv.flixtunes.app.ui.sectionsVisibles
 
 /**
@@ -21,12 +22,12 @@ import tv.flixtunes.app.ui.sectionsVisibles
 @Composable
 fun NavigationTactile(
     sectionCourante: String,
-    directDisponible: Boolean,
+    offre: OffreDuServeur,
     modifier: Modifier = Modifier,
     choisir: (String) -> Unit,
 ) {
     NavigationBar(modifier) {
-        for (section in sectionsVisibles(directDisponible)) {
+        for (section in sectionsVisibles(offre)) {
             NavigationBarItem(
                 selected = section.cle == sectionCourante,
                 onClick = { choisir(section.cle) },

@@ -34,6 +34,25 @@ internal fun Profile.playbackPreferencesJson(): JSONObject = JSONObject()
     .put("autoplayNext", autoplayNext)
     .put("autoplayLimit", autoplayLimit)
 
+/**
+ * Une date `AAAA-MM-JJ` rendue lisible, ou `null` si elle n'en est pas une.
+ *
+ * Volontairement sans dépendance de formatage : trois nombres et une table de mois se lisent d'un
+ * coup d'œil, là où un formateur de plateforme impose une locale, un fuseau et un piège — celui de
+ * décaler la veille une date qui n'a pas d'heure.
+ */
+private val MOIS = listOf(
+    "janvier", "février", "mars", "avril", "mai", "juin",
+    "juillet", "août", "septembre", "octobre", "novembre", "décembre",
+)
+
+internal fun dateLisible(valeur: String?): String? {
+    val trouve = Regex("""^(\d{4})-(\d{2})-(\d{2})""").find(valeur ?: return null) ?: return null
+    val (annee, mois, jour) = trouve.destructured
+    val nom = MOIS.getOrNull(mois.toInt() - 1) ?: return null
+    return "${jour.toInt()} $nom $annee"
+}
+
 @Immutable
 data class Media(
     val id: String,
@@ -59,6 +78,12 @@ data class Media(
     val progressDurationSeconds: Double? = null,
     val ageRating: Int? = null,
     val ratingLabel: String? = null,
+    /**
+     * Date de publication, `AAAA-MM-JJ`, pour une vidéo de plateforme.
+     *
+     * C'est à la fois son critère de tri et ce qui s'affiche sous son titre. Absente ailleurs.
+     */
+    val airDate: String? = null,
 ) {
     // Ces libellés sont lus à chaque recomposition d'une jaquette pendant le défilement. Les calculer
     // une fois avec le modèle évite de recréer des chaînes pour chaque image rendue, sans changer l'API.
@@ -66,6 +91,9 @@ data class Media(
     val secondaryText: String = when (kind) {
         "episode" -> "S${seasonNumber ?: 0} · E${episodeNumber ?: 0}"
         "show" -> "${seasonCount ?: 0} saison${if ((seasonCount ?: 0) > 1) "s" else ""}"
+        // Une vidéo de plateforme n'a ni saison ni numéro : elle se présente par sa date. Faute de
+        // date connue, elle ne s'invente pas — le mot « Vidéo » dit ce qu'on sait, c'est-à-dire peu.
+        "video" -> dateLisible(airDate) ?: "Vidéo"
         else -> year?.toString() ?: "Film"
     }
 }
@@ -118,7 +146,17 @@ data class Season(
     /** Le résumé de la saison, affiché sous la jaquette comme dans le client Web. */
     val overview: String? = null,
     val completed: Boolean = false,
-)
+) {
+    /**
+     * Ce palier est-il un dossier de chaîne plutôt qu'une saison ?
+     *
+     * Une chaîne web est stockée comme une série — c'est ce qui lui donne la fiche, la reprise et
+     * l'enchaînement sans code neuf. Rien dans la forme ne la distingue donc, et la fiche annonçait
+     * « Afficher la saison 3 » là où le palier s'appelle « Documentaires », avec « 5 épisodes » pour
+     * cinq vidéos. Le contenu tranche : un palier qui ne contient que des vidéos est un dossier.
+     */
+    val estDossier: Boolean = episodes.isNotEmpty() && episodes.all { it.kind == "video" }
+}
 data class SourceDetails(val kind: String, val name: String)
 
 data class PersonCredit(
@@ -197,6 +235,7 @@ fun parseMedia(json: JSONObject) = Media(
     progressPositionSeconds = json.optDouble("progressPositionSeconds").takeIf { json.has("progressPositionSeconds") && it.isFinite() && it >= 0.0 },
     progressDurationSeconds = json.optDouble("progressDurationSeconds").takeIf { json.has("progressDurationSeconds") && it.isFinite() && it > 0.0 },
     ageRating = json.intOrNull("ageRating"), ratingLabel = json.stringOrNull("ratingLabel"),
+    airDate = json.stringOrNull("airDate"),
 )
 
 private fun mediaList(json: JSONObject, name: String) = json.optJSONArray(name)?.objects()?.map(::parseMedia).orEmpty()

@@ -118,6 +118,10 @@ data class MainState(
     val query: String = "",
     val movies: CatalogSection = CatalogSection(),
     val shows: CatalogSection = CatalogSection(),
+    /** Les chaînes du rayon Web. Même forme que les deux autres : ce sont des fiches de catalogue. */
+    val web: CatalogSection = CatalogSection(),
+    /** Le serveur offre-t-il un rayon Web ? Un dossier déclaré suffit. */
+    val webDisponible: Boolean = false,
     /**
      * La télévision en direct, ou son absence.
      *
@@ -653,7 +657,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** Relance uniquement la surface visible après une coupure, sans effacer ce qui est déjà affiché. */
     fun retry(section: String) {
         when (section) {
-            "movies", "shows" -> loadCatalog(section, reset = true)
+            "movies", "shows", "web" -> loadCatalog(section, reset = true)
             else -> loadHome(silent = true)
         }
     }
@@ -697,7 +701,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Saute à une initiale sans charger toutes les pages qui la précèdent. */
     fun setCatalogLetter(kind: String, letter: String?) {
-        val section = if (kind == "movies") state.movies else state.shows
+        val section = sectionDe(kind)
         val catalogueCompletEnMemoire = estTelevision && section.loaded && section.offset == 0
             && section.items.size >= section.total && section.sort == "title" && section.filter == "all"
             && section.query.isBlank() && section.genres.isEmpty()
@@ -726,7 +730,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun attendreCatalogueDisponible(kind: String) {
-        while ((if (kind == "movies") state.movies else state.shows).loading) delay(25)
+        while ((sectionDe(kind)).loading) delay(25)
     }
 
     /**
@@ -743,6 +747,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * est oui — trois requêtes de plus au démarrage pour une fonction éteinte n'auraient aucun sens.
      */
     private suspend fun chargerDirect(api: FlixTunesApi, profileId: String) {
+        state = state.copy(webDisponible = api.etatWeb(profileId))
         val etat = runCatching { api.etatDirect(profileId) }.getOrNull()
         if (etat?.disponible != true) { state = state.copy(direct = SectionDirect(disponible = false)); return }
         /*
@@ -884,7 +889,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun loadCatalog(kind: String, reset: Boolean = false) = viewModelScope.launch {
         val currentApi = repository.api ?: return@launch
         val profile = state.profile ?: return@launch
-        val section = if (kind == "movies") state.movies else state.shows
+        val section = sectionDe(kind)
         if (section.loading) return@launch
         if (!reset && section.loaded && !section.hasMore) return@launch
         val offset = if (reset) 0 else section.offset + section.items.size
@@ -934,7 +939,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun loadPreviousCatalog(kind: String) = viewModelScope.launch {
         val currentApi = repository.api ?: return@launch
         val profile = state.profile ?: return@launch
-        val section = if (kind == "movies") state.movies else state.shows
+        val section = sectionDe(kind)
         if (section.loading || !section.hasPrevious) return@launch
         val pageLimit = section.offset.coerceAtMost(taillePageCatalogue)
         val pageOffset = section.offset - pageLimit
@@ -969,9 +974,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** L'ancre est une commande ponctuelle : la consommer empêche qu'un retour de fiche la rejoue. */
     fun consumeCatalogAnchor(kind: String) = update(kind) { it.copy(anchor = null) }
 
+    /**
+     * La section que désigne une clé de rayon.
+     *
+     * Elle était lue par un `if` recopié à quatre endroits. Ajouter un rayon obligeait à les retrouver
+     * tous, et l'oubli d'un seul n'aurait rien signalé : la page Web se serait simplement remplie
+     * avec les séries.
+     */
+    private fun sectionDe(kind: String): CatalogSection = when (kind) {
+        "movies" -> state.movies
+        "web" -> state.web
+        else -> state.shows
+    }
+
     private fun update(kind: String, transform: (CatalogSection) -> CatalogSection) {
-        state = if (kind == "movies") state.copy(movies = transform(state.movies))
-        else state.copy(shows = transform(state.shows))
+        state = when (kind) {
+            "movies" -> state.copy(movies = transform(state.movies))
+            "web" -> state.copy(web = transform(state.web))
+            else -> state.copy(shows = transform(state.shows))
+        }
     }
 
     fun image(path: String?) = repository.api?.absolute(path)

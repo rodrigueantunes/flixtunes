@@ -79,6 +79,7 @@ import tv.flixtunes.app.ui.MemoireTv
     }
     val filmsScroll = rememberLazyGridState(cacheWindow = fenetreGrille)
     val seriesScroll = rememberLazyGridState(cacheWindow = fenetreGrille)
+    val webScroll = rememberLazyGridState(cacheWindow = fenetreGrille)
     val rechercheScroll = rememberLazyGridState(cacheWindow = fenetreGrille)
     val directScroll = rememberLazyGridState(cacheWindow = fenetreGrille)
     /**
@@ -123,7 +124,7 @@ import tv.flixtunes.app.ui.MemoireTv
                 { menuMedia = it })
             else -> EcranAccueil(
                 state, model, play, section,
-                accueilScroll, historiqueScroll, filmsScroll, seriesScroll, rechercheScroll, directScroll,
+                accueilScroll, historiqueScroll, filmsScroll, seriesScroll, rechercheScroll, webScroll, directScroll,
                 jouerChaine = jouerChaine,
                 ouvrirMedia = { media -> focusARestaurer = media.catalogId ?: media.id; model.open(media) },
                 focusARestaurer = focusARestaurer, focusRestaure = { focusARestaurer = null },

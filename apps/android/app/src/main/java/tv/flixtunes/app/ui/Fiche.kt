@@ -79,7 +79,8 @@ fun CarteSaison(
             .cliquableAuFocus(
                 arrondi = RayonPanneau.value.toInt(),
                 selectionne = active,
-                onClickLabel = "Afficher la saison ${saison.number}",
+                onClickLabel = if (saison.estDossier) "Ouvrir le dossier ${saison.title}"
+                else "Afficher la saison ${saison.number}",
                 onClick = onClick,
             ),
     ) {
@@ -93,7 +94,8 @@ fun CarteSaison(
         ) {
             if (jaquette.isNullOrBlank()) {
                 Text(
-                    "${saison.number}",
+                    // Un dossier n'a pas de numéro : il porte son nom, et c'est lui qu'on cherche.
+                    if (saison.estDossier) saison.title.take(2).uppercase() else "${saison.number}",
                     color = Color.White.copy(alpha = .15f),
                     fontSize = 58.sp,
                     fontFamily = PoliceTitre,
@@ -110,7 +112,8 @@ fun CarteSaison(
                     .background(Brush.verticalGradient(0.55f to Color.Transparent, 1f to Encre.copy(alpha = .85f))),
             )
             Text(
-                "${saison.episodes.size} épisode${if (saison.episodes.size > 1) "s" else ""}",
+                if (saison.estDossier) "${saison.episodes.size} vidéo${if (saison.episodes.size > 1) "s" else ""}"
+                else "${saison.episodes.size} épisode${if (saison.episodes.size > 1) "s" else ""}",
                 Modifier
                     .align(Alignment.BottomEnd)
                     .padding(9.dp)
@@ -130,7 +133,9 @@ fun CarteSaison(
             fontWeight = FontWeight.Bold,
         )
         Text(
-            saison.overview ?: "Voir les épisodes de la saison ${saison.number}",
+            saison.overview
+                ?: if (saison.estDossier) "Voir les vidéos de ce dossier"
+                else "Voir les épisodes de la saison ${saison.number}",
             Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp).heightIn(min = 28.dp),
             color = Muet,
             fontSize = 11.sp,

@@ -61,6 +61,7 @@ import tv.flixtunes.app.ui.Erreur
 import tv.flixtunes.app.ui.FormatImageTv
 import tv.flixtunes.app.ui.ImageOptimiseeTv
 import tv.flixtunes.app.ui.LocalGabarit
+import tv.flixtunes.app.ui.OffreDuServeur
 import tv.flixtunes.app.ui.MarqueFlixTunes
 import tv.flixtunes.app.ui.Muet
 import tv.flixtunes.app.ui.Panneau
@@ -86,6 +87,7 @@ import tv.flixtunes.app.ui.tv.NavigationTelevision
     filmsScroll: LazyGridState,
     seriesScroll: LazyGridState,
     rechercheScroll: LazyGridState,
+    webScroll: LazyGridState,
     directScroll: LazyGridState,
     ouvrirMedia: (Media) -> Unit,
     /** Ouvrir une chaîne en direct. Distinct de `play` : une chaîne n'est pas un média du catalogue. */
@@ -97,6 +99,9 @@ import tv.flixtunes.app.ui.tv.NavigationTelevision
     changerSection: (String) -> Unit,
 ) {
     val gabarit = LocalGabarit.current
+    // Ce que ce serveur offre, lu une fois et nomme : deux booleens positionnels dans une barre
+    // de navigation s'inversent tot ou tard, et l'inversion ne se voit qu'a l'ecran.
+    val offreDuServeur = OffreDuServeur(direct = state.direct?.disponible == true, web = state.webDisponible)
     val home = state.home
     val edge = gabarit.margeBord.dp
     val bottomInset = gabarit.margeBasse.dp
@@ -109,6 +114,7 @@ import tv.flixtunes.app.ui.tv.NavigationTelevision
     // la redemander à chaque recomposition, et de repartir de zéro en revenant sur l'onglet.
     LaunchedEffect(section, state.profile?.id) {
         if (section == "movies" && !state.movies.loaded) model.loadCatalog("movies")
+        if (section == "web" && !state.web.loaded) model.loadCatalog("web")
         if (section == "shows" && !state.shows.loaded) model.loadCatalog("shows")
     }
     Box(Modifier.fillMaxSize()) {
@@ -137,7 +143,7 @@ import tv.flixtunes.app.ui.tv.NavigationTelevision
                     Modifier.padding(start = if (compact) 8.dp else 12.dp),
                     taillePolice = if (compact) 11 else 13,
                 )
-                if (gabarit.televiseur) NavigationTelevision(section, state.direct?.disponible == true) { cle ->
+                if (gabarit.televiseur) NavigationTelevision(section, offreDuServeur) { cle ->
                     changerSection(cle)
                     model.search("")
                 }
@@ -238,7 +244,25 @@ import tv.flixtunes.app.ui.tv.NavigationTelevision
                     ancrePositionnee = { model.consumeCatalogAnchor("shows") },
                 )
                 /*
-                 * La télévision en direct, entre les séries et l'historique — l'ordre du menu du Web.
+                 * Le rayon Web, entre les séries et le direct — l'ordre du menu du Web.
+                 *
+                 * Une chaîne est une fiche de catalogue comme une autre : la grille qui sert Films et
+                 * Séries la sert aussi, sans écran de plus. Ce qu'elle contient — des dossiers, puis
+                 * des vidéos datées — s'ouvre par la fiche, qui sait déjà présenter des paliers.
+                 */
+                "web" -> GrilleCatalogue(
+                    titre = "Web", section = state.web, image = image, open = open, ouvrirMenu = ouvrirMenu,
+                    focusARestaurer = focusARestaurer, focusRestaure = focusRestaure, bottomInset = bottomInset,
+                    total = state.web.total,
+                    critere = { sort, filter, query, genres -> model.setCatalogCriteria("web", sort, filter, query, genres) },
+                    loadPrevious = { model.loadPreviousCatalog("web") },
+                    loadMore = { model.loadCatalog("web") },
+                    grid = webScroll,
+                    sauterLettre = { model.setCatalogLetter("web", it) },
+                    ancrePositionnee = { model.consumeCatalogAnchor("web") },
+                )
+                /*
+                 * La télévision en direct, entre le rayon Web et l'historique — l'ordre du menu du Web.
                  *
                  * La section n'est atteignable que si l'entrée existe, donc que si une source a rendu
                  * des chaînes ; le `?:` n'est qu'un garde-fou pour l'instant où l'état revient de
@@ -278,7 +302,7 @@ import tv.flixtunes.app.ui.tv.NavigationTelevision
         // Navigation tactile : une barre en bas, là où le pouce arrive. Sa composition vit dans
         // `ui/mobile`, celle du téléviseur dans `ui/tv` — deux surfaces, une seule liste de sections.
         if (!gabarit.televiseur) {
-            NavigationTactile(section, state.direct?.disponible == true, Modifier.align(Alignment.BottomCenter)) { cle ->
+            NavigationTactile(section, offreDuServeur, Modifier.align(Alignment.BottomCenter)) { cle ->
                 changerSection(cle)
                 model.search("")
             }

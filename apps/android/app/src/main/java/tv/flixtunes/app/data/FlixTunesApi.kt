@@ -274,6 +274,17 @@ class FlixTunesApi(
         EtatDirectClient(reponse.optBoolean("disponible"), reponse.optInt("chaines"))
     }
 
+    /**
+     * L'entrée « Web » doit-elle exister ?
+     *
+     * Même règle que le direct, à une nuance près : un dossier déclaré suffit, sans attendre qu'une
+     * analyse l'ait rempli. Un serveur plus ancien ignore la route, et son échec vaut « non » — ce qui
+     * est exactement l'état d'une installation qui ne s'en sert pas.
+     */
+    suspend fun etatWeb(profileId: String): Boolean = withContext(Dispatchers.Default) {
+        runCatching { request("/web?profileId=${encode(profileId)}").optBoolean("disponible") }.getOrDefault(false)
+    }
+
     suspend fun chainesDirect(
         profileId: String, offset: Int, limit: Int,
         query: String = "", listes: List<String> = emptyList(), pays: List<String> = emptyList(),
