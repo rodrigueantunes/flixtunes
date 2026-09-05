@@ -161,13 +161,25 @@ describe("le titre n'est pas nettoyé comme un nom de film", () => {
     expect(lu.chemin.titre).toBe("Debuter avec Node.js en 2024");
   });
 
-  it("ne prend pas une annee entre parentheses pour une date de sortie", () => {
-    // La convention `Titre (2024)` appartient aux films. Ici, c'est du texte comme le reste.
+  it("garde une annee entre parentheses, qui fait partie du titre", () => {
+    // La convention `Titre (2024)` appartient aux films, ou la parenthese porte l'annee de sortie. Un
+    // nom de fichier web ne transporte que le titre : l'annee vient de la recherche des metadonnees.
+    // L'amputer inventerait une convention que personne n'a suivie.
     const lu = lireCheminWeb(RACINE, "N:/Medias/Web/YouTube/Chaine/Retrospective (2024).mp4");
     expect(lu.valide).toBe(true);
     if (!lu.valide) return;
-    expect(lu.chemin.titre).toBe("Retrospective");
+    expect(lu.chemin.titre).toBe("Retrospective (2024)");
     expect(lu.chemin.identifiant).toBeNull();
+  });
+
+  it("un groupe numerique ne passe jamais pour un identifiant", () => {
+    // Sur une plateforme sans regle de longueur connue, « 2024 » aurait la forme d'un identifiant
+    // plausible — et aurait attribue la video a une autre.
+    const lu = lireCheminWeb(RACINE, "N:/Medias/Web/Dailymotion/Chaine/Bilan (2024).mp4");
+    expect(lu.valide).toBe(true);
+    if (!lu.valide) return;
+    expect(lu.chemin.identifiant).toBeNull();
+    expect(lu.chemin.titre).toBe("Bilan (2024)");
   });
 
   it("remplace les tirets bas seulement quand ils tiennent lieu d'espaces", () => {

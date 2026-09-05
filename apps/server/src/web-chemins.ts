@@ -53,12 +53,25 @@ const ALIAS_PLATEFORMES = new Map<string, Plateforme>([
  * Ce qu'un groupe entre crochets peut contenir sans être un identifiant.
  *
  * La forme `Titre [identifiant]` est la sortie par défaut des téléchargeurs, mais d'autres outils
- * écrivent `Titre [1080p]` ou `Titre [2024]` au même endroit. Prendre l'un pour l'autre attribuerait
- * une vidéo à une autre, avec l'assurance que donne un identifiant exact — c'est-à-dire la pire
- * erreur possible, celle qu'aucun score ne viendra relire.
+ * écrivent `Titre [1080p]` au même endroit. Prendre l'un pour l'autre attribuerait une vidéo à une
+ * autre, avec l'assurance que donne un identifiant exact — c'est-à-dire la pire erreur possible,
+ * celle qu'aucun score ne viendra relire.
+ *
+ * Ce bruit-là est retiré du titre, parce qu'il n'en a jamais fait partie. Un groupe numérique, lui,
+ * y reste : voir `GROUPE_NUMERIQUE`.
  */
 const BRUIT_TECHNIQUE =
-  /^(?:\d{3,4}p|[248]k|hd|fhd|uhd|sd|sdr|hdr\d*\+?|dv|x26[45]|h\.?26[45]|hevc|av1|vp9|opus|aac|mp3|flac|webm|mp4|mkv|vf|vo|vost(?:fr)?|multi|(?:19|20)\d{2})$/i;
+  /^(?:\d{3,4}p|[248]k|hd|fhd|uhd|sd|sdr|hdr\d*\+?|dv|x26[45]|h\.?26[45]|hevc|av1|vp9|opus|aac|mp3|flac|webm|mp4|mkv|vf|vo|vost(?:fr)?|multi)$/i;
+
+/**
+ * Un groupe purement numerique n'est jamais un identifiant, et reste dans le titre.
+ *
+ * La convention `Titre (2024)` appartient aux films, ou la parenthese porte l'annee de sortie. Un nom
+ * de fichier web ne transporte que le titre : l'annee, elle, vient de la recherche des metadonnees.
+ * « Retrospective (2024) » est donc un titre entier, et l'amputer inventerait une convention que
+ * personne n'a suivie. La seule chose a ecarter est qu'un tel groupe passe pour un identifiant.
+ */
+const GROUPE_NUMERIQUE = /^\d+$/;
 
 /** Un identifiant YouTube fait onze caractères, toujours. C'est une vérification gratuite. */
 const IDENTIFIANT_YOUTUBE = /^[A-Za-z0-9_-]{11}$/;
@@ -171,6 +184,10 @@ function extraireIdentifiant(base: string, plateforme: Plateforme | null): { tit
   if (BRUIT_TECHNIQUE.test(contenu)) {
     // Du bruit reconnu : on le retire du titre, mais il ne devient pas un identifiant pour autant.
     return { titre: sansGroupe || base, identifiant: null };
+  }
+  if (GROUPE_NUMERIQUE.test(contenu)) {
+    // Une annee, un numero d'episode, un millesime : du texte, qui reste dans le titre.
+    return { titre: base, identifiant: null };
   }
   const attendu = plateforme === "youtube" ? IDENTIFIANT_YOUTUBE : IDENTIFIANT_PLAUSIBLE;
   if (!attendu.test(contenu)) {
