@@ -1,7 +1,24 @@
 # Journal des versions
 
-## 0.5.7.r18 — « Reprendre » reprenait au premier épisode
+## 0.5.7.r19 — « Reprendre » reprenait au premier épisode, et le paquet ne s'installait pas
 
+- **Le `.deb` ne s'installait pas, et le message n'accusait pas le coupable.** `dpkg` rendait :
+
+  ```
+  impossible d'exécuter (/var/lib/dpkg/tmp.ci/postrm) : Aucun fichier ou dossier de ce nom
+  ```
+
+  Le fichier existe pourtant. Ce qui manque, c'est son **interpréteur** : les scripts commencent par
+  `#!/bin/bash` suivi d'un **retour chariot**, si bien que le noyau cherche un programme nommé
+  `/bin/bash\r`, qui n'existe pas. D'où un `ENOENT` qui désigne le script alors que le fautif est le
+  caractère invisible qui le suit.
+
+  C'était la même fuite Windows que le `debian-binary` corrigé en r16 — je ne l'avais corrigée que
+  sur ce seul fichier, alors que **tout le répertoire de contrôle** est en CRLF : `control`,
+  `md5sums`, `postinst`, `postrm`. `tools/reparer-deb.mjs` les normalise désormais tous, ce qui
+  oblige à réécrire les en-têtes tar — la longueur change — et donc à recalculer leurs sommes de
+  contrôle. Le résultat est relu avant que l'outil ne rende la main : version du format, lisibilité
+  de l'archive, et ligne `#!` de chaque script.
 - **Le serveur désignait le mauvais épisode, et les deux clients le suivaient.** La fiche d'une série
   prenait `episodes[0]` — le tout premier de la première saison — et rapportait *sa* progression comme
   étant celle de la série. « Reprendre » ramenait donc à S01E01 sur le Web comme sur Android, et une
@@ -12,6 +29,7 @@
   La fiche choisit maintenant, dans cet ordre : l'épisode **commencé et non fini**, sinon le premier
   **non terminé**, sinon le tout premier — la série est finie, on la recommence. C'est exactement la
   règle que la requête des **cartes** appliquait déjà ; la fiche s'en écartait sans raison.
+
 - **Les fiches s'ouvraient toujours sur la saison 1.** Cliquer un épisode depuis « Continuer à
   regarder » amenait la série positionnée à son début — deux symptômes, une seule cause. Web et
   Android ouvrent désormais la saison de l'épisode demandé, à défaut celle du point de reprise. Le
