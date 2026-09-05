@@ -14,6 +14,17 @@
 
   Publier reste un geste **séparé** de construire : le premier est sans conséquence, le second est
   public et ne se reprend pas.
+- **Le script est écrit sans un seul caractère accentué, et ce n'est pas de la négligence.** La
+  première version en portait, et PowerShell refusait de l'analyser en désignant des lignes
+  parfaitement saines vingt lignes plus loin. La cause : Windows PowerShell 5.1 lit un `.ps1` sans
+  BOM avec la page de codes ANSI, où le tiret cadratin `—` se décompose en trois caractères dont le
+  dernier est un **guillemet courbe** — que PowerShell accepte comme délimiteur de chaîne. Une ligne
+  de commentaire suffisait donc à fermer une chaîne par erreur et à casser tout le fichier.
+
+  C'est la convention des autres scripts du dépôt, que je n'avais pas vue : `Build-Release.ps1` écrit
+  « le VLC embarque differe », sans accent, pour cette raison exacte. Le journal des versions, lui,
+  garde les siens : il est lu comme une **donnée**, en UTF-8 explicite, jamais interprété comme du
+  code.
 
 La navigation est redevenue fluide après la r25. Mais l'écran d'avancement affichait « 0 saison
 traitée » depuis huit minutes, et rien ne permettait de savoir si le travail progressait. J'ai
