@@ -13,6 +13,7 @@ const kindLabels: Record<LibraryKind, string> = {
   movie: "Films",
   tv: "Séries TV",
   other: "Autre",
+  web: "Web",
 };
 
 function statusLabel(library: LibraryFolder): string {

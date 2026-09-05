@@ -10,7 +10,7 @@ export const progressInputSchema = z.object({
 });
 export type ProgressInput = z.infer<typeof progressInputSchema>;
 
-export const libraryKindSchema = z.enum(["auto", "movie", "tv", "other"]);
+export const libraryKindSchema = z.enum(["auto", "movie", "tv", "other", "web"]);
 export type LibraryKind = z.infer<typeof libraryKindSchema>;
 export const metadataLanguageSchema = z.enum(["fr-FR", "en-US"]);
 export type MetadataLanguage = z.infer<typeof metadataLanguageSchema>;
@@ -938,7 +938,7 @@ export type CatalogSort = "title" | "release" | "added";
 export type CatalogFilter = "all" | "progress" | "watched" | "unwatched";
 
 export interface CatalogQuery {
-  kind: "movies" | "shows";
+  kind: "movies" | "shows" | "web";
   sort?: CatalogSort;
   filter?: CatalogFilter;
   query?: string;

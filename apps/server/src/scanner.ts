@@ -11,6 +11,7 @@ import { MATCH_THRESHOLDS, rankMetadataMatches } from "./match-engine.js";
 import { normaliseForSearch } from "./search-normalise.js";
 import { artworkUrlIsGenerated, cacheGeneratedArtwork, cacheLocalArtwork, cacheRemoteArtwork, findLocalArtwork } from "./artwork.js";
 import { fetchMetadataWithProviders, searchAllMetadata } from "./metadata-providers.js";
+import { analyserVideoWeb, libelleDuPalierDuFichier } from "./web-analyse.js";
 import type { EntityMetadata, MetadataBundle } from "./tmdb.js";
 import { recordEntityProvenance } from "./metadata-fields.js";
 import {
@@ -418,7 +419,11 @@ async function syncCatalog(
   const showArt = await applyEntityArtwork(showId, showMetadata, mediaPath, 1);
   const seasonNumber = parsed.seasonNumber ?? 0;
   const seasonMetadata = bundle?.season ?? null;
-  const seasonTitle = seasonMetadata?.title ?? (library.language === "fr-FR" ? `Saison ${seasonNumber}` : `Season ${seasonNumber}`);
+  // Une chaine n'a pas de saisons : ses paliers sont les dossiers de la personne, et « Saison 3 »
+  // dirait faux la ou le dossier s'appelle « Documentaires ».
+  const libelleWeb = library.resolvedKind === "web" ? libelleDuPalierDuFichier(library, mediaPath) : "";
+  const seasonTitle = seasonMetadata?.title
+    ?? (libelleWeb || (library.language === "fr-FR" ? `Saison ${seasonNumber}` : `Season ${seasonNumber}`));
   const seasonId = upsertCatalogEntity({
     library, kind: "season", parentId: showId, title: seasonTitle,
     sortTitle: String(seasonNumber).padStart(4, "0"), seasonNumber, metadata: seasonMetadata,
@@ -478,6 +483,9 @@ function ratingNeedsBackfill(catalogId: string | null | undefined): boolean {
  * recherche approximative.
  */
 async function backfillRating(catalogId: string, filePath: string, library: LibraryFolder): Promise<boolean> {
+  // Une bibliotheque web n'a pas de classification a rattraper : aucune base de films ou de series
+  // n'est interrogee pour elle, et c'est precisement ce que ce chemin ferait.
+  if (library.resolvedKind === "web") return false;
   try {
     const parsed = parseMediaPath(filePath, library.resolvedKind);
     const known = knownExternalMatch(catalogId, true);
@@ -612,21 +620,38 @@ export async function scanLibraryById(libraryId: string, options: ScanOptions = 
         continue;
       }
 
-      const pathMetadata = parseMediaPath(filePath, library.resolvedKind);
       const embeddedPromise = forceMetadata && previous?.embedded_metadata_json
         ? Promise.resolve(parseProbeOutput(JSON.parse(previous.embedded_metadata_json)))
         : probeMedia(filePath);
-      const [embedded, sidecar, hints] = await Promise.all([
-        embeddedPromise, readSidecarNfo(filePath, pathMetadata.kind), readMatchHints(filePath, library.path),
-      ]);
-      if (options.signal?.aborted) throw new Error("Analyse annulée");
-      const parsed = applyMatchHints(mergeSidecarMetadata(mergeEmbeddedMetadata(pathMetadata, embedded), sidecar), hints);
-      // L'observation du disque n'a de sens que pour un épisode, et ne coûte qu'une lecture de
-      // dossier par fichier — négligeable devant le sondage du média lui-même.
-      if (parsed.kind === "episode") parsed.seasonsOnDisk = await countSeasonFolders(filePath);
+
+      let embedded: Awaited<typeof embeddedPromise>;
+      let parsed: ParsedMedia;
+      if (library.resolvedKind === "web") {
+        // L'arborescence web se lit par position et n'a ni fichier annexe Kodi ni indice de
+        // rapprochement a appliquer : ces deux lectures n'auraient rien a trouver.
+        embedded = await embeddedPromise;
+        if (options.signal?.aborted) throw new Error("Analyse annulée");
+        const lecture = await analyserVideoWeb(library, filePath, embedded?.raw ?? null);
+        // Un rangement fautif est signale, pas devine : le fichier rejoint le journal des
+        // laisses-pour-compte avec la raison, par la voie que le bloc englobant emprunte deja.
+        if (!lecture.valide) throw new Error(lecture.message);
+        parsed = lecture.parsed;
+      } else {
+        const pathMetadata = parseMediaPath(filePath, library.resolvedKind);
+        const [sonde, sidecar, hints] = await Promise.all([
+          embeddedPromise, readSidecarNfo(filePath, pathMetadata.kind), readMatchHints(filePath, library.path),
+        ]);
+        if (options.signal?.aborted) throw new Error("Analyse annulée");
+        embedded = sonde;
+        parsed = applyMatchHints(mergeSidecarMetadata(mergeEmbeddedMetadata(pathMetadata, sonde), sidecar), hints);
+        // L'observation du disque n'a de sens que pour un épisode, et ne coûte qu'une lecture de
+        // dossier par fichier — négligeable devant le sondage du média lui-même.
+        if (parsed.kind === "episode") parsed.seasonsOnDisk = await countSeasonFolders(filePath);
+      }
       let bundle: MetadataBundle | null = null;
       let proposal: PendingMatchProposal | null = null;
-      try {
+      // Pas de base de films ni de series pour le web : voir `web-analyse`.
+      if (library.resolvedKind !== "web") try {
         const locked = knownExternalMatch(previous?.catalog_id);
         bundle = applyLocalMetadataFallbacks(parsed,
           await fetchMetadataWithProviders(parsed, library.language, locked, { patienter: true }));

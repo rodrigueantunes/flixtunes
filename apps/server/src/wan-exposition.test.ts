@@ -45,6 +45,11 @@ const REFUS_ASSUMES = new Set([
   "PUT /api/live/channels/:id/favori", "DELETE /api/live/channels/:id/favori", "GET /api/live/derniere",
   // Le relais suivra la grille : il n'a de sens que pour un navigateur qui affiche déjà des chaînes.
   "GET /api/live/relais",
+  // Le rayon Web suit la meme regle que la grille du direct : le drapeau qui decide de son entree de
+  // navigation reste ferme tant que son ecran n'existe pas et n'a pas ete eprouve a distance.
+  // L'ouvrir maintenant exposerait une route dont personne ne se sert encore — ouvrir sans decider,
+  // ce que ce registre existe pour empecher.
+  "GET /api/web",
   "GET /api/scans", "POST /api/scans", "GET /api/scans/skipped",
   "POST /api/scans/:id/cancel", "POST /api/scans/:id/retry",
   "GET /api/corrections", "POST /api/corrections", "POST /api/corrections/preview",

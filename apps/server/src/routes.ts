@@ -683,6 +683,31 @@ export async function registerRoutes(app: FastifyInstance) {
     return etatClient();
   });
 
+  /**
+   * Le rayon Web existe-t-il ?
+   *
+   * Même règle que pour la télévision en direct : une entrée de navigation qui mène à une page vide
+   * est une promesse non tenue, donc l'entrée n'existe pas tant que rien ne la remplit. Le drapeau est
+   * servi par le serveur et non déduit par le client : celui-ci n'a pas à inspecter la liste des
+   * bibliothèques pour savoir ce qu'il a le droit d'afficher.
+   *
+   * Un dossier déclaré suffit — c'est ce qui a été demandé. Le rayon peut donc être vide le temps de
+   * la première analyse, ce qui se voit et s'explique, là où une entrée qui apparaît sans prévenir
+   * une fois l'analyse finie ne s'expliquerait pas.
+   */
+  app.get("/api/web", async (request, reply) => {
+    const profile = profileFromRequest(request);
+    if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
+    const ligne = db.prepare(
+      "SELECT COUNT(*) AS bibliotheques FROM library_folders WHERE kind = 'web' AND enabled = 1",
+    ).get() as { bibliotheques: number };
+    const chaines = db.prepare(`SELECT COUNT(*) AS total FROM catalog_items c
+      WHERE c.kind = 'show' AND EXISTS (
+        SELECT 1 FROM library_folders lib WHERE lib.id = c.library_id AND lib.kind = 'web')`)
+      .get() as { total: number };
+    return { disponible: ligne.bibliotheques > 0, bibliotheques: ligne.bibliotheques, chaines: chaines.total };
+  });
+
   app.get("/api/live/fiabilites", async (request, reply) => {
     const profile = profileFromRequest(request);
     if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
@@ -1521,7 +1546,7 @@ export async function registerRoutes(app: FastifyInstance) {
     const query = request.query as Record<string, string | undefined>;
     const profile = profileFromRequest(request);
     if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
-    if (query.kind !== "movies" && query.kind !== "shows") {
+    if (query.kind !== "movies" && query.kind !== "shows" && query.kind !== "web") {
       return reply.code(400).send({ message: "Type de catalogue invalide" });
     }
     if (query.q && query.q.length > 120) return reply.code(400).send({ message: "Recherche trop longue" });

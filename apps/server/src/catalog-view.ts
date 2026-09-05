@@ -331,6 +331,37 @@ const HAS_UNWATCHED_EPISODE = `EXISTS (
 const NOT_IN_MOVIE_LIBRARY =
   "AND NOT EXISTS (SELECT 1 FROM library_folders lib WHERE lib.id = c.library_id AND lib.kind = 'movie')";
 
+/**
+ * Le rayon Web ne déborde ni sur les Films ni sur les Séries.
+ *
+ * Même mécanisme que ci-dessus, et pour une raison plus forte encore : une chaîne est stockée comme
+ * une série — c'est ce qui lui donne gratuitement la fiche, la reprise et l'enchaînement — mais elle
+ * n'a rien à faire dans le rayon des séries. La séparation est donc entièrement portée par le type de
+ * la bibliothèque, jamais par la forme des fiches.
+ *
+ * Ces clauses ne peuvent que **retirer** des éléments web : ce qu'une bibliothèque films ou séries
+ * rend est inchangé, à la ligne près.
+ */
+const HORS_WEB_PAR_FICHE =
+  "AND NOT EXISTS (SELECT 1 FROM library_folders lib WHERE lib.id = c.library_id AND lib.kind = 'web')";
+const HORS_WEB_PAR_MEDIA =
+  "AND NOT EXISTS (SELECT 1 FROM library_folders lib WHERE lib.id = m.library_id AND lib.kind = 'web')";
+
+/**
+ * De quelles bibliothèques un rayon tire ses fiches.
+ *
+ * Les deux clauses sont exclusives l'une de l'autre : ce qui entre dans l'une ne peut pas entrer dans
+ * l'autre. C'est ce qui garantit qu'aucune chaîne n'apparaît dans Séries TV, et qu'aucune série
+ * n'apparaît dans Web — sans dépendre de la forme des fiches, qui est la même des deux côtés.
+ */
+function appartenance(rayon: "series" | "web" = "series"): string {
+  return rayon === "web" ? DANS_WEB_PAR_FICHE : `${NOT_IN_MOVIE_LIBRARY} ${HORS_WEB_PAR_FICHE}`;
+}
+
+/** À l'inverse, le rayon Web ne montre que les bibliothèques web. */
+const DANS_WEB_PAR_FICHE =
+  "AND EXISTS (SELECT 1 FROM library_folders lib WHERE lib.id = c.library_id AND lib.kind = 'web')";
+
 function showFilterClause(filter: CatalogFilter | undefined): { sql: string; needsProfile: boolean } {
   if (filter === "watched") return { sql: `AND NOT ${HAS_UNWATCHED_EPISODE}`, needsProfile: true };
   if (filter === "progress") return { sql: `AND ${HAS_EPISODE_IN_PROGRESS}`, needsProfile: true };
@@ -366,6 +397,14 @@ function showItems(
      * usages internes qui ne les lisent pas — les recommandations — et jamais à ce qui part au client.
      */
     withRepresentative?: boolean;
+    /**
+     * Quel rayon sert cette requête.
+     *
+     * Une chaîne web est stockée comme une série — c'est ce qui lui donne la fiche, la reprise et
+     * l'enchaînement sans une ligne de plus. Les deux rayons partagent donc la requête, et ne
+     * different que par la clause qui décide de quelles bibliothèques ils tirent leurs fiches.
+     */
+    rayon?: "series" | "web";
   } = {},
 ): Array<MediaItemWithProgress & { seasonCount: number }> {
   if (options.catalogIds?.length === 0) return [];
@@ -401,7 +440,7 @@ function showItems(
       CASE WHEN w.catalog_id IS NULL THEN 0 ELSE 1 END AS in_watchlist
     FROM catalog_items c
     LEFT JOIN profile_watchlist w ON w.catalog_id = c.id AND w.profile_id = ?
-    WHERE c.kind = 'show' AND ${HAS_AVAILABLE_EPISODE} ${NOT_IN_MOVIE_LIBRARY} ${filters.join(" ")}
+    WHERE c.kind = 'show' AND ${HAS_AVAILABLE_EPISODE} ${appartenance(options.rayon)} ${filters.join(" ")}
     ORDER BY ${SHOW_ORDER[options.sort ?? "title"]}${bounds}
   `).all(...params) as ShowRow[];
 
@@ -553,17 +592,20 @@ export function listCatalog(profileId: string, query: CatalogQuery): AnchoredCat
   const search = query.query?.trim() ?? "";
   const initialLetter = query.letter;
 
-  if (query.kind === "shows") {
+  if (query.kind === "shows" || query.kind === "web") {
+    const rayon = query.kind === "web" ? "web" as const : "series" as const;
     const bornes = { minYear: query.minYear, maxYear: query.maxYear, genres: query.genres };
-    const total = countShows(profileId, search, filter, bornes);
+    const total = countShows(profileId, search, filter, bornes, rayon);
     const letterAnchor = initialLetter && sort === "title" && offset === 0
       ? alphabeticOffset(showItems(profileId, { titleFilter: search || undefined, sort, filter, ...bornes,
-        withRepresentative: false }), initialLetter)
+        withRepresentative: false, rayon }), initialLetter)
       : undefined;
     const pageOffset = letterAnchor == null ? offset : alphabeticWindow(letterAnchor, total, limit);
-    const items = showItems(profileId, { titleFilter: search || undefined, sort, filter, limit, offset: pageOffset, ...bornes });
+    const items = showItems(profileId, { titleFilter: search || undefined, sort, filter, limit, offset: pageOffset, ...bornes, rayon });
     return { items, total, offset: pageOffset, limit, anchor: letterAnchor,
-      availableGenres: listAvailableGenres(profileId, "shows") };
+      // Les genres viennent de TMDB, qu'aucune bibliothèque web n'interroge : proposer une facette
+      // toujours vide serait proposer un filtre qui ne filtre rien.
+      availableGenres: rayon === "web" ? [] : listAvailableGenres(profileId, "shows") };
   }
 
   // Étanchéité entre Films et Séries. Le filtre sur `m.kind` ne suffit pas : un épisode dont la
@@ -573,7 +615,8 @@ export function listCatalog(profileId: string, query: CatalogQuery): AnchoredCat
   // Les bibliothèques en mode automatique ou mixte restent servies : elles peuvent légitimement
   // contenir les deux, et les exclure ferait disparaître de vrais films.
   const conditions = ["AND m.kind = 'movie'",
-    "AND NOT EXISTS (SELECT 1 FROM library_folders lib WHERE lib.id = m.library_id AND lib.kind = 'tv')"];
+    "AND NOT EXISTS (SELECT 1 FROM library_folders lib WHERE lib.id = m.library_id AND lib.kind = 'tv')",
+    HORS_WEB_PAR_MEDIA];
   const params: Array<string | number> = [];
   if (search) {
     const recherche = workSearchClause("m", search);
@@ -599,7 +642,7 @@ export function listCatalog(profileId: string, query: CatalogQuery): AnchoredCat
 }
 
 function countShows(profileId: string, search: string, filter: CatalogFilter,
-  bornes: { minYear?: number; maxYear?: number; genres?: string[] } = {}): number {
+  bornes: { minYear?: number; maxYear?: number; genres?: string[] } = {}, rayon: "series" | "web" = "series"): number {
   const state = showFilterClause(filter);
   const params: Array<string | number> = [];
   const limitAge = childAge(profileId);
@@ -617,7 +660,7 @@ function countShows(profileId: string, search: string, filter: CatalogFilter,
   params.push(...genresDemandes.params);
   return Number((db.prepare(`
     SELECT COUNT(*) AS total FROM catalog_items c
-    WHERE c.kind = 'show' AND ${HAS_AVAILABLE_EPISODE} ${NOT_IN_MOVIE_LIBRARY}
+    WHERE c.kind = 'show' AND ${HAS_AVAILABLE_EPISODE} ${appartenance(rayon)}
       ${limitAge == null ? "" : "AND (c.age_rating IS NULL OR c.age_rating <= ?)"}
       ${state.sql} ${titleClause} ${annees.clause} ${genresDemandes.clause}
   `).get(...params) as { total: number }).total);
