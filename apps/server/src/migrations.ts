@@ -64,51 +64,42 @@ export const SOCLE = 1;
  * possible** — `IF NOT EXISTS`, `INSERT OR IGNORE` — parce qu'une base restaurée depuis une
  * sauvegarde d'âge inconnu peut la recroiser.
  */
-/** La contrainte que porte `library_folders` avant l'arrivee du rayon Web. */
-const TYPES_AVANT_WEB = "CHECK(kind IN ('auto', 'movie', 'tv', 'other'))";
-
-/** Celle qu'elle doit porter apres. */
-const TYPES_AVEC_WEB = "CHECK(kind IN ('auto', 'movie', 'tv', 'other', 'web'))";
-
 /**
- * Ouvrir `library_folders` a un cinquieme type de bibliotheque.
+ * Elargir une contrainte `CHECK` sur une table, sans perdre ni ligne ni descendance.
  *
- * SQLite ne modifie pas une contrainte `CHECK` : il faut recreer la table. Et `library_folders` n'est
- * pas une table ordinaire — c'est la **mere** du catalogue et des medias, qui la referencent en
- * `ON DELETE CASCADE`. Supprimer l'ancienne emporterait donc toutes les fiches.
- *
- * Trois precautions, chacune verifiee sur une base peuplee :
+ * SQLite ne modifie pas une contrainte : il faut recreer la table. Trois precautions, chacune
+ * verifiee sur une base peuplee :
  *
  * - **les cles etrangeres sont desarmees avant le `BEGIN`**, jamais dedans, ou le pragma serait sans
- *   effet. Une premiere version tentait de s'en passer grace a `legacy_alter_table` ; elle a vide la
- *   table des fiches. La cascade est reverifiee apres coup : une reconstruction qui la romprait
- *   laisserait des orphelines pour toujours, sans que rien ne le signale ;
- * - **la nouvelle table est derivee du schema en place**, pas ecrite en dur. Onze colonnes ont ete
- *   ajoutees a cette table depuis sa creation — `name`, tout l'historique d'analyse — et un `CREATE`
- *   recopie de `database.ts` les effacerait toutes ;
+ *   effet. Sans cela, supprimer l'ancienne table declenche les `ON DELETE CASCADE` de ses filles.
+ *   Ce n'est pas une precaution theorique : une premiere version, qui croyait pouvoir s'en passer
+ *   grace a `legacy_alter_table`, a vide la table des fiches sur une base d'essai — sans erreur ;
+ * - **la nouvelle table est derivee du schema en place**, jamais reecrite en dur. Des colonnes sont
+ *   ajoutees a ces tables au fil des versions, et un `CREATE` recopie les effacerait toutes ;
  * - **`PRAGMA foreign_key_check` precede le `COMMIT`**, pour qu'un defaut se solde par un retour
  *   arriere plutot que par une base a demi cousue.
  */
-export function ouvrirLesTypesDeBibliotheque(base: DatabaseSync): void {
-  const schema = (base.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'library_folders'")
-    .get() as unknown as { sql: string } | undefined)?.sql;
-  if (!schema) throw new Error("La table library_folders est absente.");
-  if (schema.includes("'web'")) return;
-  if (schema.split(TYPES_AVANT_WEB).length - 1 !== 1) {
-    throw new Error("La contrainte de type de library_folders n'a pas la forme attendue.");
+export function elargirLaContrainte(base: DatabaseSync, table: string, ancienne: string, nouvelle: string): void {
+  const schema = (base.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(table) as unknown as { sql: string } | undefined)?.sql;
+  if (!schema) throw new Error(`La table ${table} est absente.`);
+  if (schema.includes(nouvelle)) return;
+  if (schema.split(ancienne).length - 1 !== 1) {
+    throw new Error(`La contrainte de ${table} n'a pas la forme attendue.`);
   }
 
-  const nouvelle = schema
-    .replace("CREATE TABLE library_folders", "CREATE TABLE library_folders_elargie")
-    .replace(TYPES_AVANT_WEB, TYPES_AVEC_WEB);
+  const provisoire = `${table}_elargie`;
+  const nouvelleTable = schema
+    .replace(`CREATE TABLE ${table}`, `CREATE TABLE ${provisoire}`)
+    .replace(ancienne, nouvelle);
 
   base.exec("PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE;");
   try {
     base.exec(`
-      ${nouvelle};
-      INSERT INTO library_folders_elargie SELECT * FROM library_folders;
-      DROP TABLE library_folders;
-      ALTER TABLE library_folders_elargie RENAME TO library_folders;
+      ${nouvelleTable};
+      INSERT INTO ${provisoire} SELECT * FROM ${table};
+      DROP TABLE ${table};
+      ALTER TABLE ${provisoire} RENAME TO ${table};
     `);
     const orphelines = base.prepare("PRAGMA foreign_key_check").all();
     if (orphelines.length) throw new Error(`${orphelines.length} references orphelines apres reconstruction.`);
@@ -121,12 +112,43 @@ export function ouvrirLesTypesDeBibliotheque(base: DatabaseSync): void {
   }
 }
 
+/** Ouvrir `library_folders` a un cinquieme type de bibliotheque. */
+export function ouvrirLesTypesDeBibliotheque(base: DatabaseSync): void {
+  elargirLaContrainte(base, "library_folders",
+    "CHECK(kind IN ('auto', 'movie', 'tv', 'other'))",
+    "CHECK(kind IN ('auto', 'movie', 'tv', 'other', 'web'))");
+}
+
+/**
+ * Donner leur type aux videos web : `video`, et non `episode`.
+ *
+ * Elles etaient enregistrees en `episode` pour heriter sans code neuf de la reprise et de
+ * l'enchainement. Le raccourci ne tenait pas : ce type voyage avec la fiche, et l'accueil annoncait
+ * « S1 · E20024 » — le numero d'episode etant un nombre de jours. Une video n'est pas un episode, et
+ * aucun ecran ne doit avoir a le deviner.
+ *
+ * `media_items` est la mere des progressions de lecture et des preferences de sous-titres, toutes
+ * deux en `ON DELETE CASCADE`. Une reconstruction menee sans desarmer les cles effacerait donc
+ * l'historique de visionnage de tous les profils.
+ */
+export function ouvrirLesTypesDeMedia(base: DatabaseSync): void {
+  elargirLaContrainte(base, "media_items",
+    "CHECK(kind IN ('movie', 'show', 'episode'))",
+    "CHECK(kind IN ('movie', 'show', 'episode', 'video'))");
+}
+
 export const MIGRATIONS: Migration[] = [
   {
     version: 2,
     nom: "library_folders accepte le type web",
     gereSaTransaction: true,
     appliquer: ouvrirLesTypesDeBibliotheque,
+  },
+  {
+    version: 3,
+    nom: "media_items accepte le type video",
+    gereSaTransaction: true,
+    appliquer: ouvrirLesTypesDeMedia,
   },
 ];
 

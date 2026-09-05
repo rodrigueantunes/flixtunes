@@ -763,7 +763,7 @@ export function getMediaItem(profileId: string, id: string): MediaItem | null {
 
 export function getPlaybackNeighbors(profileId: string, mediaId: string): PlaybackNeighbors {
   const current = db.prepare(`SELECT library_id, show_title, season_number, episode_number FROM media_items
-    WHERE id = ? AND kind = 'episode' AND available = 1`).get(mediaId) as {
+    WHERE id = ? AND kind IN ('episode', 'video') AND available = 1`).get(mediaId) as {
       library_id: string | null; show_title: string | null; season_number: number | null; episode_number: number | null;
     } | undefined;
   if (!current?.library_id || !current.show_title || current.season_number == null || current.episode_number == null) {
@@ -774,7 +774,8 @@ export function getPlaybackNeighbors(profileId: string, mediaId: string): Playba
       ? "(m.season_number > ? OR (m.season_number = ? AND m.episode_number > ?))"
       : "(m.season_number < ? OR (m.season_number = ? AND m.episode_number < ?))";
     const order = direction === "next" ? "ASC" : "DESC";
-    return db.prepare(`${mediaSelect} WHERE m.available = 1 AND m.kind = 'episode' AND m.library_id = ? AND m.show_title = ?
+    // Les videos web suivent la meme mecanique : la suivante d'un dossier est la suivante du palier.
+    return db.prepare(`${mediaSelect} WHERE m.available = 1 AND m.kind IN ('episode', 'video') AND m.library_id = ? AND m.show_title = ?
       AND ${comparison} ORDER BY m.season_number ${order}, m.episode_number ${order}, m.created_at ${order} LIMIT 1`)
       .get(profileId, current.library_id, current.show_title, current.season_number, current.season_number, current.episode_number) as MediaRow | undefined;
   };

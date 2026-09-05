@@ -704,8 +704,12 @@ export async function scanLibraryById(libraryId: string, options: ScanOptions = 
 
       const catalog = await syncCatalog(library, parsed, bundle, filePath, previous?.catalog_id ?? null);
       storeMatchProposal(catalog.catalogId, bundle ? null : proposal);
+      // Une video web n'est pas un episode. Le raccourci qui l'enregistrait comme tel lui donnait la
+      // reprise et l'enchainement sans code neuf, mais le type voyage avec la fiche : « Ajouts
+      // recents » l'annoncait « S1 · E20024 », le numero d'episode etant un nombre de jours.
+      const typeDuMedia = library.resolvedKind === "web" ? "video" as const : parsed.kind;
       upsert.run(
-        previous?.id ?? randomUUID(), parsed.kind, catalog.title,
+        previous?.id ?? randomUUID(), typeDuMedia, catalog.title,
         (catalog.showTitle ?? catalog.title).toLocaleLowerCase(library.language),
         // Un épisode se cherche par le nom de sa série autant que par le sien.
         normaliseForSearch(`${catalog.showTitle ?? ""} ${catalog.title}`),

@@ -1,6 +1,14 @@
 import { z } from "zod";
 
-export const mediaKindSchema = z.enum(["movie", "show", "episode"]);
+/**
+ * Ce qu'un media est.
+ *
+ * `video` designe une video de plateforme : elle n'a ni saison ni numero d'episode, et se presente
+ * par son titre et sa date de publication. Elle etait enregistree en `episode` pour heriter sans code
+ * neuf de la reprise et de l'enchainement — mais le type voyage avec la fiche, et les ecrans
+ * l'annoncaient « S1 · E20024 ». Une video n'est pas un episode.
+ */
+export const mediaKindSchema = z.enum(["movie", "show", "episode", "video"]);
 export type MediaKind = z.infer<typeof mediaKindSchema>;
 
 export const progressInputSchema = z.object({

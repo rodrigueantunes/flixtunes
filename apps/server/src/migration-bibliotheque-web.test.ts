@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { appliquerLesMigrations, MIGRATIONS, ouvrirLesTypesDeBibliotheque } from "./migrations.js";
+import { appliquerLesMigrations, MIGRATIONS, ouvrirLesTypesDeBibliotheque, ouvrirLesTypesDeMedia } from "./migrations.js";
 
 /**
  * Ouvrir `library_folders` à un cinquième type, sans emporter le catalogue.
@@ -48,13 +48,21 @@ function baseAvecMediatheque(contrainte = CONTRAINTE): DatabaseSync {
     );
     CREATE TABLE media_items (
       id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL CHECK(kind IN ('movie', 'show', 'episode')),
       library_id TEXT REFERENCES library_folders(id) ON DELETE CASCADE,
       title TEXT NOT NULL
+    , edition TEXT);
+    CREATE TABLE playback_progress (
+      profile_id TEXT NOT NULL,
+      media_id TEXT NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
+      position_seconds REAL NOT NULL DEFAULT 0,
+      PRIMARY KEY(profile_id, media_id)
     );
     INSERT INTO library_folders (id, path, kind, name, last_scan_error)
       VALUES ('lib1', 'N:/Films', 'movie', 'Films du salon', 'incident precedent');
     INSERT INTO catalog_items (id, library_id, title) VALUES ('cat1', 'lib1', 'Arrival');
-    INSERT INTO media_items (id, library_id, title) VALUES ('med1', 'lib1', 'Arrival');
+    INSERT INTO media_items (id, kind, library_id, title, edition) VALUES ('med1', 'movie', 'lib1', 'Arrival', 'longue');
+    INSERT INTO playback_progress (profile_id, media_id, position_seconds) VALUES ('prof1', 'med1', 1234.5);
   `);
   return base;
 }
@@ -146,10 +154,67 @@ describe("ouverture de library_folders au type web", () => {
   it("s'applique par le registre, et une seule fois", () => {
     const base = baseAvecMediatheque();
 
-    expect(appliquerLesMigrations(base, { registre: MIGRATIONS })).toEqual([2]);
+    expect(appliquerLesMigrations(base, { registre: MIGRATIONS })).toEqual([2, 3]);
     expect(appliquerLesMigrations(base, { registre: MIGRATIONS })).toEqual([]);
     expect(schemaDe(base, "library_folders")).toContain("'web'");
     expect(compte(base, "catalog_items")).toBe(1);
+  });
+});
+
+describe("ouverture de media_items au type video", () => {
+  it("conserve les progressions de lecture", () => {
+    // `media_items` est la mère des progressions et des préférences de sous-titres, toutes deux en
+    // cascade. Une reconstruction menée sans désarmer les clés effacerait l'historique de visionnage
+    // de tous les profils — la donnée la moins remplaçable de l'installation.
+    const base = baseAvecMediatheque();
+
+    ouvrirLesTypesDeMedia(base);
+
+    expect(compte(base, "media_items")).toBe(1);
+    expect(compte(base, "playback_progress")).toBe(1);
+    expect((base.prepare("SELECT position_seconds AS p FROM playback_progress WHERE media_id = 'med1'")
+      .get() as unknown as { p: number }).p).toBeCloseTo(1234.5);
+    expect(base.prepare("PRAGMA foreign_key_check").all()).toHaveLength(0);
+  });
+
+  it("conserve les colonnes ajoutées après coup", () => {
+    const base = baseAvecMediatheque();
+
+    ouvrirLesTypesDeMedia(base);
+
+    expect((base.prepare("SELECT edition FROM media_items WHERE id = 'med1'")
+      .get() as unknown as { edition: string }).edition).toBe("longue");
+  });
+
+  it("accepte le type video et refuse toujours un type inconnu", () => {
+    const base = baseAvecMediatheque();
+
+    ouvrirLesTypesDeMedia(base);
+
+    expect(() => base.exec("INSERT INTO media_items (id, kind, title) VALUES ('med2', 'video', 'Une video')"))
+      .not.toThrow();
+    expect(() => base.exec("INSERT INTO media_items (id, kind, title) VALUES ('med3', 'nawak', 'X')"))
+      .toThrow();
+  });
+
+  it("la cascade des progressions fonctionne encore", () => {
+    const base = baseAvecMediatheque();
+
+    ouvrirLesTypesDeMedia(base);
+    base.exec("DELETE FROM media_items WHERE id = 'med1'");
+
+    expect(compte(base, "playback_progress")).toBe(0);
+  });
+
+  it("ne fait rien une seconde fois", () => {
+    const base = baseAvecMediatheque();
+
+    ouvrirLesTypesDeMedia(base);
+    const apresUne = schemaDe(base, "media_items");
+    ouvrirLesTypesDeMedia(base);
+
+    expect(schemaDe(base, "media_items")).toBe(apresUne);
+    expect(compte(base, "playback_progress")).toBe(1);
   });
 });
 
@@ -159,5 +224,6 @@ describe("accroche de la migration", () => {
     // ce cas échouera ici — pas au démarrage d'une installation.
     const source = readFileSync(fileURLToPath(new URL("./database.ts", import.meta.url)), "utf8");
     expect(source).toContain(CONTRAINTE);
+    expect(source).toContain("CHECK(kind IN ('movie', 'show', 'episode'))");
   });
 });
