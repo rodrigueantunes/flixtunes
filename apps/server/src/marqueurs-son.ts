@@ -55,6 +55,30 @@ import type { Attente } from "./empreinte-sonore.js";
  */
 export const FENETRES_ANALYSE_SECONDES = [300, 600, 900] as const;
 
+/**
+ * **La seconde écoute regarde ailleurs, pas plus large.**
+ *
+ * Quinze minutes couvrent l'immense majorité des introductions. Pas toutes : relevé sur *Silo*
+ * S03E10, l'introduction s'ouvre **entre la vingtième et la vingt-cinquième minute**. Elle n'était
+ * donc pas manquée par l'algorithme — elle n'était jamais cherchée là où elle se trouve, et une
+ * réécoute à l'identique n'y aurait rien changé.
+ *
+ * La tentation était d'analyser trente minutes d'un coup. C'est le mauvais calcul : **le coût croît
+ * avec le carré de la fenêtre**, et trente minutes coûtent quatre fois quinze. Or les quinze
+ * premières ont déjà été fouillées et n'ont rien donné — les refaire, c'est payer quatre fois pour
+ * chercher trois fois au même endroit.
+ *
+ * On décale donc la fenêtre au lieu de l'agrandir : **de la quinzième à la trentième minute**, une
+ * largeur identique à celle du dernier palier existant, donc un coût par épisode **inchangé**. Ce qui
+ * augmente n'est pas le prix d'une écoute mais le nombre d'écoutes, et il reste doublement borné : une
+ * saison dont le thème est prouvé, et seulement les épisodes qui lui avaient échappé — quatre sur dix
+ * pour *Silo* saison 3, une fois pour toutes.
+ *
+ * Au-delà de trente minutes, on ne cherche plus une introduction : sur un épisode d'une heure ce
+ * serait la moitié du programme, et un thème qui s'y trouverait ne serait plus un générique.
+ */
+export const SECONDE_ECOUTE = { debutSecondes: 900, dureeSecondes: 900 } as const;
+
 /** La plus large, pour qui n'a besoin que d'une valeur. */
 export const FENETRE_ANALYSE_SECONDES = FENETRES_ANALYSE_SECONDES[FENETRES_ANALYSE_SECONDES.length - 1];
 
@@ -163,11 +187,12 @@ export function choisirTemoins<T>(episodes: T[], index: number, combien = TEMOIN
  */
 export async function completerSaisonParLeSon(showTitle: string, season: number | null,
   options: {
-    lireEnveloppe?: (chemin: string, dureeSecondes: number) => Promise<Float64Array | null>;
+    lireEnveloppe?: (chemin: string, dureeSecondes: number, debutSecondes?: number) => Promise<Float64Array | null>;
     signal?: AbortSignal;
   } = {}): Promise<BilanSon> {
   const lireEnveloppe = options.lireEnveloppe
-    ?? ((chemin: string, secondes: number) => enveloppeDuFichier(chemin, { debutSecondes: 0, dureeSecondes: secondes }));
+    ?? ((chemin: string, secondes: number, debut = 0) =>
+      enveloppeDuFichier(chemin, { debutSecondes: debut, dureeSecondes: secondes }));
 
   const episodes = db.prepare(`SELECT m.id, m.episode_number, m.file_path, m.runtime_seconds,
       m.embedded_metadata_json, g.ecoute_le, g.reecoute_le, g.source_intro, g.intro_start_seconds
@@ -252,11 +277,13 @@ export async function completerSaisonParLeSon(showTitle: string, season: number 
    * donnée qui se recalcule en trois secondes.
    */
   const cache = new Map<string, Float64Array | null>();
-  const enveloppe = async (episode: LigneEpisode, secondes: number): Promise<Float64Array | null> => {
-    const cle = `${episode.id}:${secondes}`;
+  const enveloppe = async (episode: LigneEpisode, secondes: number, debut = 0): Promise<Float64Array | null> => {
+    // Le départ entre dans la clé : deux fenêtres de même largeur mais de départs différents ne
+    // portent pas le même son, et les confondre servirait la première à la place de la seconde.
+    const cle = `${episode.id}:${debut}:${secondes}`;
     const connue = cache.get(cle);
     if (connue !== undefined) return connue;
-    const calculee = await lireEnveloppe(episode.file_path, secondes);
+    const calculee = await lireEnveloppe(episode.file_path, secondes, debut);
     cache.set(cle, calculee);
     return calculee;
   };
@@ -288,17 +315,37 @@ export async function completerSaisonParLeSon(showTitle: string, season: number 
     retenirEcoute(episode.id, reecoutes.includes(episode.id));
     let repere: RepereSonore | null = null;
     let illisible = false;
-    const fenetres = echecsConsecutifs >= ESSAIS_AVANT_RENONCEMENT
-      ? FENETRES_ANALYSE_SECONDES.slice(0, 1) : FENETRES_ANALYSE_SECONDES;
+    /*
+     * Une seconde écoute ne refait pas la première : elle cherche **plus loin**.
+     *
+     * La rejouer à l'identique n'aurait aucun sens — mêmes fichiers, même fenêtre, même résultat. Ce
+     * qui change, c'est l'étendue : jusqu'à trente minutes, là où la première s'arrête à quinze. Le
+     * renoncement ne s'y applique pas non plus : il économise du temps sur les saisons sans thème, et
+     * celle-ci a prouvé le sien.
+     */
+    /*
+     * Une seconde écoute ne refait pas la première : elle cherche **là où celle-ci n'a pas regardé**.
+     *
+     * Rejouer les quinze premières minutes n'aurait aucun sens — mêmes fichiers, même fenêtre, même
+     * résultat. On passe donc à la tranche suivante, de même largeur et donc de même coût. Le
+     * renoncement ne s'y applique pas : il économise du temps sur les saisons sans thème, et celle-ci
+     * a prouvé le sien.
+     */
+    const secondeEcoute = reecoutes.includes(episode.id);
+    const fenetres = secondeEcoute
+      ? [SECONDE_ECOUTE.dureeSecondes]
+      : echecsConsecutifs >= ESSAIS_AVANT_RENONCEMENT
+        ? FENETRES_ANALYSE_SECONDES.slice(0, 1) : FENETRES_ANALYSE_SECONDES;
+    const depart = secondeEcoute ? SECONDE_ECOUTE.debutSecondes : 0;
     // Court d'abord, large ensuite : la grande majorité des génériques tient dans les cinq premières
     // minutes, et n'analyser que celles-là coûte neuf fois moins.
     for (const secondes of fenetres) {
       if (options.signal?.aborted) break;
-      const reference = await enveloppe(episode, secondes);
+      const reference = await enveloppe(episode, secondes, depart);
       if (!reference) { illisible = true; break; }
       const temoins: Float64Array[] = [];
       for (const voisin of choisirTemoins(episodes, index)) {
-        const envVoisin = await enveloppe(voisin, secondes);
+        const envVoisin = await enveloppe(voisin, secondes, depart);
         if (envVoisin) temoins.push(envVoisin);
       }
       repere = repereParEmpreinte(reference, temoins, attente);
@@ -310,8 +357,15 @@ export async function completerSaisonParLeSon(showTitle: string, season: number 
     if (!repere) continue;
     // Quand les chapitres de la série donnent une durée, elle fait foi : le son déborde volontiers
     // de quelques secondes sur ce qui entoure le générique.
-    const fin = duree != null ? repere.debutSecondes + duree : repere.finSecondes;
-    if (retenirIntroduction(episode.id, repere.debutSecondes, fin, "empreinte")) bilan.reperes += 1;
+    /*
+     * Les positions rendues sont **relatives à la tranche analysée**. Sans y remettre son départ, une
+     * introduction trouvée à la vingtième minute serait inscrite à la cinquième, et le lecteur
+     * proposerait de sauter une scène au beau milieu de l'épisode — une erreur bien pire que
+     * l'absence de proposition qu'on cherchait à corriger.
+     */
+    const debutAbsolu = repere.debutSecondes + depart;
+    const fin = duree != null ? debutAbsolu + duree : repere.finSecondes + depart;
+    if (retenirIntroduction(episode.id, debutAbsolu, fin, "empreinte")) bilan.reperes += 1;
   }
   return bilan;
 }

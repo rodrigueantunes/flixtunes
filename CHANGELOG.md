@@ -30,6 +30,23 @@
   475 secondes** selon l'épisode. La déduction par les voisins refuse de conclure devant une telle
   dispersion, et elle a raison — l'introduction arrive après une ouverture froide de longueur
   variable, ce n'est pas une propriété de la saison. Seule l'empreinte sonore peut la trouver.
+- **Et la seconde écoute cherche là où la première n'a pas regardé.** L'observation qui a tout
+  expliqué ne pouvait pas venir du code : l'introduction de S03E10 s'ouvre **vers la vingtième
+  minute**, alors que la fenêtre d'analyse la plus large s'arrête à **quinze**. Elle n'était donc pas
+  manquée par l'algorithme — elle n'était jamais cherchée là où elle se trouve, et une réécoute à
+  l'identique n'y aurait strictement rien changé.
+
+  La tentation était d'analyser trente minutes d'un coup. C'est le mauvais calcul : le coût croît avec
+  le **carré** de la fenêtre, et les quinze premières minutes ont déjà été fouillées sans rien donner
+  — les refaire, c'est payer quatre fois pour chercher trois fois au même endroit. La fenêtre est donc
+  **décalée et non agrandie** : de la quinzième à la trentième minute, largeur identique au dernier
+  palier existant, **coût par épisode inchangé**. Ce qui augmente n'est pas le prix d'une écoute mais
+  leur nombre, et il reste doublement borné.
+
+  Les positions rendues étant relatives à la tranche analysée, le décalage y est remis avant
+  l'enregistrement : sans cela une introduction trouvée à la vingtième minute aurait été inscrite à la
+  cinquième, et le lecteur aurait proposé de sauter une scène au milieu de l'épisode — une faute bien
+  pire que l'absence de proposition qu'on corrigeait.
 - **La description du paquet Linux est désormais sans accent.** Le Centre d'applications affichait
   « Votre cin?ma local ». Vérification faite sur les octets du `.deb` livré, le `control` **et** le
   `.desktop` contiennent de l'UTF-8 correct — `c3a9` pour `é`, `e28099` pour `’` : c'est l'affichage
@@ -37,10 +54,10 @@
   est reformulée en ASCII naturel, sans rien perdre du sens.
 - 893 tests serveur, 271 tests Web, 20 tests de bureau.
 
-**Ce qui reste ouvert.** La seconde écoute donne à *Silo* S03E10 une vraie chance, elle ne garantit
-pas de trouver : sa première écoute a échoué **malgré** la fenêtre large de quinze minutes, et j'ignore
-pourquoi. Si elle échoue encore, c'est l'algorithme de comparaison qu'il faudra regarder, et non la
-file d'attente.
+**Ce qui reste ouvert.** La seconde écoute a maintenant une raison précise d'aboutir — elle regarde
+enfin au bon endroit —, mais elle n'est pas garantie : si l'introduction de S03E10 se trouvait au-delà
+de la trentième minute, elle échapperait encore. Au-delà, on ne cherche plus une introduction : sur un
+épisode d'une heure ce serait la moitié du programme.
 
 ## 0.5.7.r17 — le client Windows cesse de tomber en silence
 
