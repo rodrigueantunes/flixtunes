@@ -91,6 +91,10 @@ interface LigneEpisode {
   ecoute_le: string | null;
   /** Début d'introduction déjà connu, quelle qu'en soit la source. */
   intro_start_seconds: number | null;
+  /** Date de la seconde écoute, `null` tant qu'elle n'a pas eu lieu : elle n'a lieu qu'une fois. */
+  reecoute_le: string | null;
+  /** D'où vient l'introduction connue : « empreinte » prouve que la saison a un thème. */
+  source_intro: string | null;
 }
 
 export interface BilanSon {
@@ -166,7 +170,7 @@ export async function completerSaisonParLeSon(showTitle: string, season: number 
     ?? ((chemin: string, secondes: number) => enveloppeDuFichier(chemin, { debutSecondes: 0, dureeSecondes: secondes }));
 
   const episodes = db.prepare(`SELECT m.id, m.episode_number, m.file_path, m.runtime_seconds,
-      m.embedded_metadata_json, g.ecoute_le, g.intro_start_seconds
+      m.embedded_metadata_json, g.ecoute_le, g.reecoute_le, g.source_intro, g.intro_start_seconds
     FROM media_items m
     LEFT JOIN marqueurs_generique g ON g.media_id = m.id
     WHERE m.kind = 'episode' AND m.available = 1 AND m.show_title = ?
@@ -195,6 +199,9 @@ export async function completerSaisonParLeSon(showTitle: string, season: number 
    * Le prédicat est volontairement le même que celui de `saisonsIncompletes` : ce qui met une saison
    * dans la file et ce qu'on y fait doivent désigner exactement les mêmes épisodes.
    */
+  // Le thème de cette saison a-t-il déjà été reconnu ? C'est ce qui autorise une seconde écoute.
+  const themeProuve = episodes.some((episode) => episode.source_intro === "empreinte");
+  const reecoutes: string[] = [];
   const aTraiter: Array<{ episode: LigneEpisode; index: number }> = [];
   for (const [index, episode] of episodes.entries()) {
     const chapitres = introDesChapitres(episode);
@@ -217,7 +224,17 @@ export async function completerSaisonParLeSon(showTitle: string, season: number 
       }
       continue;
     }
-    if (episode.intro_start_seconds != null || episode.ecoute_le != null) continue;
+    if (episode.intro_start_seconds != null) continue;
+    /*
+     * Déjà écouté : on ne recommence qu'une fois, et seulement si le thème de cette saison a été
+     * reconnu ailleurs. Les témoins sont alors bien meilleurs qu'au premier passage — plusieurs
+     * portent désormais un repère —, ce qui donne à cette reprise une vraie chance d'aboutir là où
+     * la première a échoué.
+     */
+    if (episode.ecoute_le != null) {
+      if (!themeProuve || episode.reecoute_le != null) continue;
+      reecoutes.push(episode.id);
+    }
     aTraiter.push({ episode, index });
   }
   bilan.aRepérer = aTraiter.length;
@@ -266,7 +283,9 @@ export async function completerSaisonParLeSon(showTitle: string, season: number 
 
   for (const { episode, index } of aTraiter) {
     if (options.signal?.aborted) break;
-    retenirEcoute(episode.id);
+    // On note tout de suite l'écoute — et, s'il s'agit de la seconde, qu'elle a eu lieu : un arrêt
+    // en cours de passe ne doit pas donner droit à une troisième.
+    retenirEcoute(episode.id, reecoutes.includes(episode.id));
     let repere: RepereSonore | null = null;
     let illisible = false;
     const fenetres = echecsConsecutifs >= ESSAIS_AVANT_RENONCEMENT

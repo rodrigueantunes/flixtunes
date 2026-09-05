@@ -111,7 +111,23 @@ import tv.flixtunes.app.ui.TexteDoux
 ) {
     val gabarit = LocalGabarit.current
     val edge = gabarit.margeBord.dp
-    var saison by remember(details.item.id) { mutableIntStateOf(details.seasons.firstOrNull()?.number ?: 1) }
+    /**
+     * **La fiche s'ouvre sur la saison qui nous concerne, et non sur la première.**
+     *
+     * Elle s'ouvrait toujours sur la saison 1. Ouvrir une série depuis « Continuer à regarder »
+     * amenait donc son début, et le bouton « Reprendre » — qui joue le premier épisode de la saison
+     * affichée — ramenait à S01E01. Deux symptômes, une seule cause.
+     *
+     * Le serveur désigne l'épisode de reprise dans `playableMediaId` ; on ouvre sa saison. À défaut,
+     * la première, qui est la bonne réponse pour une série jamais commencée.
+     */
+    val saisonDeReprise = remember(details.item.id, details.item.playableMediaId) {
+        val vise = details.item.playableMediaId
+        details.seasons.firstOrNull { saison ->
+            vise != null && saison.episodes.any { it.id == vise || it.playableMediaId == vise }
+        }?.number ?: details.seasons.firstOrNull()?.number ?: 1
+    }
+    var saison by remember(details.item.id) { mutableIntStateOf(saisonDeReprise) }
     var sourceVisible by remember(details.item.id) { mutableStateOf(false) }
     var version by remember(details.item.id) { mutableStateOf(details.versions.firstOrNull()?.mediaId ?: details.item.id) }
     val episodes = details.seasons.firstOrNull { it.number == saison }?.episodes.orEmpty()
@@ -165,7 +181,16 @@ import tv.flixtunes.app.ui.TexteDoux
                             if (item.progressPercent > 0) stringResource(R.string.fiche_reprendre)
                             else stringResource(R.string.fiche_lecture),
                             {
-                                val cible = if (item.kind == "show") episodes.firstOrNull() ?: item else item
+                                /*
+                                 * Pour une série, on prenait le premier épisode de la saison
+                                 * **affichée**. Le serveur désigne pourtant l'épisode de reprise ;
+                                 * on le suit, et l'on ne retombe sur le premier que s'il ne dit rien.
+                                 */
+                                val reprise = item.playableMediaId?.let { vise ->
+                                    details.seasons.flatMap { it.episodes }
+                                        .firstOrNull { it.id == vise || it.playableMediaId == vise }
+                                }
+                                val cible = if (item.kind == "show") reprise ?: episodes.firstOrNull() ?: item else item
                                 val identifiant = if (item.kind == "movie") version else cible.playableMediaId ?: cible.id
                                 play(cible.copy(id = identifiant))
                             },

@@ -652,14 +652,35 @@ function QuickMenu({ item, x, y, onPlay, onOpen, onWatched, onWatchlist, onClose
   </div>;
 }
 
-function DetailsModal({ details, profile, onPlay, onOpen, onOpenPerson, onExplore, onChanged, onClose, onCorrectMatch, onContext }: {
-  details: MediaDetails; profile: Profile; onPlay: (media: MediaItem) => void; onOpen: (media: CardItem) => void; onChanged: () => void;
+function DetailsModal({ details, demande, profile, onPlay, onOpen, onOpenPerson, onExplore, onChanged, onClose, onCorrectMatch, onContext }: {
+  details: MediaDetails; demande?: CardItem | null;
+  profile: Profile; onPlay: (media: MediaItem) => void; onOpen: (media: CardItem) => void; onChanged: () => void;
   onOpenPerson: (person: CatalogPerson) => void; onExplore: (query: string) => void;
   onCorrectMatch: (libraryId: string, catalogId: string) => void; onClose: () => void;
   onContext?: (item: CardItem, x: number, y: number) => void;
 }) {
   const dialogRef = useDialogFocus<HTMLDivElement>();
-  const [season, setSeason] = useState(details.seasons[0]?.number ?? 1);
+  /**
+   * **La saison ouverte est celle qui nous concerne, et non la première.**
+   *
+   * La fiche s'ouvrait toujours sur la saison 1. Cliquer un épisode depuis « Continuer à regarder »
+   * amenait donc une série au complet, positionnée sur son début — et le bouton « Reprendre », qui
+   * joue le premier épisode de la saison affichée, ramenait à S01E01. Deux symptômes, une seule cause.
+   *
+   * Trois réponses, de la plus précise à la plus générale : l'épisode qu'on vient de cliquer, sinon
+   * celui que le serveur désigne comme point de reprise, sinon la première saison — le cas d'une série
+   * qu'on ouvre sans l'avoir jamais commencée.
+   */
+  const saisonDe = (mediaId: string | null | undefined): number | null => {
+    if (!mediaId) return null;
+    const trouvee = details.seasons.find((saison) =>
+      saison.episodes.some((episode) => episode.id === mediaId || episode.playableMediaId === mediaId));
+    return trouvee?.number ?? null;
+  };
+  const saisonInitiale = (demande?.kind === "episode" ? saisonDe(demande.playableMediaId ?? demande.id) : null)
+    ?? saisonDe(details.item.playableMediaId)
+    ?? details.seasons[0]?.number ?? 1;
+  const [season, setSeason] = useState(saisonInitiale);
   const [inWatchlist, setInWatchlist] = useState(Boolean(details.item.inWatchlist));
   const [watchedState, setWatchedState] = useState<Record<string, boolean>>({});
   const [clearedProgress, setClearedProgress] = useState<Record<string, boolean>>({});
@@ -667,7 +688,21 @@ function DetailsModal({ details, profile, onPlay, onOpen, onOpenPerson, onExplor
   const [selectedVersion, setSelectedVersion] = useState(details.versions?.[0]?.mediaId ?? details.item.id);
   const activeSeason = details.seasons.find((entry) => entry.number === season);
   const episodes = activeSeason?.episodes ?? [];
-  const play = (item: MediaItem = details.item) => { const media = item.kind === "show" ? episodes[0] : item;
+  /**
+   * Ce qu'on lance quand on appuie sur « Lecture » ou « Reprendre ».
+   *
+   * Pour une série, on prenait `episodes[0]` — le premier épisode de la saison **affichée**. Le
+   * serveur désigne pourtant l'épisode de reprise dans `playableMediaId` ; on le suit, et l'on ne
+   * retombe sur le premier de la saison que s'il ne dit rien.
+   */
+  const episodeDeReprise = (): MediaItem | null => {
+    const vise = details.item.playableMediaId;
+    if (!vise) return episodes[0] ?? null;
+    const trouve = details.seasons.flatMap((saison) => saison.episodes)
+      .find((episode) => episode.id === vise || episode.playableMediaId === vise);
+    return trouve ?? episodes[0] ?? null;
+  };
+  const play = (item: MediaItem = details.item) => { const media = item.kind === "show" ? episodeDeReprise() : item;
     const id = item === details.item && item.kind === "movie" ? selectedVersion : media?.playableMediaId ?? media?.id;
     if (id && media) onPlay({ ...media, id }); };
   const isWatched = (entry: MediaItem) => watchedState[entry.id] ?? entry.completed;
@@ -762,6 +797,8 @@ export function App() {
   const [matchTarget, setMatchTarget] = useState<{ library: LibraryFolder; catalogId: string } | null>(null);
   useRemoteNavigation();
   const [results, setResults] = useState<CardItem[]>([]); const [details, setDetails] = useState<MediaDetails | null>(null);
+  /** Ce qu'on a cliqué pour ouvrir la fiche : c'est lui qui dit quelle saison montrer. */
+  const [demandeFiche, setDemandeFiche] = useState<CardItem | null>(null);
   const [personDetails, setPersonDetails] = useState<PersonDetails | null>(null);
   const [quickMenu, setQuickMenu] = useState<{ item: CardItem; x: number; y: number } | null>(null);
   const [playing, setPlaying] = useState<string | null>(playingFromHash);
@@ -894,7 +931,15 @@ export function App() {
   };
     window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey); }, []);
 
+  /*
+   * On retient **ce qui a été cliqué**, et pas seulement la fiche qu'on va chercher.
+   *
+   * Un clic sur un épisode ouvre la fiche de sa série — c'est le bon comportement, on veut voir la
+   * saison et les voisins. Mais l'épisode demandé était perdu en route, et la fiche s'ouvrait sur la
+   * saison 1 comme si l'on partait de zéro.
+   */
   const openDetails = async (item: CardItem) => { if (!profile) return; setQuickMenu(null); setPersonDetails(null);
+    setDemandeFiche(item);
     try { setDetails(await api.details(item.catalogId ?? item.id, profile.id)); } catch (e) { setError(e instanceof Error ? e.message : "Fiche indisponible"); } };
   const openPerson = async (person: CatalogPerson) => { if (!profile) return; setDetails(null); setQuickMenu(null);
     try { setPersonDetails(await api.person(person.id, profile.id)); } catch (e) { setError(e instanceof Error ? e.message : "Filmographie indisponible"); } };
@@ -1027,9 +1072,10 @@ export function App() {
       onChanged={() => refreshProfiles(group)} onBackGroup={() => { setProfileOpen(false); setProfile(null); setHome(null); setGroupOpen(true); }}
       onClose={() => { if (profile) setProfileOpen(false); else setGroupOpen(true); }} />}
     {profileToUnlock && <ProfileUnlockDialog profile={profileToUnlock} onUnlocked={() => activateProfile(profileToUnlock)} onClose={() => setProfileToUnlock(null)} />}
-    {details && profile && <DetailsModal details={details} profile={profile} onPlay={startPlayback} onOpen={(item) => void openDetails(item)}
+    {details && profile && <DetailsModal details={details} demande={demandeFiche} profile={profile} onPlay={startPlayback} onOpen={(item) => void openDetails(item)}
       onOpenPerson={(person) => void openPerson(person)} onExplore={explore} onContext={openContext}
-      onChanged={() => void loadHome()} onCorrectMatch={(libraryId, catalogId) => void openMatchCorrection(libraryId, catalogId)} onClose={() => setDetails(null)} />}
+      onChanged={() => void loadHome()} onCorrectMatch={(libraryId, catalogId) => void openMatchCorrection(libraryId, catalogId)}
+      onClose={() => { setDetails(null); setDemandeFiche(null); }} />}
     {personDetails && <PersonModal details={personDetails} onOpen={(item) => void openDetails(item)} onClose={() => setPersonDetails(null)} onContext={openContext} />}
     {quickMenu && profile && <QuickMenu item={quickMenu.item} x={quickMenu.x} y={quickMenu.y} onClose={() => setQuickMenu(null)}
       onPlay={() => { const mediaId = quickMenu.item.playableMediaId ?? (quickMenu.item.kind === "show" ? null : quickMenu.item.id);

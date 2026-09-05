@@ -190,7 +190,21 @@ function saisonsIncompletes(): Array<{ show_title: string; season_number: number
     WHERE m.kind = 'episode' AND m.available = 1 AND m.show_title IS NOT NULL AND m.file_path IS NOT NULL
     GROUP BY m.show_title, m.season_number
     HAVING COUNT(*) >= 2
-       AND SUM(CASE WHEN g.intro_start_seconds IS NULL AND g.ecoute_le IS NULL THEN 1 ELSE 0 END) >= 1`)
+       AND (
+         SUM(CASE WHEN g.intro_start_seconds IS NULL AND g.ecoute_le IS NULL THEN 1 ELSE 0 END) >= 1
+         OR (
+           /*
+            * **La seconde chance d'une saison dont le thème est prouvé.**
+            *
+            * Un épisode écouté bredouille sortait de la file pour toujours. C'est juste quand la
+            * série n'a pas de thème commun ; ça ne l'est pas quand six de ses dix épisodes ont vu
+            * le leur reconnu — cas relevé sur *Silo* saison 3. La saison revient donc une fois, et
+            * une seule, et seulement si l'empreinte y a déjà réussi au moins une fois.
+            */
+           SUM(CASE WHEN g.source_intro = 'empreinte' THEN 1 ELSE 0 END) >= 1
+           AND SUM(CASE WHEN g.intro_start_seconds IS NULL AND g.reecoute_le IS NULL THEN 1 ELSE 0 END) >= 1
+         )
+       )`)
     .all() as unknown as Array<{ show_title: string; season_number: number | null }>;
 }
 

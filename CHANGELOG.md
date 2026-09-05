@@ -1,5 +1,47 @@
 # Journal des versions
 
+## 0.5.7.r18 — « Reprendre » reprenait au premier épisode
+
+- **Le serveur désignait le mauvais épisode, et les deux clients le suivaient.** La fiche d'une série
+  prenait `episodes[0]` — le tout premier de la première saison — et rapportait *sa* progression comme
+  étant celle de la série. « Reprendre » ramenait donc à S01E01 sur le Web comme sur Android, et une
+  série finie s'annonçait à 100 % parce que son premier épisode l'était. Vérifié sur le NAS : pour
+  *Silo*, le `playableMediaId` de la fiche pointait sur S01E01, déjà vu à 100 %, alors que la reprise
+  attendue était S03E10 à 43 %.
+
+  La fiche choisit maintenant, dans cet ordre : l'épisode **commencé et non fini**, sinon le premier
+  **non terminé**, sinon le tout premier — la série est finie, on la recommence. C'est exactement la
+  règle que la requête des **cartes** appliquait déjà ; la fiche s'en écartait sans raison.
+- **Les fiches s'ouvraient toujours sur la saison 1.** Cliquer un épisode depuis « Continuer à
+  regarder » amenait la série positionnée à son début — deux symptômes, une seule cause. Web et
+  Android ouvrent désormais la saison de l'épisode demandé, à défaut celle du point de reprise. Le
+  Web retient en plus **ce qui a été cliqué**, qui était perdu en route.
+- **Un épisode écouté bredouille n'était plus jamais repris.** La règle est juste pour une série sans
+  thème commun — la réécouter serait du décodage perdu, répété à chaque analyse. Elle est fausse quand
+  la saison **a** un thème et qu'on l'a prouvé ailleurs.
+
+  Mesuré sur *Silo* saison 3 : six épisodes sur dix ont leur introduction, quatre non — et ces
+  quatre-là étaient condamnés définitivement. Une saison où l'empreinte a déjà réussi au moins une
+  fois a donc droit à **une seconde écoute, une seule**, bornée par une colonne dédiée pour ne pas
+  retomber dans le gaspillage. Les témoins y sont bien meilleurs qu'au premier passage, puisque six
+  d'entre eux portent désormais un repère.
+
+  *Ce que la déduction ne pouvait pas faire* : les introductions de *Silo* s'ouvrent entre **227 et
+  475 secondes** selon l'épisode. La déduction par les voisins refuse de conclure devant une telle
+  dispersion, et elle a raison — l'introduction arrive après une ouverture froide de longueur
+  variable, ce n'est pas une propriété de la saison. Seule l'empreinte sonore peut la trouver.
+- **La description du paquet Linux est désormais sans accent.** Le Centre d'applications affichait
+  « Votre cin?ma local ». Vérification faite sur les octets du `.deb` livré, le `control` **et** le
+  `.desktop` contiennent de l'UTF-8 correct — `c3a9` pour `é`, `e28099` pour `’` : c'est l'affichage
+  qui abîme le texte, pas le paquet. Plutôt que de laisser une vitrine qui semble cassée, la phrase
+  est reformulée en ASCII naturel, sans rien perdre du sens.
+- 893 tests serveur, 271 tests Web, 20 tests de bureau.
+
+**Ce qui reste ouvert.** La seconde écoute donne à *Silo* S03E10 une vraie chance, elle ne garantit
+pas de trouver : sa première écoute a échoué **malgré** la fenêtre large de quinze minutes, et j'ignore
+pourquoi. Si elle échoue encore, c'est l'algorithme de comparaison qu'il faudra regarder, et non la
+file d'attente.
+
 ## 0.5.7.r17 — le client Windows cesse de tomber en silence
 
 Cinq correctifs issus d'un audit ciblé du client de bureau. Le fil commun : **une panne ne laissait

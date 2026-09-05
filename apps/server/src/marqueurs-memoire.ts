@@ -34,6 +34,28 @@ db.exec(`
 `);
 
 /**
+ * **La seconde écoute, et pourquoi il en fallait une.**
+ *
+ * Un épisode écouté sans résultat n'était plus jamais repris — « on n'écoute jamais deux fois », et
+ * c'est la bonne règle pour une série sans thème commun : la réécouter serait du décodage pur perdu,
+ * répété à chaque analyse.
+ *
+ * Mais elle est fausse quand la saison **a** un thème, et qu'on l'a prouvé ailleurs. Relevé sur
+ * *Silo* saison 3 : six épisodes sur dix ont leur introduction trouvée par empreinte, quatre non — et
+ * ces quatre-là étaient condamnés définitivement, alors que le thème existe et que les témoins pour
+ * le reconnaître sont désormais bien meilleurs qu'au premier passage, puisque six d'entre eux
+ * portent maintenant un repère.
+ *
+ * D'où cette colonne : elle borne la reprise à **une seule fois par épisode**, ce qui évite de
+ * retomber dans le gaspillage qu'on avait corrigé. Une saison sans le moindre repère n'y a pas droit
+ * du tout.
+ */
+const colonnesDesMarqueurs = db.prepare("PRAGMA table_info(marqueurs_generique)").all() as Array<{ name: string }>;
+if (!colonnesDesMarqueurs.some((colonne) => colonne.name === "reecoute_le")) {
+  db.exec("ALTER TABLE marqueurs_generique ADD COLUMN reecoute_le TEXT");
+}
+
+/**
  * Reprise de la forme à colonne unique livrée en r70.
  *
  * Le contenu est **entièrement dérivé** : chapitres relus, saisons recoupées, sons comparés. Le
@@ -143,11 +165,18 @@ export function retenirIntroduction(mediaId: string, debutSecondes: number, finS
  * indéfiniment — quelques secondes de décodage par épisode, multipliées par le nombre d'analyses.
  * Une série qui n'a pas de générique n'en aura pas davantage au prochain scan.
  */
-export function retenirEcoute(mediaId: string): void {
-  db.prepare(`INSERT INTO marqueurs_generique (media_id, ecoute_le, calcule_le)
-    VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    ON CONFLICT(media_id) DO UPDATE SET ecoute_le = CURRENT_TIMESTAMP`)
-    .run(mediaId);
+export function retenirEcoute(mediaId: string, seconde = false): void {
+  /*
+   * La seconde écoute s'inscrit dans sa propre colonne.
+   *
+   * Écraser `ecoute_le` suffirait à retenir qu'on a écouté, mais on perdrait ce qui borne la reprise :
+   * sans trace distincte, la saison au thème prouvé redeviendrait éligible à chaque analyse, et l'on
+   * réécouterait indéfiniment les épisodes qui ne donnent rien. Une fois, pas deux.
+   */
+  db.prepare(`INSERT INTO marqueurs_generique (media_id, ecoute_le, reecoute_le, calcule_le)
+    VALUES (?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(media_id) DO UPDATE SET ecoute_le = CURRENT_TIMESTAMP${seconde ? ", reecoute_le = CURRENT_TIMESTAMP" : ""}`)
+    .run(mediaId, seconde ? new Date().toISOString() : null);
 }
 
 /** Oublie ce qu'une méthode avait établi, pour le refaire autrement. */

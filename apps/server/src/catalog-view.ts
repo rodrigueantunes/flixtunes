@@ -873,7 +873,33 @@ export function getDetails(profileId: string, id: string): MediaDetails | null {
       episodes,
     };
   });
-  const firstEpisode = seasonDetails.flatMap((season) => season.episodes)[0] ?? null;
+  /**
+   * **L'épisode par lequel on reprend une série, et non son tout premier.**
+   *
+   * La fiche désignait `episodes[0]` — le premier épisode de la première saison —, et rapportait *sa*
+   * progression comme étant celle de la série. Conséquence visible partout : « Reprendre » sur
+   * n'importe quelle série ramenait à S01E01, sur le Web comme sur Android, et la fiche d'une série
+   * finie s'annonçait à 100 % parce que son premier épisode l'était.
+   *
+   * Ce n'était pas une faute d'affichage : les deux clients ne faisaient que suivre ce que le serveur
+   * leur désignait. La rangée « Continuer à regarder » savait pourtant répondre juste — le
+   * renseignement existait, il n'était simplement pas calculé ici.
+   *
+   * Trois cas, dans cet ordre, et l'ordre est ce qui compte :
+   *
+   * 1. **l'épisode commencé et non fini** — celui qu'on a quitté en cours de route, le plus ancien
+   *    s'il y en a plusieurs ; c'est très exactement ce que « reprendre » veut dire ;
+   * 2. sinon **le premier non terminé**, c'est-à-dire celui qui vient ensuite ;
+   * 3. sinon le tout premier : la série est finie, on la recommence — et là, `episodes[0]` est la
+   *    bonne réponse.
+   *
+   * Les épisodes arrivent déjà dans l'ordre des saisons puis des numéros, ce qui rend « le plus
+   * ancien » lisible sans tri supplémentaire.
+   */
+  const tousLesEpisodes = seasonDetails.flatMap((season) => season.episodes) as MediaItemWithProgress[];
+  const commence = tousLesEpisodes.find((episode) => !episode.completed && (episode.progressPercent ?? 0) > 0);
+  const aVenir = tousLesEpisodes.find((episode) => !episode.completed);
+  const firstEpisode = commence ?? aVenir ?? tousLesEpisodes[0] ?? null;
   const firstEpisodeProgress = firstEpisode as MediaItemWithProgress | null;
   const item: MediaItemWithProgress & { seasonCount: number; libraryId: string | null } = {
     id: catalog.id,
