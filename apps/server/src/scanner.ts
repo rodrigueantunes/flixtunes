@@ -521,16 +521,18 @@ export async function scanLibraryById(libraryId: string, options: ScanOptions = 
   const upsert = db.prepare(`
     INSERT INTO media_items (
       id, kind, title, sort_title, search_title, year, overview, poster_url, backdrop_url, file_path,
-      show_title, season_number, episode_number, runtime_seconds, external_provider, external_id, imdb_id,
+      show_title, season_number, episode_number, air_date, runtime_seconds, external_provider, external_id, imdb_id,
       file_size, file_modified_at, library_id, catalog_id, embedded_metadata_json, audio_languages, subtitle_languages,
       content_type, edition, source_ids_json, available
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
     ON CONFLICT(file_path) DO UPDATE SET
       kind = excluded.kind, title = excluded.title, sort_title = excluded.sort_title,
       search_title = excluded.search_title,
       year = COALESCE(excluded.year, media_items.year), overview = COALESCE(excluded.overview, media_items.overview),
       poster_url = excluded.poster_url, backdrop_url = excluded.backdrop_url, show_title = excluded.show_title,
       season_number = excluded.season_number, episode_number = excluded.episode_number,
+      -- Une date connue n'est jamais effacee par une analyse qui n'en trouve pas.
+      air_date = COALESCE(excluded.air_date, media_items.air_date),
       runtime_seconds = COALESCE(excluded.runtime_seconds, media_items.runtime_seconds),
       external_provider = excluded.external_provider,
       external_id = excluded.external_id,
@@ -709,7 +711,7 @@ export async function scanLibraryById(libraryId: string, options: ScanOptions = 
         normaliseForSearch(`${catalog.showTitle ?? ""} ${catalog.title}`),
         catalog.metadata?.year ?? parsed.year,
         catalog.overview, catalog.posterUrl, catalog.backdropUrl, filePath,
-        catalog.showTitle, parsed.seasonNumber, parsed.episodeNumber,
+        catalog.showTitle, parsed.seasonNumber, parsed.episodeNumber, parsed.airDate ?? null,
         catalog.metadata?.runtimeSeconds ?? embedded?.durationSeconds ?? null, catalog.metadata?.provider ?? null,
         catalog.metadata?.externalId ?? null, catalog.metadata?.imdbId ?? null, info.size, Math.floor(info.mtimeMs), library.id,
         catalog.catalogId, embedded ? JSON.stringify(embedded.raw) : "{}", JSON.stringify(embedded?.audioLanguages ?? []),

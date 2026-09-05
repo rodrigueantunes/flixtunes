@@ -53,6 +53,7 @@ const { apiMock } = vi.hoisted(() => ({ apiMock: {
   chainesLive: vi.fn(async () => ({ items: [], total: 0, offset: 0, limit: 60 })),
   // Vu d'un client : la fonction est éteinte, donc l'entrée « Live TV » n'existe pas dans le menu.
   etatLive: vi.fn(async () => ({ disponible: false, chaines: 0, rafraichieLe: null as string | null })),
+  etatWeb: vi.fn(async () => ({ disponible: false, bibliotheques: 0, chaines: 0 })),
   listesLiveClient: vi.fn(async () => []),
   paysLive: vi.fn(async () => []),
   favoriLive: vi.fn(),

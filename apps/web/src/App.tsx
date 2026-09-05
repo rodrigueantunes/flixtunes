@@ -30,13 +30,16 @@ const Player = lazy(() => import("./Player").then((module) => ({ default: module
  * pas payer son poids au premier affichage. Le lecteur du direct emporte en plus `hls.js`.
  */
 const LiveTv = lazy(() => import("./LiveTv").then((module) => ({ default: module.LiveTv })));
+// Meme raison que pour le direct : un rayon que tout le monde n'a pas ne doit pas peser sur le
+// premier affichage de ceux qui ne l'ont pas.
+const RayonWeb = lazy(() => import("./RayonWeb").then((module) => ({ default: module.RayonWeb })));
 const LecteurDirect = lazy(() => import("./LecteurDirect").then((module) => ({ default: module.LecteurDirect })));
 import { LibraryManager } from "./LibraryManager";
 import { MetadataManager } from "./MetadataManager";
 import { SetupWizard } from "./SetupWizard";
 
 type CardItem = MediaItem & { seasonCount?: number };
-type AppView = "home" | "movies" | "shows" | "live" | "history";
+type AppView = "home" | "movies" | "shows" | "web" | "live" | "history";
 type CatalogSort = "title" | "release" | "added";
 const profileColors = ["#2968ff", "#8b5cf6", "#ec4899", "#f59e0b", "#10b981", "#06b6d4"];
 const isTestDom = typeof navigator !== "undefined" && navigator.userAgent.toLowerCase().includes("jsdom");
@@ -61,7 +64,7 @@ function playingFromHash(): string | null {
  * l'oubli de l'une ne se serait vu que par un retour au mauvais endroit.
  */
 const ANCRES: Record<AppView, string> = {
-  home: "top", movies: "films", shows: "series", live: "direct", history: "historique",
+  home: "top", movies: "films", shows: "series", web: "web", live: "direct", history: "historique",
 };
 
 function viewFromHash(): AppView {
@@ -71,12 +74,18 @@ function viewFromHash(): AppView {
   return trouvee && trouvee !== "home" ? trouvee : "home";
 }
 
-function Icon({ name }: { name: "home" | "movie" | "tv" | "search" | "settings" | "play" | "info" | "history" }) {
+export function Icon({ name }: {
+  name: "home" | "movie" | "tv" | "search" | "settings" | "play" | "info" | "history" | "web" | "folder";
+}) {
   const paths = {
     home: "M3 11.5 12 4l9 7.5V21h-6v-6H9v6H3z", movie: "M4 5h16v14H4zM8 5v14M16 5v14M4 9h4m8 0h4M4 15h4m8 0h4",
     tv: "M4 7h16v11H4zM9 22h6M12 18v4M9 3l3 4 3-4", search: "m20 20-4.5-4.5M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15",
     settings: "M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7M19 12a7 7 0 1 1-14 0 7 7 0 0 1 14 0", play: "M8 5v14l11-7z",
     info: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20M12 10v7m0-10v.01", history: "M3 12a9 9 0 1 0 3-6.7L3 8m0-5v5h5M12 7v5l3 2",
+    // Un globe pour le rayon Web, un dossier pour ses paliers : deux formes distinctes de l'écran
+    // du direct, qui porte déjà le poste de télévision.
+    web: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20M2 12h20M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20",
+    folder: "M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z",
   };
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d={paths[name]} /></svg>;
 }
@@ -811,6 +820,8 @@ export function App() {
    * demandé — « le Live TV apparaît après Série TV **seulement si paramétré** ».
    */
   const [directDisponible, setDirectDisponible] = useState(false);
+  /** Le rayon Web n'existe que si un dossier a ete declare. Meme regle que le direct. */
+  const [webDisponible, setWebDisponible] = useState(false);
   const [chaineDirect, setChaineDirect] = useState<ChaineDirect | null>(null);
   /**
    * La chaîne quittée, pour y revenir sans repasser par la grille.
@@ -896,6 +907,7 @@ export function App() {
      * l'entrée absente, ce qui est le comportement voulu par défaut.
      */
     void api.etatLive().then((direct) => setDirectDisponible(direct.disponible)).catch(() => setDirectDisponible(false));
+    void api.etatWeb().then((web) => setWebDisponible(web.disponible)).catch(() => setWebDisponible(false));
     try { setHome(await api.home(active.id)); setError(null); } catch {
     if (active.protected && !api.hasProfileAccess(active.id)) { setHome(null); setProfile(null); setProfileToUnlock(active); setError(null); return; }
     setError("Impossible de joindre le serveur FlixTunes."); } };
@@ -1053,7 +1065,7 @@ export function App() {
 
   const featured = home?.featured; const empty = home && !home.recentlyAdded.length;
   return <div className="app-shell"><a className="skip-link" href="#main-content">Aller au contenu</a><header className="topbar"><a className="brand" href="#top" onClick={(event) => { event.preventDefault(); navigate("home"); }}><img src="/brand/flixtunes-logo.png" alt="" /><span>Flix<span>Tunes</span></span></a>
-    <nav aria-label="Menu principal"><a className={view === "home" ? "active" : ""} href="#top" onClick={(event) => { event.preventDefault(); navigate("home"); }}><Icon name="home" />Accueil</a><a className={view === "movies" ? "active" : ""} href="#films" onClick={(event) => { event.preventDefault(); navigate("movies"); }}><Icon name="movie" />Films</a><a className={view === "shows" ? "active" : ""} href="#series" onClick={(event) => { event.preventDefault(); navigate("shows"); }}><Icon name="tv" />Séries TV</a>{directDisponible && <a className={view === "live" ? "active" : ""} href="#direct" onClick={(event) => { event.preventDefault(); navigate("live"); }}><Icon name="tv" />Live TV</a>}<a className={view === "history" ? "active" : ""} href="#historique" onClick={(event) => { event.preventDefault(); navigate("history"); }}><Icon name="history" />Historique</a></nav>
+    <nav aria-label="Menu principal"><a className={view === "home" ? "active" : ""} href="#top" onClick={(event) => { event.preventDefault(); navigate("home"); }}><Icon name="home" />Accueil</a><a className={view === "movies" ? "active" : ""} href="#films" onClick={(event) => { event.preventDefault(); navigate("movies"); }}><Icon name="movie" />Films</a><a className={view === "shows" ? "active" : ""} href="#series" onClick={(event) => { event.preventDefault(); navigate("shows"); }}><Icon name="tv" />Séries TV</a>{webDisponible && <a className={view === "web" ? "active" : ""} href="#web" onClick={(event) => { event.preventDefault(); navigate("web"); }}><Icon name="web" />Web</a>}{directDisponible && <a className={view === "live" ? "active" : ""} href="#direct" onClick={(event) => { event.preventDefault(); navigate("live"); }}><Icon name="tv" />Live TV</a>}<a className={view === "history" ? "active" : ""} href="#historique" onClick={(event) => { event.preventDefault(); navigate("history"); }}><Icon name="history" />Historique</a></nav>
     <div className="top-actions"><button className="icon-button" onClick={() => setLibrariesOpen(true)} aria-label="Gérer les dossiers"><Icon name="settings" /></button><button className="icon-button" onClick={() => setSearchOpen((v) => !v)} aria-label="Rechercher"><Icon name="search" /></button>
     {profile && <button className="profile" onClick={() => setProfileOpen(true)}><span style={{ background: profile.avatarColor }}>{profile.name[0]}</span><b>{profile.name}</b></button>}</div></header>
     {searchOpen && <div className="search-panel"><Icon name="search" /><input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Titres, acteurs, réalisateurs, genres…" />{query && <div className="search-results">{results.length ? results.map((item) => <MediaCard key={item.id} item={item} onOpen={openDetails} onContext={openContext} />) : <p>Aucun résultat.</p>}</div>}</div>}
@@ -1064,6 +1076,8 @@ export function App() {
       {view === "home" && !empty && home && <div className="content"><Rail title="Continuer à regarder" items={home.continueWatching} onOpen={openDetails} onContext={openContext} />{profile && <RecommendationRail recommendations={home.recommendations ?? []} profile={profile} onOpen={openDetails} onChanged={() => void loadHome()} onContext={openContext} />}<Rail title="Ma liste" items={home.watchlist ?? []} onOpen={openDetails} onContext={openContext} /><Rail title="Ajouts récents" items={home.recentlyAdded} onOpen={openDetails} onContext={openContext} /><Rail title="Films" items={home.movies} onOpen={openDetails} onContext={openContext} /><Rail title="Séries" items={home.shows} onOpen={openDetails} onContext={openContext} /><Rail title="Déjà vus" items={home.completed} onOpen={openDetails} onContext={openContext} /><Rail title="Historique récent" items={home.watchedRecently} onOpen={openDetails} onContext={openContext} /></div>}
       {home && profile && view === "movies" && <CatalogPage kind="movies" profileId={profile.id} total={home.movieTotal ?? home.movies.length} onOpen={openDetails} onContext={openContext} />}
       {home && profile && view === "shows" && <CatalogPage kind="shows" profileId={profile.id} total={home.showTotal ?? home.shows.length} onOpen={openDetails} onContext={openContext} />}
+      {view === "web" && webDisponible && profile
+        && <Suspense fallback={<HomeSkeleton />}><RayonWeb profileId={profile.id} onPlay={startPlayback} /></Suspense>}
       {view === "live" && directDisponible && <Suspense fallback={<HomeSkeleton />}><LiveTv onPlay={ouvrirChaine} /></Suspense>}
       {home && view === "history" && <section className="catalog-page"><header className="catalog-header"><div><span className="eyebrow">Votre activité</span><h1>Historique</h1></div></header><Rail title="Déjà vus" items={home.completed} onOpen={openDetails} onContext={openContext} /><Rail title="Historique récent" items={home.watchedRecently} onOpen={openDetails} onContext={openContext} /></section>}
     </main><footer><span>FlixTunes</span><button onClick={() => setLibrariesOpen(true)}>Gérer les bibliothèques</button><small>Votre cinéma. Votre réseau.</small></footer>

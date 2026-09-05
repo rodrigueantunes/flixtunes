@@ -294,6 +294,14 @@ ensureMediaColumn("subtitle_languages", "TEXT");
 ensureMediaColumn("content_type", "TEXT NOT NULL DEFAULT 'movie'");
 ensureMediaColumn("edition", "TEXT");
 ensureMediaColumn("source_ids_json", "TEXT NOT NULL DEFAULT '{}'");
+/**
+ * La date de publication, telle que la source la donne.
+ *
+ * Elle etait analysee depuis toujours et jetee aussitot : rien ne la stockait. Une video web s'ordonne
+ * par elle et l'affiche sous son titre — la deduire du numero d'episode donnerait une date fausse d'un
+ * ou deux jours des que deux publications d'un meme jour se sont decalees.
+ */
+ensureMediaColumn("air_date", "TEXT");
 db.exec(`CREATE INDEX IF NOT EXISTS idx_media_available_library_created ON media_items(available, library_id, created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_media_catalog_available ON media_items(catalog_id, available);
   -- idx_catalog_library_kind ne sert pas aux parcours qui ne connaissent pas la bibliothèque : la
@@ -989,6 +997,7 @@ type MediaRow = {
   show_title: string | null;
   season_number: number | null;
   episode_number: number | null;
+  air_date: string | null;
   runtime_seconds: number | null;
   age_rating?: number | null;
   rating_label?: string | null;
@@ -1103,6 +1112,7 @@ export function mapMedia(row: MediaRow): MediaItemWithProgress {
     showTitle: row.show_title,
     seasonNumber: row.season_number,
     episodeNumber: row.episode_number,
+    airDate: row.air_date ?? null,
     runtimeSeconds: row.runtime_seconds,
     ageRating: row.age_rating ?? null,
     ratingLabel: row.rating_label ?? null,

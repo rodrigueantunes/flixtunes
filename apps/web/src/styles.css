@@ -1270,3 +1270,60 @@ html.bureau-video, body.bureau-video { background: transparent; }
 .genre-reset { min-height: 24px; padding: .15rem .6rem; border: 1px solid var(--line); border-radius: var(--rayon-pastille);
   background: transparent; color: var(--muted); cursor: pointer; font-size: .76rem; }
 .genre-reset:hover { color: #f7f9ff; border-color: var(--blue-light); }
+
+/*
+ * Le rayon Web : trois grilles, trois échelles.
+ *
+ * Une chaîne se reconnaît à son avatar, rond et petit — c'est une identité, pas une affiche. Un
+ * dossier n'a rien à montrer qu'un nom et un compte. Une vidéo, elle, se choisit sur sa vignette :
+ * les plateformes la produisent en 16/9 et c'est à cette forme que l'œil s'attend. La carte est donc
+ * plus large que celle du direct, où l'on parcourt des milliers de logos carrés.
+ */
+.web-grille { display: grid; gap: var(--pas-3); margin-top: var(--pas-3); }
+.web-grille-chaines { grid-template-columns: repeat(auto-fill, minmax(clamp(130px, 10vw, 190px), 1fr)); }
+.web-grille-dossiers { grid-template-columns: repeat(auto-fill, minmax(clamp(150px, 12vw, 230px), 1fr)); }
+.web-grille-videos { grid-template-columns: repeat(auto-fill, minmax(clamp(190px, 16vw, 300px), 1fr)); }
+
+.web-carte { position: relative; display: grid; gap: var(--pas-1); padding: var(--pas-2);
+  border: 1px solid var(--line); border-radius: var(--rayon-panneau); background: #ffffff08; color: inherit;
+  text-align: left; cursor: pointer; transition: background var(--duree-reponse), border-color var(--duree-reponse); }
+.web-carte:hover, .web-carte:focus-visible { border-color: var(--blue-light); background: #ffffff14; }
+.web-carte:disabled { cursor: default; opacity: .55; }
+.web-carte-chaine { justify-items: center; text-align: center; padding: var(--pas-3) var(--pas-2); }
+.web-carte-dossier { align-content: start; }
+
+.web-nom { overflow: hidden; font-weight: 600; font-size: .9rem; line-height: 1.3;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.web-carte small { overflow: hidden; color: var(--muted); font-size: .76rem;
+  text-overflow: ellipsis; white-space: nowrap; }
+/* La date porte le tri : elle se lit, elle ne se devine pas. Une date absente ne laisse rien. */
+.web-date { font-variant-numeric: tabular-nums; }
+
+.web-portrait { width: clamp(56px, 5vw, 84px); height: clamp(56px, 5vw, 84px); object-fit: cover;
+  border-radius: 50%; background: #ffffff10; }
+.web-paysage { width: 100%; aspect-ratio: 16 / 9; object-fit: cover;
+  border-radius: var(--rayon-commande); background: #ffffff10; }
+.web-initiale { display: grid; place-items: center; font-size: 1.5rem; font-weight: 700; color: var(--muted); }
+.web-dossier-icone { display: grid; place-items: center; width: 100%; aspect-ratio: 16 / 9;
+  border-radius: var(--rayon-commande); background: #ffffff0d; color: var(--blue-light); }
+.web-dossier-icone svg { width: 34%; height: 34%; fill: none; stroke: currentColor; stroke-width: 1.6;
+  stroke-linecap: round; stroke-linejoin: round; }
+
+/* La progression, posée sur la vignette : on retrouve d'un coup d'œil ce qu'on avait commencé. */
+.web-progression { position: absolute; inset: auto var(--pas-2) auto var(--pas-2);
+  top: calc(var(--pas-2) + 56.25% - 5px); height: 3px; border-radius: 2px; background: #ffffff2e; }
+.web-progression > i { display: block; height: 100%; border-radius: 2px; background: var(--accent); }
+
+/*
+ * Le fil d'Ariane.
+ *
+ * Il n'est pas décoratif : sans lui, on entre dans une arborescence sans pouvoir remonter autrement
+ * qu'en repartant du rayon. Chaque segment est un bouton, et le dernier reste cliquable — revenir au
+ * niveau où l'on est déjà ne coûte rien et évite d'avoir à viser juste.
+ */
+.web-fil { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; margin-top: .35rem;
+  color: var(--muted); font-size: .85rem; }
+.web-fil span { display: inline-flex; align-items: center; gap: .35rem; }
+.web-fil button { padding: 0; border: 0; background: none; color: var(--blue-light); font: inherit;
+  cursor: pointer; }
+.web-fil button:hover, .web-fil button:focus-visible { text-decoration: underline; }

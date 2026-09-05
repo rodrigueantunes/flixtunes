@@ -59,12 +59,12 @@ export function SetupWizard({ onComplete }: { onComplete: () => void }) {
         <div className="setup-library-list">
           {libraries.map((library, index) => (
             <article className="setup-library" key={library.draftId}>
-              <div className={`setup-library-number ${library.kind}`}><span>{index + 1}</span>{library.kind === "movie" ? "FILM" : "TV"}</div>
+              <div className={`setup-library-number ${library.kind}`}><span>{index + 1}</span>{library.kind === "movie" ? "FILM" : library.kind === "tv" ? "TV" : library.kind === "web" ? "WEB" : "AUTRE"}</div>
               <div className="setup-library-fields">
                 <label><span>Nom de la bibliothèque</span><input value={library.name} onChange={(event) => update(library.draftId, { name: event.target.value })} /></label>
                 <label className="setup-path"><span>Chemin du dossier</span><div className="path-input-row"><input autoFocus={index === libraries.length - 1} value={library.path} onChange={(event) => update(library.draftId, { path: event.target.value })} placeholder={library.kind === "movie" ? "/volume1/Multimédia/Film" : "/volume1/Multimédia/Serie Tv"} /><button type="button" onClick={() => setBrowsingDraftId(library.draftId)}>Parcourir le NAS</button></div></label>
                 <label><span>Type</span><select value={library.kind} onChange={(event) => update(library.draftId, { kind: event.target.value as LibraryKind })}>
-                  <option value="movie">Films</option><option value="tv">Séries TV</option><option value="auto">Détection automatique</option><option value="other">Autre</option>
+                  <option value="movie">Films</option><option value="tv">Séries TV</option><option value="web">Web</option><option value="auto">Détection automatique</option><option value="other">Autre</option>
                 </select></label>
                 <label><span>Langue des métadonnées</span><select value={library.language} onChange={(event) => update(library.draftId, { language: event.target.value as "fr-FR" | "en-US" })}>
                   <option value="fr-FR">Français</option><option value="en-US">English</option>

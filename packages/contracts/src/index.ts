@@ -827,6 +827,13 @@ export interface MediaItem {
   showTitle: string | null;
   seasonNumber: number | null;
   episodeNumber: number | null;
+  /**
+   * Date de publication, `AAAA-MM-JJ`, quand la source la donne.
+   *
+   * Renseignée pour une vidéo web, où elle est à la fois le critère de tri et une information
+   * affichée. Absente partout ailleurs tant que rien ne l'y écrit.
+   */
+  airDate?: string | null;
   runtimeSeconds: number | null;
   /** Âge minimal conseillé par la classification du pays du profil, lorsqu'elle est connue. */
   ageRating?: number | null;

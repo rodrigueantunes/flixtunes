@@ -525,6 +525,16 @@ function showItems(
   }));
 }
 
+/**
+ * L'accueil ignore les bibliothèques web.
+ *
+ * Une vidéo web est stockée en `episode` — un raccourci qui lui donne la reprise et l'enchaînement
+ * sans code neuf. Mais ce type voyage avec la fiche : dans « Ajouts récents », la carte l'annonçait
+ * « S1 · E20024 », le numéro d'épisode étant un nombre de jours. Constaté sur l'écran, pas déduit.
+ *
+ * Ces rails sont partagés par tout le catalogue : leur ajouter une clause est le seul moyen de tenir
+ * le rayon Web chez lui tant que ces vidéos portent un type qui ne leur appartient pas.
+ */
 export function buildHome(profile: Profile): HomeResponse {
   // Chaque rail est borné par SQL. Auparavant l'accueil chargeait la totalité des médias — épisodes
   // compris — pour n'en garder que quelques dizaines après filtrage en mémoire, et transmettait au
@@ -532,19 +542,20 @@ export function buildHome(profile: Profile): HomeResponse {
   // Les listes complètes restent chargées côté serveur — quelques dizaines de millisecondes une fois
   // les index en place — parce que « Ma liste » et les recommandations doivent voir tout le catalogue.
   // Seule la première page part sur le réseau ; le reste se demande à `/api/catalog`.
-  const allMovies = groupMovieItems(mediaRows(profile.id, "AND m.kind = 'movie' ORDER BY m.created_at DESC"));
+  const allMovies = groupMovieItems(mediaRows(profile.id, `AND m.kind = 'movie' ${HORS_WEB_PAR_MEDIA} ORDER BY m.created_at DESC`));
   // Les séries candidates se passent de leur épisode représentatif : le moteur de recommandation ne lit
   // que le titre, l'année et l'état terminé. Seule la page affichée paie le classement des épisodes.
   const allShows = showItems(profile.id, { withRepresentative: false });
   const movies = allMovies.slice(0, HOME_PAGE_SIZE);
   const shows = showItems(profile.id, { limit: HOME_PAGE_SIZE });
-  const recentlyAdded = groupMovieItems(mediaRows(profile.id, "ORDER BY m.created_at DESC LIMIT 80")).slice(0, 24);
+  const recentlyAdded = groupMovieItems(mediaRows(profile.id, `${HORS_WEB_PAR_MEDIA} ORDER BY m.created_at DESC LIMIT 80`)).slice(0, 24);
   const continueWatching = groupMovieItems(mediaRows(profile.id,
     `AND p.position_seconds > 0 AND p.completed = 0
      AND COALESCE(p.duration_seconds, m.runtime_seconds, 0) > 0
+     ${HORS_WEB_PAR_MEDIA}
      ORDER BY m.created_at DESC LIMIT 80`)).slice(0, 20);
-  const completed = groupMovieItems(mediaRows(profile.id, "AND p.completed = 1 ORDER BY m.created_at DESC LIMIT 120")).slice(0, 40);
-  const watchedRecently = groupMovieItems(mediaRows(profile.id, "AND p.updated_at IS NOT NULL ORDER BY p.updated_at DESC LIMIT 120")).slice(0, 40);
+  const completed = groupMovieItems(mediaRows(profile.id, `AND p.completed = 1 ${HORS_WEB_PAR_MEDIA} ORDER BY m.created_at DESC LIMIT 120`)).slice(0, 40);
+  const watchedRecently = groupMovieItems(mediaRows(profile.id, `AND p.updated_at IS NOT NULL ${HORS_WEB_PAR_MEDIA} ORDER BY p.updated_at DESC LIMIT 120`)).slice(0, 40);
   const watchlistIds = new Set((db.prepare("SELECT catalog_id FROM profile_watchlist WHERE profile_id = ? ORDER BY created_at DESC").all(profile.id) as Array<{ catalog_id: string }>).map((row) => row.catalog_id));
   // « Ma liste » se compose de fiches complètes : ses séries sont rechargées avec leur épisode
   // représentatif, sans quoi elles arriveraient au client sans média jouable et sans bouton de lecture.

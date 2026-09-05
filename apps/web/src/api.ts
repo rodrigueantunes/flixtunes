@@ -173,7 +173,7 @@ export const api = {
   // Nom distinct de `catalog`, qui sert déjà le centre de correspondances. Deux clés homonymes dans
   // le même objet ne lèvent aucune erreur : la seconde écrase silencieusement la première, et tout
   // appel part vers la mauvaise route. C'est ce qui vidait les pages Films et Séries.
-  catalogPage: (profileId: string, query: Omit<CatalogQuery, "kind"> & { kind: "movies" | "shows" }) => {
+  catalogPage: (profileId: string, query: Omit<CatalogQuery, "kind"> & { kind: "movies" | "shows" | "web" }) => {
     const search = new URLSearchParams({ profileId, kind: query.kind });
     if (query.sort) search.set("sort", query.sort);
     if (query.filter) search.set("filter", query.filter);
@@ -320,6 +320,8 @@ export const api = {
    * exister ? Elle n'existe que si la fonction est activée et qu'une source a rendu des chaînes.
    */
   etatLive: () => request<{ disponible: boolean; chaines: number; rafraichieLe: string | null }>("/live"),
+  /** Le rayon Web existe-t-il ? Même règle que le direct : pas d'entrée vers une page vide. */
+  etatWeb: () => request<{ disponible: boolean; bibliotheques: number; chaines: number }>("/web"),
   listesLiveClient: (criteres: CriteresFacette = {}) =>
     request<Array<{ id: string; nom: string; classement: ClassementListe; chaines: number }>>(`/live/listes${queteFacette(criteres)}`),
   fiabilitesLive: () => request<Array<{ classement: ClassementListe; listes: number }>>("/live/fiabilites"),
