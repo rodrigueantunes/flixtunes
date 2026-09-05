@@ -1,0 +1,163 @@
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
+import { afterEach, describe, expect, it } from "vitest";
+import { appliquerLesMigrations, MIGRATIONS, ouvrirLesTypesDeBibliotheque } from "./migrations.js";
+
+/**
+ * Ouvrir `library_folders` à un cinquième type, sans emporter le catalogue.
+ *
+ * Cette table est la **mère** des fiches et des médias, qui la référencent en `ON DELETE CASCADE`.
+ * Une reconstruction mal conduite ne se solde pas par une erreur mais par une médiathèque vide —
+ * et l'essai qui a précédé ce fichier l'a effectivement vidée. D'où des cas qui vérifient moins la
+ * réussite que l'**absence de dégâts** : les comptes des trois tables, les colonnes ajoutées après
+ * coup, et la cascade elle-même, qu'une reconstruction peut rompre en silence.
+ */
+const racines: string[] = [];
+const ouvertes: DatabaseSync[] = [];
+
+/** La contrainte telle que `database.ts` l'écrit. La migration s'y accroche mot pour mot. */
+const CONTRAINTE = "CHECK(kind IN ('auto', 'movie', 'tv', 'other'))";
+
+/**
+ * Une base qui reproduit la relation réelle : la bibliothèque, ses fiches, ses médias.
+ *
+ * Les colonnes ajoutées après coup par `database.ts` sont présentes, parce qu'elles sont l'enjeu :
+ * une migration écrite en dur les perdrait, et le compte des lignes ne le dirait pas.
+ */
+function baseAvecMediatheque(contrainte = CONTRAINTE): DatabaseSync {
+  const racine = mkdtempSync(path.join(os.tmpdir(), "flixtunes-web-"));
+  racines.push(racine);
+  const base = new DatabaseSync(path.join(racine, "essai.db"));
+  ouvertes.push(base);
+  base.exec("PRAGMA foreign_keys = ON");
+  base.exec(`
+    CREATE TABLE library_folders (
+      id TEXT PRIMARY KEY,
+      path TEXT NOT NULL UNIQUE,
+      kind TEXT NOT NULL ${contrainte},
+      language TEXT NOT NULL DEFAULT 'fr-FR',
+      enabled INTEGER NOT NULL DEFAULT 1
+    , name TEXT NOT NULL DEFAULT 'Bibliothèque', last_scan_status TEXT NOT NULL DEFAULT 'idle', last_scan_error TEXT);
+    CREATE TABLE catalog_items (
+      id TEXT PRIMARY KEY,
+      library_id TEXT NOT NULL REFERENCES library_folders(id) ON DELETE CASCADE,
+      title TEXT NOT NULL
+    );
+    CREATE TABLE media_items (
+      id TEXT PRIMARY KEY,
+      library_id TEXT REFERENCES library_folders(id) ON DELETE CASCADE,
+      title TEXT NOT NULL
+    );
+    INSERT INTO library_folders (id, path, kind, name, last_scan_error)
+      VALUES ('lib1', 'N:/Films', 'movie', 'Films du salon', 'incident precedent');
+    INSERT INTO catalog_items (id, library_id, title) VALUES ('cat1', 'lib1', 'Arrival');
+    INSERT INTO media_items (id, library_id, title) VALUES ('med1', 'lib1', 'Arrival');
+  `);
+  return base;
+}
+
+const compte = (base: DatabaseSync, table: string) =>
+  (base.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as unknown as { n: number }).n;
+
+const schemaDe = (base: DatabaseSync, table: string) =>
+  (base.prepare("SELECT sql FROM sqlite_master WHERE name = ?").get(table) as unknown as { sql: string }).sql;
+
+afterEach(() => {
+  for (const base of ouvertes.splice(0)) { try { base.close(); } catch { /* déjà fermée */ } }
+  for (const racine of racines.splice(0)) rmSync(racine, { recursive: true, force: true });
+});
+
+describe("ouverture de library_folders au type web", () => {
+  it("conserve les bibliothèques, leurs fiches et leurs médias", () => {
+    // Le cas central. Une première tentative, qui croyait pouvoir se passer de désarmer les clés
+    // étrangères, laissait `catalog_items` à zéro sans lever la moindre erreur.
+    const base = baseAvecMediatheque();
+
+    ouvrirLesTypesDeBibliotheque(base);
+
+    expect(compte(base, "library_folders")).toBe(1);
+    expect(compte(base, "catalog_items")).toBe(1);
+    expect(compte(base, "media_items")).toBe(1);
+    expect(base.prepare("PRAGMA foreign_key_check").all()).toHaveLength(0);
+  });
+
+  it("conserve les colonnes ajoutées après la création de la table", () => {
+    // La nouvelle table est dérivée du schéma en place. Un `CREATE` recopié de `database.ts`
+    // effacerait le nom de chaque bibliothèque et tout son historique d'analyse.
+    const base = baseAvecMediatheque();
+
+    ouvrirLesTypesDeBibliotheque(base);
+
+    const ligne = base.prepare("SELECT name, last_scan_error, kind FROM library_folders WHERE id = 'lib1'")
+      .get() as unknown as { name: string; last_scan_error: string; kind: string };
+    expect(ligne.name).toBe("Films du salon");
+    expect(ligne.last_scan_error).toBe("incident precedent");
+    expect(ligne.kind).toBe("movie");
+  });
+
+  it("accepte le type web et refuse toujours un type inconnu", () => {
+    const base = baseAvecMediatheque();
+
+    ouvrirLesTypesDeBibliotheque(base);
+
+    expect(() => base.exec("INSERT INTO library_folders (id, path, kind) VALUES ('lib2', 'N:/Web', 'web')"))
+      .not.toThrow();
+    expect(() => base.exec("INSERT INTO library_folders (id, path, kind) VALUES ('lib3', 'N:/X', 'nawak')"))
+      .toThrow();
+  });
+
+  it("la cascade fonctionne encore après reconstruction", () => {
+    // Une reconstruction peut rompre la cascade sans que rien ne le signale : les suppressions de
+    // bibliothèques laisseraient alors des fiches orphelines, pour toujours.
+    const base = baseAvecMediatheque();
+
+    ouvrirLesTypesDeBibliotheque(base);
+    base.exec("DELETE FROM library_folders WHERE id = 'lib1'");
+
+    expect(compte(base, "catalog_items")).toBe(0);
+    expect(compte(base, "media_items")).toBe(0);
+  });
+
+  it("ne fait rien une seconde fois", () => {
+    const base = baseAvecMediatheque();
+
+    ouvrirLesTypesDeBibliotheque(base);
+    const apresUne = schemaDe(base, "library_folders");
+    ouvrirLesTypesDeBibliotheque(base);
+
+    expect(schemaDe(base, "library_folders")).toBe(apresUne);
+    expect(compte(base, "catalog_items")).toBe(1);
+  });
+
+  it("refuse une contrainte qu'elle ne reconnaît pas, sans rien toucher", () => {
+    // La migration s'accroche à un texte précis. Si quelqu'un modifie le schéma sans elle, mieux vaut
+    // un démarrage qui échoue en le disant qu'une reconstruction menée sur une forme inconnue.
+    const base = baseAvecMediatheque("CHECK(kind IN ('auto', 'movie'))");
+
+    expect(() => ouvrirLesTypesDeBibliotheque(base)).toThrow(/forme attendue/);
+
+    expect(compte(base, "catalog_items")).toBe(1);
+    expect(schemaDe(base, "library_folders")).toContain("CHECK(kind IN ('auto', 'movie'))");
+  });
+
+  it("s'applique par le registre, et une seule fois", () => {
+    const base = baseAvecMediatheque();
+
+    expect(appliquerLesMigrations(base, { registre: MIGRATIONS })).toEqual([2]);
+    expect(appliquerLesMigrations(base, { registre: MIGRATIONS })).toEqual([]);
+    expect(schemaDe(base, "library_folders")).toContain("'web'");
+    expect(compte(base, "catalog_items")).toBe(1);
+  });
+});
+
+describe("accroche de la migration", () => {
+  it("la contrainte visée existe encore dans le schéma du serveur", () => {
+    // La migration reconnaît la table à un texte exact. Le jour où `database.ts` l'écrira autrement,
+    // ce cas échouera ici — pas au démarrage d'une installation.
+    const source = readFileSync(fileURLToPath(new URL("./database.ts", import.meta.url)), "utf8");
+    expect(source).toContain(CONTRAINTE);
+  });
+});

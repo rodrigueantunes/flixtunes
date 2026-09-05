@@ -37,6 +37,21 @@ export interface Migration {
   /** Ce que la migration fait, en français, tel qu'il apparaîtra dans le journal. */
   nom: string;
   appliquer: (base: DatabaseSync) => void;
+  /**
+   * La migration ouvre et referme elle-même sa transaction.
+   *
+   * Le registre enveloppe normalement chaque migration dans un `BEGIN IMMEDIATE`, et c'est ce qu'il
+   * faut dans la quasi-totalité des cas. Une reconstruction de table fait exception : SQLite ne sait
+   * pas modifier une contrainte `CHECK`, il faut donc recréer la table, la remplir et supprimer
+   * l'ancienne — et si cette table est la **mère** d'une autre, la suppression déclenche les
+   * `ON DELETE CASCADE` des filles. Le seul moyen de l'empêcher est `PRAGMA foreign_keys = OFF`,
+   * **sans effet une fois une transaction ouverte**. C'est mesuré, pas supposé : la tentative de
+   * contourner le pragma avec `legacy_alter_table` a vidé la table des fiches sur une base d'essai.
+   *
+   * Une migration ainsi marquée reste donc atomique — elle se charge simplement de l'être elle-même,
+   * et doit désarmer puis réarmer les clés étrangères autour de son propre `BEGIN`.
+   */
+  gereSaTransaction?: boolean;
 }
 
 /** Le socle : ce que `database.ts` construit et maintient déjà, adopté sans rien réexécuter. */
@@ -49,7 +64,71 @@ export const SOCLE = 1;
  * possible** — `IF NOT EXISTS`, `INSERT OR IGNORE` — parce qu'une base restaurée depuis une
  * sauvegarde d'âge inconnu peut la recroiser.
  */
-export const MIGRATIONS: Migration[] = [];
+/** La contrainte que porte `library_folders` avant l'arrivee du rayon Web. */
+const TYPES_AVANT_WEB = "CHECK(kind IN ('auto', 'movie', 'tv', 'other'))";
+
+/** Celle qu'elle doit porter apres. */
+const TYPES_AVEC_WEB = "CHECK(kind IN ('auto', 'movie', 'tv', 'other', 'web'))";
+
+/**
+ * Ouvrir `library_folders` a un cinquieme type de bibliotheque.
+ *
+ * SQLite ne modifie pas une contrainte `CHECK` : il faut recreer la table. Et `library_folders` n'est
+ * pas une table ordinaire — c'est la **mere** du catalogue et des medias, qui la referencent en
+ * `ON DELETE CASCADE`. Supprimer l'ancienne emporterait donc toutes les fiches.
+ *
+ * Trois precautions, chacune verifiee sur une base peuplee :
+ *
+ * - **les cles etrangeres sont desarmees avant le `BEGIN`**, jamais dedans, ou le pragma serait sans
+ *   effet. Une premiere version tentait de s'en passer grace a `legacy_alter_table` ; elle a vide la
+ *   table des fiches. La cascade est reverifiee apres coup : une reconstruction qui la romprait
+ *   laisserait des orphelines pour toujours, sans que rien ne le signale ;
+ * - **la nouvelle table est derivee du schema en place**, pas ecrite en dur. Onze colonnes ont ete
+ *   ajoutees a cette table depuis sa creation — `name`, tout l'historique d'analyse — et un `CREATE`
+ *   recopie de `database.ts` les effacerait toutes ;
+ * - **`PRAGMA foreign_key_check` precede le `COMMIT`**, pour qu'un defaut se solde par un retour
+ *   arriere plutot que par une base a demi cousue.
+ */
+export function ouvrirLesTypesDeBibliotheque(base: DatabaseSync): void {
+  const schema = (base.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'library_folders'")
+    .get() as unknown as { sql: string } | undefined)?.sql;
+  if (!schema) throw new Error("La table library_folders est absente.");
+  if (schema.includes("'web'")) return;
+  if (schema.split(TYPES_AVANT_WEB).length - 1 !== 1) {
+    throw new Error("La contrainte de type de library_folders n'a pas la forme attendue.");
+  }
+
+  const nouvelle = schema
+    .replace("CREATE TABLE library_folders", "CREATE TABLE library_folders_elargie")
+    .replace(TYPES_AVANT_WEB, TYPES_AVEC_WEB);
+
+  base.exec("PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE;");
+  try {
+    base.exec(`
+      ${nouvelle};
+      INSERT INTO library_folders_elargie SELECT * FROM library_folders;
+      DROP TABLE library_folders;
+      ALTER TABLE library_folders_elargie RENAME TO library_folders;
+    `);
+    const orphelines = base.prepare("PRAGMA foreign_key_check").all();
+    if (orphelines.length) throw new Error(`${orphelines.length} references orphelines apres reconstruction.`);
+    base.exec("COMMIT;");
+  } catch (cause) {
+    base.exec("ROLLBACK;");
+    throw cause;
+  } finally {
+    base.exec("PRAGMA foreign_keys = ON;");
+  }
+}
+
+export const MIGRATIONS: Migration[] = [
+  {
+    version: 2,
+    nom: "library_folders accepte le type web",
+    gereSaTransaction: true,
+    appliquer: ouvrirLesTypesDeBibliotheque,
+  },
+];
 
 export interface EtatSchema {
   /** Version atteinte, `0` si la base n'a jamais été consignée. */
@@ -115,17 +194,29 @@ export function appliquerLesMigrations(base: DatabaseSync, options: {
 
   const appliquees: number[] = [];
   for (const migration of aFaire) {
-    base.exec("BEGIN IMMEDIATE");
-    try {
-      migration.appliquer(base);
-      consigner.run(migration.version, migration.nom);
-      base.exec("COMMIT");
-    } catch (cause) {
-      base.exec("ROLLBACK");
-      // Le numéro figure dans le message : sans lui, on cherche la migration fautive à la main dans
-      // un service qui refuse de démarrer.
-      throw new Error(`Migration ${migration.version} (${migration.nom}) impossible : `
-        + (cause instanceof Error ? cause.message : String(cause)), { cause });
+    // Le numéro figure dans le message d'échec : sans lui, on cherche la migration fautive à la main
+    // dans un service qui refuse de démarrer.
+    const echec = (cause: unknown) => new Error(
+      `Migration ${migration.version} (${migration.nom}) impossible : `
+      + (cause instanceof Error ? cause.message : String(cause)), { cause });
+
+    if (migration.gereSaTransaction) {
+      try {
+        migration.appliquer(base);
+        consigner.run(migration.version, migration.nom);
+      } catch (cause) {
+        throw echec(cause);
+      }
+    } else {
+      base.exec("BEGIN IMMEDIATE");
+      try {
+        migration.appliquer(base);
+        consigner.run(migration.version, migration.nom);
+        base.exec("COMMIT");
+      } catch (cause) {
+        base.exec("ROLLBACK");
+        throw echec(cause);
+      }
     }
     appliquees.push(migration.version);
     options.journaliser?.(`Migration ${migration.version} appliquée — ${migration.nom}`);
