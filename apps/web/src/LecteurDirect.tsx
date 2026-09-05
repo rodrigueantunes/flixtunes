@@ -220,7 +220,6 @@ const SEUIL_STABILITE_MS = 15_000;
  * accepte entre l'image et le temps réel.
  */
 const CIBLE_MAX_S = 40;
-const CIBLE_MIN_S = 3 * SEGMENT_TYPE_S;
 
 /**
  * Les deux seuils du tampon, et pourquoi on regarde la **descente** plutôt que le fond.
@@ -906,8 +905,26 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
         const segment = Math.round(
           courant.levels?.[courant.currentLevel]?.details?.targetduration ?? SEGMENT_TYPE_S,
         );
-        const payable = Math.min(CIBLE_MAX_S, Math.max(CIBLE_MIN_S, fin - debut - MARGE_ARRIERE_S));
-        const segments = Math.max(3, Math.floor(payable / Math.max(1, segment)));
+        /*
+         * **La fenêtre a toujours le dernier mot.**
+         *
+         * La première version posait un plancher de trois segments — 24 s — *par-dessus* ce que la
+         * fenêtre permet. Sur une chaîne à fenêtre courte, le plancher gagnait et plaçait le point de
+         * lecture derrière le bord arrière : mesuré, une fenêtre de 20 s donnait **−4 s de marge**,
+         * c'est-à-dire hors de la fenêtre dès la première seconde. C'est précisément la panne que la
+         * r13 avait supprimée, réintroduite par un `Math.max` mal placé. Android y échappait, sa
+         * cible étant bornée par `minOffsetMs`/`maxOffsetMs` — d'où « ça marche sur la télé, pas sur
+         * le web ».
+         *
+         * L'ordre est donc : ce que la fenêtre permet, relevé à un plancher qui évite de se coller au
+         * direct, puis **rabattu dans la fenêtre** avec un segment de garde. Le plancher ne peut plus
+         * pousser dehors, il ne peut que remonter vers le bord.
+         */
+        const largeur = fin - debut;
+        const plancher = 2 * segment;
+        const souhaitee = Math.min(CIBLE_MAX_S, Math.max(plancher, largeur - MARGE_ARRIERE_S));
+        const payable = Math.max(segment, Math.min(souhaitee, largeur - segment));
+        const segments = Math.max(1, Math.floor(payable / Math.max(1, segment)));
         if (courant.config.liveSyncDurationCount !== segments) {
           courant.config.liveSyncDurationCount = segments;
         }

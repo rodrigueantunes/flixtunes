@@ -1,5 +1,28 @@
 # Journal des versions
 
+## 0.5.7.r16 — la fenêtre a toujours le dernier mot
+
+- **Régression de la r15, sur le Web seulement.** Le calcul de latence posait un plancher de trois
+  segments — 24 s — **par-dessus** ce que la fenêtre permet. Le plancher gagnait donc sur les chaînes
+  à fenêtre courte et plaçait le point de lecture derrière le bord arrière. Mesuré :
+
+  | fenêtre publiée | latence appliquée | marge arrière |
+  | --- | --- | --- |
+  | 20 s | 24 s | **−4 s, hors fenêtre** |
+  | 25 s | 24 s | 1 s |
+  | 36 s | 24 s | 12 s |
+
+  C'est exactement la panne que la r13 avait supprimée, réintroduite par un `Math.max` mal placé.
+  **Android y échappait**, sa cible étant bornée par `minOffsetMs`/`maxOffsetMs` — d'où le symptôme
+  rapporté : « ça marche sur la télé, pas sur le web ».
+- L'ordre est corrigé : ce que la fenêtre permet, relevé à un plancher de deux segments qui évite de
+  se coller au direct, puis **rabattu dans la fenêtre** avec un segment de garde. Le plancher ne peut
+  plus pousser dehors, seulement remonter vers le bord. Vérifié de 15 s à 4 min de fenêtre : la marge
+  arrière ne descend jamais sous 7 s et vaut 21 s sur la médiane.
+- Constaté en reproduisant sur le NAS en r15, navigateur ouvert sur la médiathèque : TF1 publie une
+  fenêtre de **36 s**, pas 61 — la médiane du corpus n'est pas la règle, et le plancher fixe se
+  trompait donc sur une large part des chaînes.
+
 ## 0.5.7.r15 — la sécurité cesse d'être un remède pour devenir un état
 
 Tout ce que les r13 et r14 avaient construit était **réactif** : on attendait l'incident. La marge de
