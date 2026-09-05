@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { setPriority } from "node:os";
 import { config } from "./config.js";
 import { enveloppe, PAS_MS } from "./empreinte-sonore.js";
 
@@ -43,6 +44,19 @@ export async function enveloppeDuFichier(chemin: string, fenetre: FenetreAudio):
     "-t", fenetre.dureeSecondes.toFixed(3),
     "-i", chemin,
     "-map", "0:a:0?", "-ac", "1", "-ar", String(FREQUENCE_ANALYSE),
+    /*
+     * **Un seul fil, et c'est un réglage de politesse, pas de performance.**
+     *
+     * ffmpeg prend par défaut autant de fils qu'il y a de cœurs. Sur le Celeron à quatre cœurs du NAS
+     * de référence, une extraction occupait donc la machine entière — et le repérage des génériques,
+     * pourtant censé travailler en arrière-plan, rendait la navigation poussive et faisait hoqueter
+     * une lecture 4K.
+     *
+     * Décoder une piste audio mono en 8 kHz ne demande pas quatre cœurs : ce qui coûte, c'est de
+     * traverser le conteneur, et cela ne se parallélise pas. On y perd un peu sur la durée d'une
+     * extraction isolée, on y gagne une machine qui reste utilisable pendant des heures de passe.
+     */
+    "-threads", "1",
     "-f", "s16le", "-",
   ];
   const morceaux: Buffer[] = [];
@@ -51,6 +65,17 @@ export async function enveloppeDuFichier(chemin: string, fenetre: FenetreAudio):
 
   return new Promise((resoudre) => {
     const processus = spawn(config.ffmpegPath, arguments_, { windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+    /*
+     * **La priorité la plus basse que le système accepte.**
+     *
+     * Un fil unique borne ce que l'extraction prend quand la machine est libre ; la priorité décide de
+     * ce qu'elle prend quand la machine est **occupée**. C'est cette seconde question qui compte ici :
+     * le repérage doit s'effacer devant une lecture, pas la concurrencer à armes égales.
+     *
+     * L'échec est sans conséquence et se tait : abaisser sa propre priorité est permis partout, mais
+     * un conteneur restreint peut le refuser. On aura alors le comportement d'avant, pas pire.
+     */
+    try { setPriority(processus.pid ?? 0, 19); } catch { /* le système refuse : tant pis, pas tant mieux */ }
     const minuterie = setTimeout(() => { processus.kill("SIGKILL"); resoudre(null); }, DELAI_MS);
     processus.stdout?.on("data", (morceau: Buffer) => {
       total += morceau.length;

@@ -222,6 +222,18 @@ export function choisirTemoins<T>(episodes: T[], index: number, combien = TEMOIN
 export async function completerSaisonParLeSon(showTitle: string, season: number | null,
   options: {
     lireEnveloppe?: (chemin: string, dureeSecondes: number, debutSecondes?: number) => Promise<Float64Array | null>;
+    /**
+     * Ce qu'on attend avant de commencer **chaque épisode**.
+     *
+     * La place n'était cédée qu'entre deux saisons. Or une saison, c'est jusqu'à dix épisodes et
+     * autant d'extractions : une lecture qui démarrait au mauvais moment attendait plusieurs minutes
+     * avant que la machine ne lui revienne — et pendant ce temps l'application était poussive, ce qui
+     * est exactement ce qu'un travail d'arrière-plan ne doit jamais faire.
+     *
+     * Le grain descend donc à l'épisode. Entre deux, la passe demande la permission ; si une lecture
+     * est en cours, elle patiente au lieu de lui disputer le processeur.
+     */
+    attendreCreneau?: (signal?: AbortSignal) => Promise<void>;
     signal?: AbortSignal;
   } = {}): Promise<BilanSon> {
   const lireEnveloppe = options.lireEnveloppe
@@ -367,6 +379,9 @@ export async function completerSaisonParLeSon(showTitle: string, season: number 
 
   for (const { episode, index } of aTraiter) {
     if (options.signal?.aborted) break;
+    // Avant chaque épisode, et non plus seulement avant chaque saison : c'est ce qui rend la passe
+    // réellement effaçable devant une lecture.
+    await options.attendreCreneau?.(options.signal);
     // On note tout de suite l'écoute — et, s'il s'agit de la seconde, qu'elle a eu lieu : un arrêt
     // en cours de passe ne doit pas donner droit à une troisième.
     retenirEcoute(episode.id, reecoutes.includes(episode.id));

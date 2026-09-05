@@ -1,5 +1,38 @@
 # Journal des versions
 
+## 0.5.7.r25 — un travail d'arrière-plan qui se tenait au premier
+
+La r24 a rendu le repérage plus rapide. Le reproche restant n'est pas sa durée mais son **occupation** :
+il prenait la machine, et FlixTunes devenait poussif pendant qu'il tournait. Un travail de fond dont
+on s'aperçoit est un travail mal fait.
+
+- **ffmpeg prenait tous les cœurs.** Il en réclame autant qu'il en trouve, faute d'instruction
+  contraire — sur le Celeron à quatre cœurs du NAS de référence, une extraction occupait donc la
+  machine entière, en concurrence directe avec une lecture 4K. Elle tient désormais sur **un fil** :
+  décoder une piste audio mono à 8 kHz n'en demande pas quatre, et ce qui coûte — traverser le
+  conteneur — ne se parallélise pas. On perd un peu sur une extraction isolée, on gagne une machine
+  qui reste utilisable pendant des heures de passe.
+- **Et elle tourne à la priorité la plus basse.** Le fil unique borne ce que l'extraction prend quand
+  la machine est libre ; la priorité décide de ce qu'elle prend quand la machine est **occupée** —
+  c'est cette question-là qui comptait. Un refus du système est sans conséquence et reste muet : on
+  retrouve alors le comportement d'avant, pas pire.
+- **La place n'était cédée qu'entre deux saisons.** Or une saison, c'est jusqu'à dix épisodes et
+  autant d'extractions : une lecture qui démarrait au mauvais moment attendait **plusieurs minutes**
+  que la machine lui revienne. Le grain descend à l'**épisode** — la passe demande la permission avant
+  chacun, et patiente si une lecture est en cours.
+- **Le plafond d'attente était de dix minutes, pour tout le monde.** Il protège d'une session restée
+  ouverte à tort, qui figerait le travail indéfiniment. Dix minutes conviennent à une analyse de
+  bibliothèque — la retarder davantage priverait la médiathèque de ses nouveautés. Elles ne
+  conviennent pas au repérage, qui repartait au milieu d'un film de deux heures : il n'est pas pressé,
+  se reprend là où il en est, et son seul devoir est de ne pas se faire remarquer. Sa patience passe
+  à **trois heures**, celle des analyses reste à dix minutes.
+- 893 tests serveur.
+
+**Ce qui n'est pas mesuré.** Ces quatre changements portent sur le comportement d'un processus sous
+charge, ce qu'aucun test ne reproduit ici : il faudrait le NAS, une lecture 4K et une passe en cours.
+Le raisonnement est celui de l'ordonnancement — un fil au lieu de quatre, la priorité la plus basse,
+et l'effacement devant toute lecture — mais c'est votre machine qui dira si elle respire.
+
 ## 0.5.7.r24 — chercher un générique connu plutôt que comparer deux inconnus
 
 **Sur l'idée de départ — récupérer les minutages sur Internet — une précision qui la rend caduque :**

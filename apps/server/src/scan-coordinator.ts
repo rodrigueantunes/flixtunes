@@ -7,6 +7,9 @@ import { db, listLibraries } from "./database.js";
 import { scanLibraryById, type ScanResult } from "./scanner.js";
 import { completerLesGeneriques } from "./marqueurs-passe.js";
 
+/** Trois heures : la plus longue séance qu'on veuille ne pas déranger, et pas plus. */
+const PATIENCE_GENERIQUES_MS = 3 * 60 * 60 * 1000;
+
 interface QueuedScan {
   id: string;
   libraryId: string;
@@ -173,15 +176,28 @@ class ScanCoordinator {
    * s'efface devant une lecture en cours.
    */
   relancerLesGeneriques(): void {
-    void completerLesGeneriques({ attendreCreneau: (signal) => this.yieldToPlayback(signal) })
+    void completerLesGeneriques({ attendreCreneau: (signal) => this.yieldToPlayback(signal, PATIENCE_GENERIQUES_MS) })
       .catch((error: unknown) => {
         console.warn("[FlixTunes] Repérage des génériques interrompu :",
           error instanceof Error ? error.message : String(error));
       });
   }
 
-  private async yieldToPlayback(signal?: AbortSignal): Promise<void> {
-    const limite = Date.now() + 10 * 60 * 1000;
+  /**
+   * Attendre que la machine se libère, avec une patience qui dépend de ce qu'on fait attendre.
+   *
+   * Le plafond protège d'une session de lecture restée ouverte à tort, qui figerait le travail
+   * indéfiniment. Dix minutes conviennent à une analyse de bibliothèque — la retarder davantage
+   * priverait la médiathèque de ses nouveautés.
+   *
+   * Le repérage des génériques, lui, n'a aucune raison d'être pressé : il tourne des heures, se
+   * reprend là où il en est, et son seul devoir est de **ne pas se faire remarquer**. Le laisser
+   * repartir au bout de dix minutes au milieu d'un film de deux heures allait exactement contre cela.
+   * D'où un plafond réglable, et une patience de trois heures pour lui — assez pour couvrir la plus
+   * longue des séances, sans renoncer à la garde contre une session fantôme.
+   */
+  private async yieldToPlayback(signal?: AbortSignal, plafondMs = 10 * 60 * 1000): Promise<void> {
+    const limite = Date.now() + plafondMs;
     while (this.effectiveConcurrency() === 0 && Date.now() < limite) {
       if (signal?.aborted) throw new Error("Analyse annulée");
       await new Promise((resolve) => setTimeout(resolve, 2_000));
@@ -262,7 +278,7 @@ class ScanCoordinator {
         signal: controller.signal,
         // La passe sonore décode ; elle s'efface donc devant une lecture, exactement comme l'analyse
         // elle-même. Sur un Celeron à quatre cœurs, la politesse n'est pas une figure de style.
-        attendreCreneau: (signal) => this.yieldToPlayback(signal),
+        attendreCreneau: (signal) => this.yieldToPlayback(signal, PATIENCE_GENERIQUES_MS),
       }).then((repere) => {
         if (!repere.parVoisins && !repere.parEmpreinte) return;
         console.info(`[FlixTunes] Génériques complétés — ${repere.parVoisins} par les voisins de saison, `

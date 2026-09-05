@@ -257,7 +257,12 @@ export async function completerLesGeneriques(options: {
       if (arret.signal.aborted) break;
       await options.attendreCreneau?.(arret.signal);
       saisonCourante = `${saison.show_title}${saison.season_number != null ? ` — saison ${saison.season_number}` : ""}`;
-      const resultat = await completerSaisonParLeSon(saison.show_title, saison.season_number, { signal: arret.signal });
+      const resultat = await completerSaisonParLeSon(saison.show_title, saison.season_number, {
+        signal: arret.signal,
+        // La même permission que celle demandée entre deux saisons, mais réclamée à chaque épisode :
+        // c'est le seul grain assez fin pour qu'une lecture n'attende pas.
+        attendreCreneau: options.attendreCreneau,
+      });
       bilan.saisonsEcoutees += 1;
       bilan.parEmpreinte += resultat.reperes;
       bilan.illisibles += resultat.illisibles;
