@@ -220,13 +220,56 @@ describe("enchaînement des sources de repères", () => {
       db.prepare(`INSERT INTO marqueurs_generique (media_id, intro_start_seconds, intro_end_seconds, source_intro, ecoute_le)
         VALUES (?, 30, 110, 'empreinte', CURRENT_TIMESTAMP)`).run(id);
     }
-    poserEpisode(serie, 9);
+    const dernier = poserEpisode(serie, 9);
 
     const bilan = await completerLesGeneriques({});
 
-    // Avant correction : zéro. La saison ne comptait qu'un épisode restant, et le seuil de deux
-    // — qui devait porter sur la taille de la saison — la faisait sortir de la file pour toujours.
-    expect(bilan.saisonsEcoutees, "la saison doit revenir dans la file").toBeGreaterThanOrEqual(1);
+    /*
+     * Le neuvième épisode est servi **sans aucune écoute**, et c'est un progrès sur la correction
+     * d'origine.
+     *
+     * Celle-ci se contentait de faire revenir la saison dans la file sonore : l'épisode finissait par
+     * être repéré, mais au prix de deux à trois secondes de décodage — et seulement si le repérage
+     * était allumé. Ses huit voisins portaient pourtant déjà la réponse ; la déduction les ignorait,
+     * n'acceptant que les chapitres de fichier. Elle lit désormais aussi ce qui est en base, quelle
+     * qu'en soit la provenance.
+     *
+     * C'est le cas de *Silo* : chaque épisode ajouté à une saison déjà repérée reçoit son générique
+     * dès l'analyse suivante, gratuitement.
+     */
+    const repere = marqueursRanges(dernier);
+    expect(repere?.introStartSeconds, "le dernier épisode reçoit son introduction").toBe(30);
+    expect(repere?.sourceIntro).toBe("voisins");
+    // On interroge l'épisode et non le compteur de la passe : celui-ci est global à la base d'essai,
+    // et les saisons des cas voisins s'y ajoutent. Ce qu'on veut savoir est plus précis — **celui-ci**
+    // a-t-il été écouté ? — et `ecoute_le` y répond sans ambiguïté.
+    const ecoute = db.prepare("SELECT ecoute_le FROM marqueurs_generique WHERE media_id = ?")
+      .get(dernier) as { ecoute_le: string | null } | undefined;
+    expect(ecoute?.ecoute_le ?? null, "et sans qu'on l'ait écouté").toBeNull();
+    expect(bilan).toBeTruthy();
+  });
+
+  /**
+   * La garantie d'origine demeure : quand les voisins ne peuvent pas conclure, la file reprend.
+   *
+   * La déduction exige trois voisins repérés — deux valeurs ne disent rien de leur dispersion. En
+   * dessous, elle refuse de conclure, et c'est alors à l'écoute de faire le travail. Ce cas vérifie
+   * que le raccourci ajouté ci-dessus n'a pas fait disparaître le chemin qu'il court-circuite.
+   */
+  it("garde la file sonore quand les voisins sont trop peu nombreux pour conclure", async () => {
+    const serie = "Passe témoin G";
+    for (let numero = 1; numero <= 2; numero += 1) {
+      const id = poserEpisode(serie, numero);
+      db.prepare(`INSERT INTO marqueurs_generique (media_id, intro_start_seconds, intro_end_seconds, source_intro, ecoute_le)
+        VALUES (?, 30, 110, 'empreinte', CURRENT_TIMESTAMP)`).run(id);
+    }
+    const dernier = poserEpisode(serie, 3);
+
+    const bilan = await completerLesGeneriques({});
+
+    expect(marqueursRanges(dernier)?.introStartSeconds ?? null,
+      "deux voisins ne suffisent pas à déduire").toBeNull();
+    expect(bilan.saisonsEcoutees, "la saison revient donc dans la file").toBeGreaterThanOrEqual(1);
   });
 
   /* La contrainte réelle demeure : seul, un épisode n'a rien à quoi se comparer. */

@@ -55,7 +55,22 @@ function repereDeLaSerie(showTitle: string, saisonExclue: number | null): Repere
       AND (season_number IS NOT ? AND (season_number IS NOT NULL OR ? IS NOT NULL))
     LIMIT 200`)
     .all(showTitle, saisonExclue, saisonExclue) as unknown as LigneEpisode[];
-  return lignes.map(repereDuFichier).map(({ repere }) => repere).filter((repere): repere is RepereConnu => repere != null);
+  // Le repli sur les autres saisons lit lui aussi la base : une saison précédente entièrement
+  // repérée par le son n'a aucune raison de rester muette pour la suivante.
+  return lignes.map((ligne) => {
+    const { duree, repere } = repereDuFichier(ligne);
+    if (repere) return repere;
+    const range = marqueursRanges(ligne.id);
+    if (duree > 0 && range && (range.creditsStartSeconds != null || range.introStartSeconds != null)) {
+      return {
+        dureeSecondes: duree,
+        creditsStartSeconds: range.creditsStartSeconds,
+        introStartSeconds: range.introStartSeconds,
+        introEndSeconds: range.introEndSeconds,
+      } satisfies RepereConnu;
+    }
+    return null;
+  }).filter((repere): repere is RepereConnu => repere != null);
 }
 
 export interface BilanSaison {
@@ -83,12 +98,37 @@ export function completerSaison(showTitle: string, season: number | null): Bilan
   const bilan: BilanSaison = { examines: lignes.length, dejaConnus: 0, deduits: 0 };
   if (!lignes.length) return bilan;
 
+  /*
+   * **Ce que la saison sait déjà, d'où que ça vienne.**
+   *
+   * Le voisinage ne se construisait que sur les **chapitres du fichier**. Les repères trouvés par
+   * l'empreinte sonore — les plus coûteux à obtenir, des heures de décodage — étaient rangés en base
+   * puis ignorés par la déduction. Conséquence : sur une série sans chapitres, chaque épisode ajouté
+   * repartait de zéro et devait être écouté à son tour, alors que ses neuf voisins portaient déjà la
+   * réponse. C'est le cas de *Silo*, dont chaque nouvel épisode revenait sans générique.
+   *
+   * On lit donc aussi ce qui est en base. La déduction reste identique — même consensus, même
+   * exigence de régularité — et le rang des sources est préservé : `retenirIntroduction` refuse
+   * qu'un repère « voisins » écrase une empreinte ou un chapitre. Ce qui change est seulement qu'on
+   * cesse de jeter la meilleure information dont on dispose.
+   */
   const connus: RepereConnu[] = [];
   const aCompleter: Array<{ id: string; duree: number }> = [];
   for (const ligne of lignes) {
     const { duree, repere } = repereDuFichier(ligne);
-    if (repere) { connus.push(repere); bilan.dejaConnus += 1; }
-    else if (duree > 0) aCompleter.push({ id: ligne.id, duree });
+    if (repere) { connus.push(repere); bilan.dejaConnus += 1; continue; }
+    const range = marqueursRanges(ligne.id);
+    if (duree > 0 && range && (range.creditsStartSeconds != null || range.introStartSeconds != null)) {
+      connus.push({
+        dureeSecondes: duree,
+        creditsStartSeconds: range.creditsStartSeconds,
+        introStartSeconds: range.introStartSeconds,
+        introEndSeconds: range.introEndSeconds,
+      });
+      bilan.dejaConnus += 1;
+      continue;
+    }
+    if (duree > 0) aCompleter.push({ id: ligne.id, duree });
   }
   if (!aCompleter.length) return bilan;
 

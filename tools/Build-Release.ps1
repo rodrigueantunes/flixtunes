@@ -236,6 +236,13 @@ try {
     if (-not $paquets) { throw "Aucun paquet de bureau en $motif pour $estampille." }
     foreach ($paquet in $paquets) {
       Copy-Item $paquet.FullName (Join-Path $Sortie $paquet.Name) -Force
+      # Le .deb sort du bundler avec un `debian-binary` termine par CRLF, et dpkg le refuse avant
+      # meme d'avoir regarde le contenu. La reparation est verifiee et sans effet sur un paquet sain :
+      # on l'applique toujours, y compris le jour ou le bundler sera corrige.
+      if ($paquet.Extension -eq ".deb") {
+        & node (Join-Path $root "tools/reparer-deb.mjs") (Join-Path $Sortie $paquet.Name)
+        if ($LASTEXITCODE -ne 0) { throw "La reparation du .deb a echoue." }
+      }
       $produits += $paquet.Name
     }
   }

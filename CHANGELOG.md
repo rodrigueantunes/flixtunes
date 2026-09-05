@@ -2,6 +2,37 @@
 
 ## 0.5.7.r16 — la fenêtre a toujours le dernier mot
 
+- **Le `.deb` était refusé par `dpkg` pour un retour chariot.** Le paquet contient un premier membre
+  `debian-binary` dont la politique Debian exige qu'il vaille exactement `2.0` **suivi d'un saut de
+  ligne**. Le bundler, exécuté sous Windows, y écrivait `2.0
+`. `dpkg-deb` vérifie cet octet
+  avant de regarder quoi que ce soit d'autre : le refus a donc lieu au tout premier membre de
+  l'archive, ce qui explique qu'aucun message ne parle jamais de FlixTunes.
+
+  `tools/reparer-deb.mjs` réécrit le membre et **relit ce qu'il vient d'écrire** avant de rendre la
+  main. Il est sans effet sur un paquet déjà sain, donc appliqué systématiquement — y compris le jour
+  où le bundler sera corrigé. Le `.deb` de la r15 déjà livré a été réparé sur place, son empreinte
+  `SHA256SUMS` mise à jour.
+
+  *Contrôlé et écarté* : j'ai d'abord cru le fichier `control` mal encodé — « Votre cin?ma local ».
+  C'était ma console qui l'affichait mal ; le fichier est de l'UTF-8 valide. Un seul défaut, donc.
+- **Les repères de générique trouvés par le son ne servaient jamais de voisins.** La déduction ne
+  lisait que les **chapitres du fichier** : les repères obtenus par empreinte sonore — les plus
+  coûteux, des heures de décodage — étaient rangés en base puis ignorés. Sur une série sans chapitres,
+  chaque épisode ajouté repartait donc de zéro et devait être écouté à son tour, alors que ses neuf
+  voisins portaient déjà la réponse. C'est le cas de *Silo*, dont chaque nouvel épisode revenait sans
+  générique — S03E09 hier, S03E10 aujourd'hui.
+
+  La déduction lit maintenant aussi ce qui est en base, quelle qu'en soit la provenance, pour la
+  saison comme pour le repli sur les autres saisons. Le consensus exigé est inchangé, et le rang des
+  sources est préservé : un repère « voisins » n'écrase jamais une empreinte ni un chapitre.
+
+  Le correctif de r15 sur ce point devient un second recours : un épisode ajouté à une saison déjà
+  repérée reçoit son générique **dès l'analyse suivante, sans aucune écoute**. Le test le vérifie sur
+  l'épisode lui-même — `ecoute_le` reste vide —, et un second cas garantit que la file sonore reprend
+  bien la main quand les voisins sont trop peu nombreux pour conclure.
+- 893 tests serveur, 271 tests Web.
+
 - **Régression de la r15, sur le Web seulement.** Le calcul de latence posait un plancher de trois
   segments — 24 s — **par-dessus** ce que la fenêtre permet. Le plancher gagnait donc sur les chaînes
   à fenêtre courte et plaçait le point de lecture derrière le bord arrière. Mesuré :
