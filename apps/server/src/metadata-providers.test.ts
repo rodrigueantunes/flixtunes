@@ -28,7 +28,7 @@ afterEach(() => {
 describe("fournisseurs de métadonnées", () => {
   it("garde les NFO actifs hors ligne et interdit le scraping implicite", () => {
     const providers = buildProviderStatuses({ tmdbToken: null, tvdbApiKey: null, fanartApiKey: null,
-      imdbApiUrl: null, imdbApiToken: null, allocineApiUrl: null, allocineApiToken: null });
+      imdbApiUrl: null, imdbApiToken: null, allocineApiUrl: null, allocineApiToken: null, youtubeApiKey: null });
     expect(providers.find((provider) => provider.id === "local")).toMatchObject({ enabled: true, legalMode: "local" });
     expect(providers.find((provider) => provider.id === "tvmaze")).toMatchObject({ configured: true, enabled: true, legalMode: "open-api" });
     expect(providers.find((provider) => provider.id === "wikidata")).toMatchObject({ configured: true, enabled: true, legalMode: "open-api" });
@@ -39,7 +39,7 @@ describe("fournisseurs de métadonnées", () => {
   it("active uniquement les connecteurs complètement configurés", () => {
     const providers = buildProviderStatuses({ tmdbToken: "tmdb", tvdbApiKey: "tvdb", fanartApiKey: "fanart",
       imdbApiUrl: "https://licensed.example", imdbApiToken: null,
-      allocineApiUrl: "https://licensed.example", allocineApiToken: "token" });
+      allocineApiUrl: "https://licensed.example", allocineApiToken: "token", youtubeApiKey: null });
     expect(providers.find((provider) => provider.id === "tmdb")?.enabled).toBe(true);
     expect(providers.find((provider) => provider.id === "imdb")?.enabled).toBe(false);
     expect(providers.find((provider) => provider.id === "allocine")?.enabled).toBe(true);

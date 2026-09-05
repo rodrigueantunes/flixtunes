@@ -180,9 +180,23 @@ export interface MetadataSearchCandidate {
 }
 
 export interface MetadataProviderStatus {
-  id: MetadataSearchCandidate["provider"];
+  /**
+   * Les fournisseurs dont l'ecran d'administration rend l'etat.
+   *
+   * Volontairement distinct de `MetadataSearchCandidate["provider"]` : YouTube figure ici, mais ne
+   * produit jamais de candidat pour un film ou une serie. Confondre les deux listes ferait entrer
+   * une plateforme video dans le moteur de rapprochement du catalogue.
+   */
+  id: MetadataSearchCandidate["provider"] | "youtube";
   name: string;
-  role: "metadata" | "artwork" | "local";
+  /**
+   * A quoi sert ce fournisseur.
+   *
+   * `web` designe une plateforme video : elle renseigne les bibliotheques web, et n'est **jamais**
+   * une cible de correspondance pour un film ou une serie. La distinction n'est pas cosmetique —
+   * c'est elle qui empeche qu'une correction manuelle propose d'attribuer un film a une video.
+   */
+  role: "metadata" | "artwork" | "local" | "web";
   configured: boolean;
   enabled: boolean;
   legalMode: "open-api" | "licensed-api" | "local";
@@ -214,6 +228,8 @@ export const metadataProviderConfigurationSchema = z.object({
   imdbApiToken: z.string().trim().min(8).max(4096).nullable().optional(),
   allocineApiUrl: z.string().url().max(2048).nullable().optional(),
   allocineApiToken: z.string().trim().min(8).max(4096).nullable().optional(),
+  /** Cle YouTube Data API v3, pour les bibliotheques web. Sans elle, aucun appel n'est fait. */
+  youtubeApiKey: z.string().trim().min(8).max(1024).nullable().optional(),
 }).strict().refine((value) => Object.keys(value).length > 0, "Au moins un fournisseur doit être modifié");
 export type MetadataProviderConfigurationInput = z.infer<typeof metadataProviderConfigurationSchema>;
 

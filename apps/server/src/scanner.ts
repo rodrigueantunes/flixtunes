@@ -11,7 +11,7 @@ import { MATCH_THRESHOLDS, rankMetadataMatches } from "./match-engine.js";
 import { normaliseForSearch } from "./search-normalise.js";
 import { artworkUrlIsGenerated, cacheGeneratedArtwork, cacheLocalArtwork, cacheRemoteArtwork, findLocalArtwork } from "./artwork.js";
 import { fetchMetadataWithProviders, searchAllMetadata } from "./metadata-providers.js";
-import { analyserVideoWeb, libelleDuPalierDuFichier } from "./web-analyse.js";
+import { analyserVideoWeb, illustrerVideoWeb, libelleDuPalierDuFichier } from "./web-analyse.js";
 import type { EntityMetadata, MetadataBundle } from "./tmdb.js";
 import { recordEntityProvenance } from "./metadata-fields.js";
 import {
@@ -628,6 +628,8 @@ export async function scanLibraryById(libraryId: string, options: ScanOptions = 
 
       let embedded: Awaited<typeof embeddedPromise>;
       let parsed: ParsedMedia;
+      /** Ce que la video web a dit d'elle-meme, pour l'illustrer une fois la fiche creee. */
+      let lectureWeb: Extract<Awaited<ReturnType<typeof analyserVideoWeb>>, { valide: true }> | null = null;
       if (library.resolvedKind === "web") {
         // L'arborescence web se lit par position et n'a ni fichier annexe Kodi ni indice de
         // rapprochement a appliquer : ces deux lectures n'auraient rien a trouver.
@@ -638,6 +640,7 @@ export async function scanLibraryById(libraryId: string, options: ScanOptions = 
         // laisses-pour-compte avec la raison, par la voie que le bloc englobant emprunte deja.
         if (!lecture.valide) throw new Error(lecture.message);
         parsed = lecture.parsed;
+        lectureWeb = lecture;
       } else {
         const pathMetadata = parseMediaPath(filePath, library.resolvedKind);
         const [sonde, sidecar, hints] = await Promise.all([
@@ -703,6 +706,12 @@ export async function scanLibraryById(libraryId: string, options: ScanOptions = 
       });
 
       const catalog = await syncCatalog(library, parsed, bundle, filePath, previous?.catalog_id ?? null);
+      if (lectureWeb) {
+        await illustrerVideoWeb({
+          catalogId: catalog.catalogId, chaineId: rootCatalogId(catalog.catalogId),
+          chemin: lectureWeb.chemin, identite: lectureWeb.identite, langue: library.language,
+        });
+      }
       storeMatchProposal(catalog.catalogId, bundle ? null : proposal);
       // Une video web n'est pas un episode. Le raccourci qui l'enregistrait comme tel lui donnait la
       // reprise et l'enchainement sans code neuf, mais le type voyage avec la fiche : « Ajouts

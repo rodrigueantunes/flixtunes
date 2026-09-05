@@ -137,6 +137,23 @@ export function ouvrirLesTypesDeMedia(base: DatabaseSync): void {
     "CHECK(kind IN ('movie', 'show', 'episode', 'video'))");
 }
 
+/**
+ * Nommer la provenance des vignettes de plateforme.
+ *
+ * `artwork_assets` retient d'ou vient chaque image. Ranger une vignette YouTube sous « tmdb » aurait
+ * evite cette migration au prix d'une donnee fausse — et la provenance sert precisement a savoir quoi
+ * rafraichir, quoi remplacer, et a qui l'attribuer.
+ *
+ * Cette table n'est la mere de personne : sa reconstruction n'emporte rien. Elle passe malgre tout par
+ * le meme chemin que les autres, cles desarmees comprises, parce qu'une exception qu'on s'autorise une
+ * fois est une exception qu'on oublie de rearmer la fois suivante.
+ */
+export function ouvrirLesSourcesDeVignette(base: DatabaseSync): void {
+  elargirLaContrainte(base, "artwork_assets",
+    "CHECK(source IN ('local', 'tvmaze', 'wikidata', 'tmdb'))",
+    "CHECK(source IN ('local', 'tvmaze', 'wikidata', 'tmdb', 'youtube'))");
+}
+
 export const MIGRATIONS: Migration[] = [
   {
     version: 2,
@@ -149,6 +166,12 @@ export const MIGRATIONS: Migration[] = [
     nom: "media_items accepte le type video",
     gereSaTransaction: true,
     appliquer: ouvrirLesTypesDeMedia,
+  },
+  {
+    version: 4,
+    nom: "artwork_assets accepte la provenance youtube",
+    gereSaTransaction: true,
+    appliquer: ouvrirLesSourcesDeVignette,
   },
 ];
 

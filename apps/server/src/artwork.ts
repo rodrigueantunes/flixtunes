@@ -41,7 +41,7 @@ function registerAsset(args: {
   catalogId: string;
   role: ArtworkRole;
   language: string | null;
-  source: "local" | "tmdb" | "tvmaze" | "wikidata";
+  source: "local" | "tmdb" | "tvmaze" | "wikidata" | "youtube";
   sourceKey: string;
   localPath: string;
   mimeType: string;
@@ -67,7 +67,7 @@ export async function cacheRemoteArtwork(
   role: ArtworkRole,
   sourceUrl: string | null,
   language: string,
-  source: "tmdb" | "tvmaze" | "wikidata" = "tmdb",
+  source: "tmdb" | "tvmaze" | "wikidata" | "youtube" = "tmdb",
 ): Promise<string | null> {
   if (!sourceUrl) return null;
   const sourceKey = createHash("sha256").update(sourceUrl).digest("hex");

@@ -7,7 +7,7 @@ import { CircuitBreaker, fetchWithTimeout, LimiteDeDebit } from "./resilience.js
 import { getProviderConfiguration, type ProviderConfiguration } from "./provider-settings.js";
 import { fetchTvmazeBundle, fetchWikidataBundle, resetOpenMetadataCaches, searchTvmaze, searchWikidata } from "./open-metadata.js";
 
-type RemoteProvider = "tvmaze" | "wikidata" | "anilist" | "tmdb" | "tvdb" | "imdb" | "allocine" | "fanart";
+type RemoteProvider = "tvmaze" | "wikidata" | "anilist" | "tmdb" | "tvdb" | "imdb" | "allocine" | "fanart" | "youtube";
 interface ProviderHealth { health: "idle" | "healthy" | "degraded"; lastSuccessAt: string | null; lastError: string | null; latencyMs: number | null }
 const providerHealth = new Map<RemoteProvider, ProviderHealth>();
 
@@ -44,6 +44,12 @@ export function buildProviderStatuses(settings: ProviderConfiguration): Metadata
     { id: "imdb", name: "IMDb", role: "metadata", configured: Boolean(settings.imdbApiUrl && settings.imdbApiToken),
       enabled: Boolean(settings.imdbApiUrl && settings.imdbApiToken), legalMode: "licensed-api",
       message: settings.imdbApiUrl && settings.imdbApiToken ? "Connecteur licencié actif." : "Nécessite un accès API IMDb licencié." },
+    // YouTube ne sert que les bibliotheques web, et n'est jamais interroge pour un film ou une serie.
+    { id: "youtube", name: "YouTube Data API", role: "web", configured: Boolean(settings.youtubeApiKey),
+      enabled: Boolean(settings.youtubeApiKey), legalMode: "open-api",
+      message: settings.youtubeApiKey
+        ? "Titres, dates et vignettes des bibliothèques web."
+        : "Ajoutez YOUTUBE_API_KEY pour dater et illustrer les vidéos web." },
     { id: "allocine", name: "Allociné", role: "metadata", configured: Boolean(settings.allocineApiUrl && settings.allocineApiToken),
       enabled: Boolean(settings.allocineApiUrl && settings.allocineApiToken), legalMode: "licensed-api",
       message: settings.allocineApiUrl && settings.allocineApiToken ? "Connecteur licencié actif." : "Pas de scraping : activez uniquement une API officielle/licenciée." },

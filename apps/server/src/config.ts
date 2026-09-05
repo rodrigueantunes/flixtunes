@@ -58,6 +58,7 @@ export const config = {
   imdbApiToken: process.env.IMDB_LICENSED_API_TOKEN?.trim() || null,
   allocineApiUrl: process.env.ALLOCINE_LICENSED_API_URL?.trim() || null,
   allocineApiToken: process.env.ALLOCINE_LICENSED_API_TOKEN?.trim() || null,
+  youtubeApiKey: process.env.YOUTUBE_API_KEY?.trim() || null,
   ffmpegPath: process.env.FFMPEG_PATH?.trim() || "ffmpeg",
   ffprobePath: process.env.FFPROBE_PATH?.trim() || "ffprobe",
   hardwareAcceleration: process.env.FLIXTUNES_HW_ACCEL?.trim().toLowerCase() || "auto",

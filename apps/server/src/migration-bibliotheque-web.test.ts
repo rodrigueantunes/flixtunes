@@ -52,6 +52,13 @@ function baseAvecMediatheque(contrainte = CONTRAINTE): DatabaseSync {
       library_id TEXT REFERENCES library_folders(id) ON DELETE CASCADE,
       title TEXT NOT NULL
     , edition TEXT);
+    CREATE TABLE artwork_assets (
+      id TEXT PRIMARY KEY,
+      catalog_id TEXT NOT NULL REFERENCES catalog_items(id) ON DELETE CASCADE,
+      role TEXT NOT NULL,
+      source TEXT NOT NULL CHECK(source IN ('local', 'tvmaze', 'wikidata', 'tmdb')),
+      local_path TEXT NOT NULL
+    );
     CREATE TABLE playback_progress (
       profile_id TEXT NOT NULL,
       media_id TEXT NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
@@ -63,6 +70,8 @@ function baseAvecMediatheque(contrainte = CONTRAINTE): DatabaseSync {
     INSERT INTO catalog_items (id, library_id, title) VALUES ('cat1', 'lib1', 'Arrival');
     INSERT INTO media_items (id, kind, library_id, title, edition) VALUES ('med1', 'movie', 'lib1', 'Arrival', 'longue');
     INSERT INTO playback_progress (profile_id, media_id, position_seconds) VALUES ('prof1', 'med1', 1234.5);
+    INSERT INTO artwork_assets (id, catalog_id, role, source, local_path)
+      VALUES ('art1', 'cat1', 'poster', 'tmdb', 'D:/artwork/art1.jpg');
   `);
   return base;
 }
@@ -154,7 +163,7 @@ describe("ouverture de library_folders au type web", () => {
   it("s'applique par le registre, et une seule fois", () => {
     const base = baseAvecMediatheque();
 
-    expect(appliquerLesMigrations(base, { registre: MIGRATIONS })).toEqual([2, 3]);
+    expect(appliquerLesMigrations(base, { registre: MIGRATIONS })).toEqual([2, 3, 4]);
     expect(appliquerLesMigrations(base, { registre: MIGRATIONS })).toEqual([]);
     expect(schemaDe(base, "library_folders")).toContain("'web'");
     expect(compte(base, "catalog_items")).toBe(1);
@@ -218,6 +227,21 @@ describe("ouverture de media_items au type video", () => {
   });
 });
 
+describe("ouverture des provenances de vignette", () => {
+  it("conserve les images déjà en cache", () => {
+    // Ranger une vignette YouTube sous « tmdb » aurait évité cette migration au prix d'une donnée
+    // fausse — et la provenance sert justement à savoir quoi rafraîchir et à qui l'attribuer.
+    const base = baseAvecMediatheque();
+
+    appliquerLesMigrations(base, { registre: MIGRATIONS });
+
+    expect(compte(base, "artwork_assets")).toBe(1);
+    expect(schemaDe(base, "artwork_assets")).toContain("'youtube'");
+    expect(() => base.exec(`INSERT INTO artwork_assets (id, catalog_id, role, source, local_path)
+      VALUES ('art2', 'cat1', 'poster', 'youtube', 'D:/artwork/art2.jpg')`)).not.toThrow();
+  });
+});
+
 describe("accroche de la migration", () => {
   it("la contrainte visée existe encore dans le schéma du serveur", () => {
     // La migration reconnaît la table à un texte exact. Le jour où `database.ts` l'écrira autrement,
@@ -225,5 +249,6 @@ describe("accroche de la migration", () => {
     const source = readFileSync(fileURLToPath(new URL("./database.ts", import.meta.url)), "utf8");
     expect(source).toContain(CONTRAINTE);
     expect(source).toContain("CHECK(kind IN ('movie', 'show', 'episode'))");
+    expect(source).toContain("CHECK(source IN ('local', 'tvmaze', 'wikidata', 'tmdb'))");
   });
 });

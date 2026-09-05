@@ -14,6 +14,8 @@ export interface ProviderConfiguration {
   imdbApiToken: string | null;
   allocineApiUrl: string | null;
   allocineApiToken: string | null;
+  /** YouTube Data API v3. Elle ne sert qu'aux bibliothèques web, et à rien d'autre. */
+  youtubeApiKey: string | null;
 }
 
 const settingPrefix = "provider_secret_";
@@ -62,6 +64,7 @@ export function getProviderConfiguration(): ProviderConfiguration {
     imdbApiToken: stored("imdbApiToken") ?? config.imdbApiToken,
     allocineApiUrl: stored("allocineApiUrl") ?? config.allocineApiUrl,
     allocineApiToken: stored("allocineApiToken") ?? config.allocineApiToken,
+    youtubeApiKey: stored("youtubeApiKey") ?? config.youtubeApiKey,
   };
 }
 

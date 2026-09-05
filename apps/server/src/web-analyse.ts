@@ -3,7 +3,9 @@ import { db } from "./database.js";
 import type { ParsedMedia } from "./media-parser.js";
 import { cleDuPalier, episodeDepuisLeWeb, libelleDuPalier } from "./web-catalogue.js";
 import { lireCheminWeb, type CheminWeb, type RefusChemin } from "./web-chemins.js";
-import { fusionnerIdentites, lireAnnexeDuDisque, lireBalisesWeb } from "./web-identite.js";
+import { fusionnerIdentites, lireAnnexeDuDisque, lireBalisesWeb, type IdentiteWeb } from "./web-identite.js";
+import { avatarDeChaineYoutube, chercherYoutube, resoudreParOEmbed, resoudreYoutube } from "./web-fournisseurs.js";
+import { cacheRemoteArtwork } from "./artwork.js";
 
 /**
  * L'analyse d'un fichier d'une bibliothèque web, du chemin jusqu'à la fiche.
@@ -75,8 +77,48 @@ function placeOccupee(library: LibraryFolder, chemin: CheminWeb, cheminFichier: 
 }
 
 export type LectureWeb =
-  | { valide: true; parsed: ParsedMedia; chemin: CheminWeb }
+  | { valide: true; parsed: ParsedMedia; chemin: CheminWeb; identite: IdentiteWeb }
   | { valide: false; message: string };
+
+/**
+ * Demander à la plateforme ce que le fichier n'a pas dit.
+ *
+ * Trois principes, dans cet ordre.
+ *
+ * **On ne demande rien quand on sait déjà.** Si le fichier porte titre, date et vignette, l'appel
+ * n'apporterait rien et coûterait du quota — une ressource quotidienne dont l'épuisement rend la clé
+ * inutilisable jusqu'au lendemain.
+ *
+ * **La provenance décide de l'interlocuteur.** Elle est écrite dans le chemin : le dossier de premier
+ * niveau nomme la plateforme. On ne cherche donc jamais une vidéo Dailymotion sur YouTube — on
+ * trouverait une autre vidéo, au titre voisin, et on l'appliquerait comme une certitude.
+ *
+ * **L'identifiant prime sur le titre.** Il donne une correspondance exacte, sans score ni seuil, et
+ * coûte cent fois moins cher. Le titre reste la clé quand il n'y a pas d'identifiant, comme demandé.
+ *
+ * Un échec de fournisseur ne fait pas échouer l'analyse : le fichier entre avec ce qu'il portait.
+ */
+async function completerParLaPlateforme(chemin: CheminWeb, locale: IdentiteWeb): Promise<IdentiteWeb | null> {
+  if (locale.titre && locale.publieeLe && locale.vignette) return null;
+
+  const plateforme = chemin.plateforme ?? locale.plateforme;
+  if (!plateforme) return null;
+  const identifiant = chemin.identifiant ?? locale.identifiant;
+
+  try {
+    if (plateforme === "youtube" && identifiant) return await resoudreYoutube(identifiant);
+    if (locale.url) {
+      const parOEmbed = await resoudreParOEmbed(plateforme, locale.url);
+      if (parOEmbed) return parOEmbed;
+    }
+    // Seul YouTube offre une recherche exploitable ici. Ailleurs, sans adresse d'origine, les
+    // métadonnées locales font seules — et le dire vaut mieux que d'inventer une correspondance.
+    if (plateforme === "youtube") return await chercherYoutube(chemin.chaine, locale.titre ?? chemin.titre);
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Lire une vidéo web : son rangement, ce qu'elle dit d'elle-même, et la place qui lui revient.
@@ -92,7 +134,9 @@ export async function analyserVideoWeb(
   const lecture = lireCheminWeb(library.path, cheminFichier);
   if (!lecture.valide) return { valide: false, message: messageDeRefus(lecture.raison) };
 
-  const identite = fusionnerIdentites(await lireAnnexeDuDisque(cheminFichier), lireBalisesWeb(payloadFfprobe));
+  const locale = fusionnerIdentites(await lireAnnexeDuDisque(cheminFichier), lireBalisesWeb(payloadFfprobe));
+  // Le fichier d'abord, la plateforme en rattrapage : c'est l'ordre le moins cher et le plus sûr.
+  const identite = fusionnerIdentites(locale, await completerParLaPlateforme(lecture.chemin, locale));
   const cle = cleDuPalier(lecture.chemin);
   const palier = numeroDePalier(library, lecture.chemin, cle);
   const parsed = episodeDepuisLeWeb(
@@ -101,11 +145,52 @@ export async function analyserVideoWeb(
     () => palier,
     placeOccupee(library, lecture.chemin, cheminFichier),
   );
-  return { valide: true, parsed, chemin: lecture.chemin };
+  return { valide: true, parsed, chemin: lecture.chemin, identite };
 }
 
 /** Le libellé du palier d'un fichier, pour la fiche de saison. */
 export function libelleDuPalierDuFichier(library: LibraryFolder, cheminFichier: string): string {
   const lecture = lireCheminWeb(library.path, cheminFichier);
   return lecture.valide ? libelleDuPalier(cleDuPalier(lecture.chemin), library.language) : "";
+}
+
+/** Une fiche porte-t-elle deja une image que le serveur heberge ? */
+function dejaIllustree(catalogId: string): boolean {
+  const ligne = db.prepare("SELECT poster_url FROM catalog_items WHERE id = ?").get(catalogId) as
+    { poster_url: string | null } | undefined;
+  return Boolean(ligne?.poster_url?.startsWith("/api/artwork/"));
+}
+
+/**
+ * Illustrer une video et sa chaine, une fois pour toutes.
+ *
+ * « La vignette de l'instant T, et ca conservera celle-ci ensuite » : l'image est telechargee au
+ * premier passage puis servie localement, et **plus jamais redemandee**. Une fiche deja illustree est
+ * donc laissee telle quelle — y compris si la plateforme a change sa vignette depuis. C'est le
+ * comportement demande, et c'est aussi celui qui protege du jour ou l'adresse d'origine expire.
+ *
+ * L'avatar de chaine coute une recherche, soit cent unites de quota. Il n'est donc demande qu'une
+ * seule fois par chaine, quand elle n'a encore aucune image.
+ *
+ * Un echec d'illustration n'interrompt rien : une fiche sans image reste une fiche.
+ */
+export async function illustrerVideoWeb(args: {
+  catalogId: string;
+  chaineId: string;
+  chemin: CheminWeb;
+  identite: IdentiteWeb;
+  langue: string;
+}): Promise<void> {
+  try {
+    if (args.identite.vignette && !dejaIllustree(args.catalogId)) {
+      await cacheRemoteArtwork(args.catalogId, "poster", args.identite.vignette, args.langue, "youtube");
+    }
+  } catch { /* une fiche sans vignette reste une fiche */ }
+
+  try {
+    if (args.chemin.plateforme === "youtube" && !dejaIllustree(args.chaineId)) {
+      const avatar = await avatarDeChaineYoutube(args.chemin.chaine);
+      if (avatar) await cacheRemoteArtwork(args.chaineId, "poster", avatar, args.langue, "youtube");
+    }
+  } catch { /* idem pour la chaine */ }
 }
