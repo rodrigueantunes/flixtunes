@@ -48,6 +48,17 @@ export interface EtatPasse {
   trouves: number;
   /** Série et saison en cours d'écoute, pour que l'attente ait un nom. `null` hors passe. */
   saisonCourante: string | null;
+  /**
+   * Où en est la saison en cours, en épisodes.
+   *
+   * C'est le renseignement qui manquait, et son absence a coûté un faux diagnostic. L'avancement ne
+   * comptait que des saisons entières, et le nombre d'épisodes écoutés se lisait **en base** — où une
+   * seconde écoute ne change rien, l'épisode y figurant déjà. Pendant toute cette phase l'écran
+   * affichait donc des chiffres immobiles, et rien ne distinguait un travail qui avance d'un travail
+   * qui a calé. Une saison de vingt-deux épisodes peut occuper la machine un quart d'heure : sans ce
+   * compteur, ce quart d'heure ressemble à une panne.
+   */
+  episodeCourant: { fait: number; total: number } | null;
   debuteLe: string | null;
   /**
    * Ce que la passe en cours a fait depuis son démarrage.
@@ -105,6 +116,7 @@ export function arreterLaPasse(): EtatPasse {
 let interruption: AbortController | null = null;
 let enCours = false;
 let saisonCourante: string | null = null;
+let episodeCourant: { fait: number; total: number } | null = null;
 let debuteLe: string | null = null;
 let saisonsDeLaPasse = 0;
 let trouvesDeLaPasse = 0;
@@ -138,6 +150,7 @@ export function etatDesGeneriques(): EtatPasse {
     episodesEcoutes: compte("ecoute_le IS NOT NULL"),
     trouves: compte("source_intro = 'empreinte'"),
     saisonCourante,
+    episodeCourant,
     debuteLe,
     passe: enCours ? { saisonsFaites: saisonsDeLaPasse, trouves: trouvesDeLaPasse } : null,
   };
@@ -257,11 +270,13 @@ export async function completerLesGeneriques(options: {
       if (arret.signal.aborted) break;
       await options.attendreCreneau?.(arret.signal);
       saisonCourante = `${saison.show_title}${saison.season_number != null ? ` — saison ${saison.season_number}` : ""}`;
+      episodeCourant = null;
       const resultat = await completerSaisonParLeSon(saison.show_title, saison.season_number, {
         signal: arret.signal,
         // La même permission que celle demandée entre deux saisons, mais réclamée à chaque épisode :
         // c'est le seul grain assez fin pour qu'une lecture n'attende pas.
         attendreCreneau: options.attendreCreneau,
+        surEpisode: (fait, total) => { episodeCourant = { fait, total }; },
       });
       bilan.saisonsEcoutees += 1;
       bilan.parEmpreinte += resultat.reperes;
@@ -274,6 +289,7 @@ export async function completerLesGeneriques(options: {
     interruption = null;
     enCours = false;
     saisonCourante = null;
+    episodeCourant = null;
   }
   return bilan;
 }

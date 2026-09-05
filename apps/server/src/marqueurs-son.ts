@@ -4,7 +4,9 @@ import { marqueursGenerique } from "./generique.js";
 import { enveloppeDuFichier } from "./empreinte-extraction.js";
 import { repereParEmpreinte, type RepereSonore } from "./marqueurs-empreinte.js";
 import { retenirEcoute, retenirIntroduction } from "./marqueurs-memoire.js";
-import { segmentCommun, type Attente } from "./empreinte-sonore.js";
+import {
+  LONGUEUR_MAXIMALE_MS, LONGUEUR_MINIMALE_MS, segmentCommun, type Attente,
+} from "./empreinte-sonore.js";
 
 /**
  * Repérer l'introduction d'une saison par le son, quand les chapitres ne disent rien.
@@ -234,6 +236,16 @@ export async function completerSaisonParLeSon(showTitle: string, season: number 
      * est en cours, elle patiente au lieu de lui disputer le processeur.
      */
     attendreCreneau?: (signal?: AbortSignal) => Promise<void>;
+    /**
+     * Ce qu'on dit de l'épisode qu'on commence, pour que l'écran cesse de mentir par omission.
+     *
+     * L'avancement ne comptait que les **saisons**, et le nombre d'épisodes écoutés se lisait en base
+     * — où une **seconde** écoute ne change rien, puisque l'épisode y figurait déjà. Pendant toute
+     * cette phase, l'écran affichait donc des chiffres rigoureusement immobiles, et rien ne
+     * distinguait un travail qui avance d'un travail qui a calé. J'ai moi-même conclu au blocage sur
+     * cette base, à tort.
+     */
+    surEpisode?: (fait: number, total: number) => void;
     signal?: AbortSignal;
   } = {}): Promise<BilanSon> {
   const lireEnveloppe = options.lireEnveloppe
@@ -370,15 +382,32 @@ export async function completerSaisonParLeSon(showTitle: string, season: number 
   if (porteur && aTraiter.length) {
     const debut = Math.max(0, (porteur.intro_start_seconds ?? 0) - MARGE_SIGNATURE_S);
     dureeSignature = (porteur.intro_end_seconds ?? 0) - (porteur.intro_start_seconds ?? 0);
-    if (dureeSignature > 0) {
+    /*
+     * **Un repère aberrant ne doit pas devenir une extraction interminable.**
+     *
+     * Rien ne bornait cette durée : elle vient d'un repère en base, et un repère peut être faux — un
+     * chapitre mal nommé, une déduction malheureuse. Une introduction annoncée à cinquante minutes
+     * aurait fait extraire cinquante minutes d'audio pour en faire un motif de recherche, c'est-à-dire
+     * exactement le contraire de ce que cette voie rapide existe pour faire.
+     *
+     * Les mêmes bornes que le reste du module : un générique dure entre douze secondes et cinq
+     * minutes. Hors de là, on ne s'en sert pas comme signature et l'on retombe sur la comparaison
+     * croisée, qui sait se débrouiller sans.
+     */
+    const bornes = dureeSignature * 1000 >= LONGUEUR_MINIMALE_MS
+      && dureeSignature * 1000 <= LONGUEUR_MAXIMALE_MS;
+    if (dureeSignature > 0 && bornes) {
       signature = await enveloppe(porteur, dureeSignature + 2 * MARGE_SIGNATURE_S, debut);
     }
   }
 
   let echecsConsecutifs = 0;
 
+  let faits = 0;
   for (const { episode, index } of aTraiter) {
     if (options.signal?.aborted) break;
+    faits += 1;
+    options.surEpisode?.(faits, aTraiter.length);
     // Avant chaque épisode, et non plus seulement avant chaque saison : c'est ce qui rend la passe
     // réellement effaçable devant une lecture.
     await options.attendreCreneau?.(options.signal);

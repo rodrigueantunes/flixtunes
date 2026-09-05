@@ -1,5 +1,35 @@
 # Journal des versions
 
+## 0.5.7.r26 — un écran qui ne savait pas dire « ça avance »
+
+La navigation est redevenue fluide après la r25. Mais l'écran d'avancement affichait « 0 saison
+traitée » depuis huit minutes, et rien ne permettait de savoir si le travail progressait. J'ai
+moi-même conclu au blocage sur cette base — **à tort** : relevé sur le NAS, la passe est passée de 357
+à 359 saisons pendant l'observation, et a changé de saison en cours. Elle n'était pas bloquée, elle
+était lente et muette.
+
+- **Les deux compteurs affichés ne pouvaient pas montrer la progression d'une seconde écoute.**
+  « Épisodes écoutés » se lit en base comme le nombre de lignes dont `ecoute_le` n'est pas nul : un
+  épisode **réécouté** y figurait déjà, et le compte ne bouge donc pas d'une unité pendant toute cette
+  phase. « Saisons traitées » n'avance qu'une fois la saison finie — soit un quart d'heure pour une
+  saison de vingt-deux épisodes. Entre les deux, aucun signe de vie.
+- **L'état de la passe porte désormais l'épisode en cours**, `fait` sur `total` dans la saison. C'est
+  le seul chiffre qui bouge à l'échelle où l'on regarde, et il distingue enfin un travail qui avance
+  d'un travail qui a calé.
+- **Un repère aberrant ne peut plus devenir une extraction interminable.** La signature introduite en
+  r24 prend sa durée d'un repère en base, et rien ne la bornait — or un repère peut être faux : un
+  chapitre mal nommé, une déduction malheureuse. Une introduction annoncée à cinquante minutes aurait
+  fait extraire cinquante minutes d'audio pour en faire un motif de recherche, soit l'exact contraire
+  de ce que cette voie rapide existe pour faire. Elle est bornée par les mêmes valeurs que le reste du
+  module — entre douze secondes et cinq minutes —, et hors de là on retombe sur la comparaison
+  croisée.
+- 893 tests serveur.
+
+**Ce que cette révision ne change pas : la durée.** La passe reste lente, et c'est en partie le prix
+de la r25 — un seul fil ffmpeg à la priorité la plus basse décode nettement moins vite que quatre. Le
+compromis est délibéré : une machine utilisable pendant que le travail se fait. Ce qui manquait
+n'était pas de la vitesse, c'était de pouvoir le constater.
+
 ## 0.5.7.r25 — un travail d'arrière-plan qui se tenait au premier
 
 La r24 a rendu le repérage plus rapide. Le reproche restant n'est pas sa durée mais son **occupation** :
