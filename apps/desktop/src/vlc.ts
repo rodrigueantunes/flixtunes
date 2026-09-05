@@ -157,7 +157,48 @@ function nombre(valeur: unknown): number {
 export function trouverVlc(): string | null {
   const impose = process.env.FLIXTUNES_VLC;
   if (impose && existsSync(impose)) return impose;
-  return [...vlcEmbarque(), ...vlcDuSysteme()].find((chemin) => existsSync(chemin)) ?? null;
+  const candidats = [...vlcEmbarque().filter(saitAfficher), ...vlcDuSysteme()];
+  return candidats.find((chemin) => existsSync(chemin)) ?? null;
+}
+
+/**
+ * Les greffons de sortie vidéo qui permettent d'afficher une image sur un bureau Linux.
+ *
+ * Il n'y a pas de liste canonique : ce sont ceux que VLC charge selon la session. `xcb_x11` et
+ * `xcb_xv` couvrent X11 et XWayland, `gl` et `glx` le rendu accéléré, `wl_shell_surface` Wayland
+ * natif. Il suffit d'un seul.
+ */
+const SORTIES_VIDEO = [
+  "libxcb_x11_plugin.so", "libxcb_xv_plugin.so", "libgl_plugin.so",
+  "libglx_plugin.so", "libwl_shell_surface_plugin.so", "libvdpau_display_plugin.so",
+];
+
+/**
+ * **Ce VLC-ci sait-il afficher une image ?**
+ *
+ * La question ne se posait pas, et c'est ce qui a coûté deux révisions. Le VLC emporté est une
+ * compilation orientée décodage — celle qui accompagne l'étage FFmpeg/VA-API. Vérifié sur le paquet
+ * livré, ses seules sorties vidéo sont `fb`, `vdummy`, `vmem` et `yuv` : **aucune** ne dessine sur un
+ * bureau Linux. D'où l'erreur qu'on croyait obscure —
+ *
+ *     vlc: unknown option or missing mandatory argument `--drawable-xid=…'
+ *
+ * — dont la cause n'est pas l'option mais son absence de fournisseur : `--drawable-xid` est déclarée
+ * par le greffon de sortie X11, qui n'est pas là. Même sans cette option, ce VLC n'aurait rien à
+ * montrer.
+ *
+ * Sous Windows la question ne se pose pas non plus, mais pour la raison inverse : la compilation
+ * emportée y est complète, et c'est elle qui sert depuis toujours.
+ *
+ * Quand le VLC emporté ne sait pas afficher, on passe à celui du système ; s'il n'y en a pas,
+ * `trouverVlc` rend `null` et l'application le dit franchement — le client Web prend alors la lecture
+ * à son compte, ce qu'il sait très bien faire. Prétendre disposer d'un lecteur qu'on n'a pas menait
+ * droit à un écran noir et à un message incompréhensible.
+ */
+function saitAfficher(binaire: string): boolean {
+  if (process.platform === "win32") return true;
+  const greffons = path.join(path.dirname(binaire), "plugins", "video_output");
+  return SORTIES_VIDEO.some((greffon) => existsSync(path.join(greffons, greffon)));
 }
 
 /**

@@ -1,5 +1,43 @@
 # Journal des versions
 
+## 0.5.7.r22 — le VLC emporté ne sait pas afficher, et il fallait le dire
+
+La journalisation ajoutée en r21 a rendu son verdict dès le premier essai :
+
+```
+vlc: unknown option or missing mandatory argument `--drawable-xid=20971524'
+```
+
+- **La cause n'est pas l'option, c'est son absence de fournisseur.** `--drawable-xid` est déclarée par
+  le greffon de sortie X11. Vérifié sur le paquet livré, les seules sorties vidéo du VLC emporté sont
+  `fb`, `vdummy`, `vmem` et `yuv` : **aucune ne dessine sur un bureau Linux**. C'est une compilation
+  orientée décodage, celle qui accompagne l'étage FFmpeg/VA-API. Même sans l'option, ce VLC n'aurait
+  rien eu à montrer.
+- **On ne prétend donc plus disposer d'un lecteur qu'on n'a pas.** Le VLC emporté n'est retenu, hors
+  Windows, que s'il porte au moins un greffon capable d'afficher. Sinon on passe à celui du système ;
+  s'il n'y en a pas, l'application le dit franchement et **le client Web prend la lecture à son
+  compte** — ce qu'il sait très bien faire, et ce qui rétablit la lecture immédiatement. Annoncer un
+  VLC absent menait droit à un écran noir suivi d'un message incompréhensible.
+- **Agrandir la fenêtre sans passer par le plein écran laissait l'interface à son ancienne taille**,
+  dans le coin d'un grand rectangle noir. L'interface est une fenêtre distincte, collée à la fenêtre
+  vidéo par les événements `resize` et `maximize` ; selon le compositeur — relevé sous GNOME —, ces
+  événements arrivent **avant** que la géométrie ne soit arrêtée, et l'on recopiait fidèlement une
+  taille périmée. Plutôt que de deviner quel événement ment sur quel bureau, les deux fenêtres sont
+  comparées quatre fois par seconde et recollées **seulement si elles ont divergé**. Ce filet rattrape
+  aussi ce qui n'émet aucun événement : un pavage, un changement d'écran ou d'échelle.
+- **Le Centre d'applications annonçait « installé » devant une révision plus récente.** Le champ
+  `Version` du paquet venait de `package.json` et valait `0.5.7` pour **toutes** les révisions : `dpkg`
+  comparait `0.5.7` à `0.5.7` et concluait à l'égalité — exact, et inutile. La révision entre
+  désormais dans la version elle-même, `0.5.7.r22`, qui est une version Debian valide et se compare
+  dans le bon ordre. La mise à jour est donc proposée, et `dpkg -l` dit enfin ce qui est installé.
+- 20 tests de bureau.
+
+**Ce qui reste à trancher, et qui vous appartient.** Le client Linux lira par le client Web, sans VLC.
+C'est fonctionnel et cela couvre le lecture directe comme le remux ; ce que l'on perd, c'est la lecture
+par VLC pour les formats que le navigateur refuse. Deux façons de la retrouver : installer VLC sur la
+machine — il sera pris automatiquement —, ou emporter une compilation de VLC complète pour Linux, ce
+qui alourdirait le paquet de plusieurs dizaines de mégaoctets. Je n'ai pas tranché à votre place.
+
 ## 0.5.7.r21 — on disait à VLC où sont ses greffons, jamais où sont ses données
 
 L'application démarre sous Debian depuis la r20 : le profil AppArmor a levé le blocage du bac à sable.

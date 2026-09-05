@@ -162,6 +162,30 @@ function ouvrirFenetres(): void {
   // boucle sur une liste de noms ne se laisse pas vérifier.
   fenetreVideo.on("move", suivre);
   fenetreVideo.on("resize", suivre);
+  /*
+   * **Une vérification périodique, parce que les événements ne suffisent pas.**
+   *
+   * `suivre` est appelé sur `move`, `resize`, `maximize` et leurs voisins. Cela marche sous Windows,
+   * pas partout : relevé sous GNOME, agrandir la fenêtre **sans** passer par le plein écran laissait
+   * l'interface à son ancienne taille, dans le coin d'un grand rectangle noir. Selon le compositeur,
+   * l'événement arrive avant que la géométrie ne soit arrêtée, et `getContentBounds` rend alors
+   * l'ancienne valeur — on recopie donc fidèlement une taille périmée.
+   *
+   * Plutôt que de deviner quel événement ment sur quel bureau, on compare quatre fois par seconde et
+   * l'on n'agit que si les deux fenêtres ont divergé. Une lecture de géométrie ne coûte rien, et ce
+   * filet rattrape aussi les changements qui n'émettent aucun événement : un pavage, une bascule
+   * d'écran, un changement d'échelle.
+   */
+  const recollage = setInterval(() => {
+    if (!fenetreVideo || !fenetreInterface || fenetreVideo.isDestroyed() || fenetreInterface.isDestroyed()) return;
+    const vise = fenetreVideo.getContentBounds();
+    const actuelle = fenetreInterface.getBounds();
+    if (vise.x !== actuelle.x || vise.y !== actuelle.y
+      || vise.width !== actuelle.width || vise.height !== actuelle.height) {
+      fenetreInterface.setBounds(vise);
+    }
+  }, 250);
+  fenetreVideo.on("closed", () => clearInterval(recollage));
   fenetreVideo.on("restore", suivre);
   fenetreVideo.on("maximize", suivre);
   fenetreVideo.on("unmaximize", suivre);

@@ -170,10 +170,23 @@ console.log(`4. installateur ${marque}`);
 // L'estampille passe par l'environnement plutôt que par la ligne de commande : `${arch}` et `${ext}`
 // sont des motifs d'electron-builder, et un shell les remplacerait par du vide avant qu'il ne les voie.
 const avecEstampille = { env: { ...process.env, FLIXTUNES_ESTAMPILLE: marque, ...outillageDebian } };
+
+/*
+ * **La révision entre aussi dans la version du paquet, et pas seulement dans son nom de fichier.**
+ *
+ * L'estampille ne servait qu'à nommer les fichiers ; le champ `Version` du `.deb`, lui, venait de
+ * `package.json` et valait « 0.5.7 » pour toutes les révisions. Conséquence relevée sous Ubuntu : le
+ * Centre d'applications affiche « installé » devant une révision plus récente et ne propose aucune
+ * mise à jour — `dpkg` compare 0.5.7 à 0.5.7 et conclut à l'égalité, ce qui est exact et inutile.
+ *
+ * `0.5.7.r22` est une version Debian valide, et l'ordre de comparaison est celui qu'on attend :
+ * elle est supérieure à `0.5.7.r21` comme à `0.5.7` tout court.
+ */
+const versionPaquet = `--config.extraMetadata.version=${marque}`;
 if (cible === "linux") {
   // L'AppImage n'est demandée que sur une machine Linux : voir l'en-tête.
   const formats = process.platform === "linux" ? "deb AppImage" : "deb";
-  lancer(`npx electron-builder --linux ${formats} --publish never`, avecEstampille);
+  lancer(`npx electron-builder --linux ${formats} ${versionPaquet} --publish never`, avecEstampille);
   if (process.platform === "win32") {
     console.log("5. droits du paquet Debian");
     for (const nom of readdirSync(path.join(COQUE, "release")).filter((entree) => entree.endsWith(".deb"))) {
@@ -183,7 +196,7 @@ if (cible === "linux") {
     console.log("  AppImage non produite : elle demande une machine Linux.");
   }
 } else if (process.platform === "win32") {
-  lancer("npx electron-builder --win --publish never", avecEstampille);
+  lancer(`npx electron-builder --win ${versionPaquet} --publish never`, avecEstampille);
 } else {
   throw new Error(`Aucune cible d'empaquetage pour ${process.platform}.`);
 }
