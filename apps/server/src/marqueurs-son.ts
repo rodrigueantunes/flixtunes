@@ -4,7 +4,7 @@ import { marqueursGenerique } from "./generique.js";
 import { enveloppeDuFichier } from "./empreinte-extraction.js";
 import { repereParEmpreinte, type RepereSonore } from "./marqueurs-empreinte.js";
 import { retenirEcoute, retenirIntroduction } from "./marqueurs-memoire.js";
-import type { Attente } from "./empreinte-sonore.js";
+import { segmentCommun, type Attente } from "./empreinte-sonore.js";
 
 /**
  * Repérer l'introduction d'une saison par le son, quand les chapitres ne disent rien.
@@ -102,6 +102,38 @@ export const TEMOINS_PAR_EPISODE = 4;
  */
 export const ESSAIS_AVANT_RENONCEMENT = 3;
 
+/**
+ * **Chercher un générique connu plutôt que comparer deux inconnus.**
+ *
+ * La méthode d'origine compare l'épisode à quatre voisins et retient ce qu'ils ont en commun. C'est
+ * ce qu'il faut faire quand on ne sait rien — mais dès qu'**un** épisode de la saison a son
+ * introduction repérée, on ne sait plus rien : on tient le thème, et sa durée exacte.
+ *
+ * On extrait alors sa **signature** — l'enveloppe sonore du générique lui-même, quatre-vingts secondes
+ * environ — et l'on se contente de la chercher dans les autres épisodes. Trois économies d'un coup :
+ *
+ * | | méthode d'origine | par signature |
+ * | --- | --- | --- |
+ * | extractions par épisode | 1 + jusqu'à 4 témoins | **1** |
+ * | comparaisons | 4 | **1** |
+ * | taille du second extrait | la fenêtre entière, 300 à 900 s | **la durée du thème** |
+ *
+ * La dernière ligne est la plus lourde : le coût d'une comparaison croît avec le produit des deux
+ * longueurs, et chercher un motif de 80 s coûte donc une fraction de ce que coûte l'appariement de
+ * deux fenêtres de 900 s.
+ *
+ * **Le quorum de deux paires ne s'applique pas ici**, et c'est délibéré. Il existe parce que deux
+ * épisodes quelconques peuvent partager n'importe quoi — un silence, un logo de studio —, et qu'il
+ * faut un troisième avis. Ici on ne demande pas « qu'ont-ils en commun ? » mais « le générique que
+ * voici est-il là ? » : une réponse franche à une question précise vaut mieux qu'un vote entre
+ * ignorants. On exige en revanche une ressemblance plus élevée et une durée conforme à celle qu'on
+ * cherche.
+ */
+export const SEUIL_SIGNATURE = 0.85;
+
+/** Ce qu'on prend autour du générique connu : de quoi tolérer un repère un peu large. */
+export const MARGE_SIGNATURE_S = 4;
+
 /** Écart toléré autour d'une durée connue par les chapitres. */
 const TOLERANCE_DUREE = 8;
 
@@ -115,6 +147,8 @@ interface LigneEpisode {
   ecoute_le: string | null;
   /** Début d'introduction déjà connu, quelle qu'en soit la source. */
   intro_start_seconds: number | null;
+  /** Sa fin, qui donne la durée du thème — donc ce qu'on cherche dans les autres épisodes. */
+  intro_end_seconds: number | null;
   /** Date de la seconde écoute, `null` tant qu'elle n'a pas eu lieu : elle n'a lieu qu'une fois. */
   reecoute_le: string | null;
   /** D'où vient l'introduction connue : « empreinte » prouve que la saison a un thème. */
@@ -195,7 +229,8 @@ export async function completerSaisonParLeSon(showTitle: string, season: number 
       enveloppeDuFichier(chemin, { debutSecondes: debut, dureeSecondes: secondes }));
 
   const episodes = db.prepare(`SELECT m.id, m.episode_number, m.file_path, m.runtime_seconds,
-      m.embedded_metadata_json, g.ecoute_le, g.reecoute_le, g.source_intro, g.intro_start_seconds
+      m.embedded_metadata_json, g.ecoute_le, g.reecoute_le, g.source_intro,
+      g.intro_start_seconds, g.intro_end_seconds
     FROM media_items m
     LEFT JOIN marqueurs_generique g ON g.media_id = m.id
     WHERE m.kind = 'episode' AND m.available = 1 AND m.show_title = ?
@@ -306,6 +341,28 @@ export async function completerSaisonParLeSon(showTitle: string, season: number 
    * Et la soupape : **le premier épisode qui trouve quelque chose rouvre l'escalade**. Un thème existe,
    * donc la saison en vaut la peine.
    */
+  /**
+   * La signature du générique de cette saison, quand un épisode la porte déjà.
+   *
+   * On la prend sur l'épisode dont le repère est le plus sûr — un chapitre nommé par l'auteur du
+   * fichier vaut mieux qu'une empreinte, qui vaut mieux qu'une déduction. Une seule extraction pour
+   * toute la saison, et elle sert ensuite à chaque épisode qui manque.
+   */
+  const rangSource = (source: string | null): number =>
+    source === "chapitre" ? 0 : source === "empreinte" ? 1 : 2;
+  const porteur = episodes
+    .filter((episode) => episode.intro_start_seconds != null && episode.intro_end_seconds != null)
+    .sort((a, b) => rangSource(a.source_intro) - rangSource(b.source_intro))[0];
+  let signature: Float64Array | null = null;
+  let dureeSignature = 0;
+  if (porteur && aTraiter.length) {
+    const debut = Math.max(0, (porteur.intro_start_seconds ?? 0) - MARGE_SIGNATURE_S);
+    dureeSignature = (porteur.intro_end_seconds ?? 0) - (porteur.intro_start_seconds ?? 0);
+    if (dureeSignature > 0) {
+      signature = await enveloppe(porteur, dureeSignature + 2 * MARGE_SIGNATURE_S, debut);
+    }
+  }
+
   let echecsConsecutifs = 0;
 
   for (const { episode, index } of aTraiter) {
@@ -343,6 +400,29 @@ export async function completerSaisonParLeSon(showTitle: string, season: number 
       if (options.signal?.aborted) break;
       const reference = await enveloppe(episode, secondes, depart);
       if (!reference) { illisible = true; break; }
+
+      /*
+       * **La voie rapide : on cherche le générique qu'on connaît.**
+       *
+       * Elle n'est tentée que si la saison a déjà livré un repère, et elle ne coûte qu'une seule
+       * comparaison contre un motif court. Quand elle aboutit, on n'extrait aucun témoin — c'est là
+       * que se trouve l'essentiel du temps gagné.
+       */
+      if (signature) {
+        const attenteSignature = { dureeSecondes: dureeSignature, toleranceSecondes: TOLERANCE_DUREE };
+        const trouve = segmentCommun(reference, signature, attenteSignature);
+        if (trouve && trouve.score >= SEUIL_SIGNATURE
+          && Math.abs(trouve.dureeSecondes - dureeSignature) <= TOLERANCE_DUREE) {
+          repere = {
+            debutSecondes: trouve.debutA,
+            finSecondes: trouve.debutA + trouve.dureeSecondes,
+            paires: 1,
+            score: trouve.score,
+          };
+          break;
+        }
+      }
+
       const temoins: Float64Array[] = [];
       for (const voisin of choisirTemoins(episodes, index)) {
         const envVoisin = await enveloppe(voisin, secondes, depart);

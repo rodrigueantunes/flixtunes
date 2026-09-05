@@ -1,5 +1,55 @@
 # Journal des versions
 
+## 0.5.7.r24 — chercher un générique connu plutôt que comparer deux inconnus
+
+**Sur l'idée de départ — récupérer les minutages sur Internet — une précision qui la rend caduque :**
+il n'existe pas de source publique de minutages de génériques. TMDB et TheTVDB n'en publient pas ;
+AniSkip en a, mais uniquement pour l'animation japonaise indexée sur MyAnimeList. Rien de général.
+
+**L'amont existe pourtant, et il est local.** Dès qu'**un** épisode d'une saison a son introduction
+repérée — par ses chapitres, par une empreinte, par ses voisins —, on ne cherche plus dans le vide :
+on tient le thème et sa durée exacte. Il suffit alors de le **chercher** dans les autres épisodes, ce
+qui est exactement la vérification proposée.
+
+- **La méthode d'origine compare l'épisode à quatre voisins** et retient ce qu'ils ont en commun.
+  C'est ce qu'il faut faire quand on ne sait rien. Quand on sait, c'est du gaspillage :
+
+  | | méthode d'origine | par signature |
+  | --- | --- | --- |
+  | extractions par épisode | 1 + jusqu'à 4 témoins | **1** |
+  | comparaisons | 4 | **1** |
+  | taille du second extrait | la fenêtre, 300 à 900 s | **la durée du thème, ~80 s** |
+
+  La dernière ligne pèse le plus : le coût d'une comparaison croît avec le **produit** des deux
+  longueurs.
+
+- **Mesuré sur signaux synthétiques**, un thème de 80 s placé à 300 s dans une fenêtre de 900 s :
+
+  ```
+  comparaison croisée (4 témoins de 900 s) : 5 792 ms
+  recherche de signature (motif de 80 s)   :   124 ms   → 46,6×
+  position trouvée : 300 s (attendu 300), score 0,97
+  ```
+
+  Et ce rapport **ne compte pas** les quatre extractions ffmpeg de témoins qui disparaissent avec.
+
+- **La signature est prise sur l'épisode au repère le plus sûr** — un chapitre nommé par l'auteur du
+  fichier vaut mieux qu'une empreinte, qui vaut mieux qu'une déduction. Une extraction pour toute la
+  saison.
+- **Le quorum de deux paires ne s'applique pas à cette voie, délibérément.** Il existe parce que deux
+  épisodes quelconques peuvent partager n'importe quoi — un silence, un logo de studio — et qu'il faut
+  un troisième avis. Ici la question n'est plus « qu'ont-ils en commun ? » mais « le générique que
+  voici est-il là ? » : une réponse franche à une question précise vaut mieux qu'un vote entre
+  ignorants. On exige en revanche une ressemblance plus haute — 0,85 — et une durée conforme à celle
+  qu'on cherche.
+- **Rien n'est perdu quand la voie rapide échoue** : la comparaison croisée reprend derrière, à
+  l'identique. Une saison sans aucun repère ne change pas de comportement — il n'y a rien à chercher.
+- 893 tests serveur.
+
+**Ce que la mesure ne dit pas.** Elle porte sur des signaux synthétiques : le rapport sera différent
+sur du vrai son, où la corrélation trouve moins vite son alignement. L'ordre de grandeur, lui, tient à
+la géométrie du calcul — un motif court contre une fenêtre longue — et pas au contenu.
+
 ## 0.5.7.r23 — Debian sépare ce que Windows réunit
 
 La r22 a donné les sorties vidéo à VLC ; l'interface de commande, elle, se chargeait puis renonçait :
