@@ -13,11 +13,26 @@ vlc: unknown option or missing mandatory argument `--drawable-xid=20971524'
   `fb`, `vdummy`, `vmem` et `yuv` : **aucune ne dessine sur un bureau Linux**. C'est une compilation
   orientée décodage, celle qui accompagne l'étage FFmpeg/VA-API. Même sans l'option, ce VLC n'aurait
   rien eu à montrer.
-- **On ne prétend donc plus disposer d'un lecteur qu'on n'a pas.** Le VLC emporté n'est retenu, hors
-  Windows, que s'il porte au moins un greffon capable d'afficher. Sinon on passe à celui du système ;
-  s'il n'y en a pas, l'application le dit franchement et **le client Web prend la lecture à son
-  compte** — ce qu'il sait très bien faire, et ce qui rétablit la lecture immédiatement. Annoncer un
-  VLC absent menait droit à un écran noir suivi d'un message incompréhensible.
+- **Le paquet manquant est emporté : `vlc-plugin-video-output`.** Debian range les sorties
+  d'affichage dans un paquet distinct de `vlc-plugin-base`, et le préparateur ne le tirait pas. Il
+  l'ajoute, et le VLC emporté sort maintenant avec `libxcb_x11_plugin.so`, `libxcb_xv_plugin.so`,
+  `libgl_plugin.so` et `libglx_plugin.so`.
+
+  **Le coût est nul ou presque** : le bundle Linux passe à 14,9 Mio. J'avais annoncé « plusieurs
+  dizaines de mégaoctets » en proposant ce choix — c'était une estimation, et elle était fausse ; les
+  greffons d'affichage sont minuscules, c'est le décodage qui pèse.
+- **Le préparateur refuse désormais de livrer un lecteur muet.** Il échoue franchement si aucune
+  sortie d'affichage n'a été emportée. Sans ce contrôle, l'absence ne s'est manifestée qu'après quatre
+  révisions, au bout d'une installation réelle, sous la forme d'une erreur qui accusait une option.
+  Le préparateur est le seul endroit où l'on sache ce qu'on a effectivement mis dans le paquet.
+- **Et l'on garde le garde-fou côté application** : hors Windows, le VLC emporté n'est retenu que s'il
+  porte au moins un greffon d'affichage ; sinon on prend celui du système, et à défaut le client Web
+  assure la lecture. Le paquet est réparé, mais annoncer un lecteur qu'on n'a pas restait une faute en
+  soi.
+- **X11 est demandé explicitement sous Linux.** VLC dessine dans notre fenêtre parce qu'on lui passe
+  un identifiant **X11**, et VLC 3 ne sait pas s'incruster dans une surface Wayland. Electron s'y
+  trouve déjà par défaut, ce qui explique que l'image s'affichait ; mais ce défaut lui appartient et
+  peut changer d'une version à l'autre. On ne laisse pas une dépendance de cette nature implicite.
 - **Agrandir la fenêtre sans passer par le plein écran laissait l'interface à son ancienne taille**,
   dans le coin d'un grand rectangle noir. L'interface est une fenêtre distincte, collée à la fenêtre
   vidéo par les événements `resize` et `maximize` ; selon le compositeur — relevé sous GNOME —, ces
@@ -32,11 +47,9 @@ vlc: unknown option or missing mandatory argument `--drawable-xid=20971524'
   dans le bon ordre. La mise à jour est donc proposée, et `dpkg -l` dit enfin ce qui est installé.
 - 20 tests de bureau.
 
-**Ce qui reste à trancher, et qui vous appartient.** Le client Linux lira par le client Web, sans VLC.
-C'est fonctionnel et cela couvre le lecture directe comme le remux ; ce que l'on perd, c'est la lecture
-par VLC pour les formats que le navigateur refuse. Deux façons de la retrouver : installer VLC sur la
-machine — il sera pris automatiquement —, ou emporter une compilation de VLC complète pour Linux, ce
-qui alourdirait le paquet de plusieurs dizaines de mégaoctets. Je n'ai pas tranché à votre place.
+**Ce qui reste à éprouver.** Je n'ai pas de machine Ubuntu : le paquet est vérifié sur son contenu —
+les quatre greffons d'affichage sont bien là —, pas sur son comportement. Ce qui dira si la chaîne est
+complète, c'est une lecture qui démarre.
 
 ## 0.5.7.r21 — on disait à VLC où sont ses greffons, jamais où sont ses données
 

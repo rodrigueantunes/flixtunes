@@ -73,7 +73,29 @@ const LANGUE_GARDEE = "fr";
 const ARCHITECTURE_LINUX = process.env.FLIXTUNES_ARCH_LINUX ?? "x86_64-linux-gnu";
 const VERSION_VLC_LINUX = process.env.FLIXTUNES_VERSION_VLC ?? "3.0.23-1";
 const DEPOT_UBUNTU = process.env.FLIXTUNES_DEPOT_UBUNTU ?? "http://archive.ubuntu.com/ubuntu/pool/universe/v/vlc";
-const PAQUETS_LINUX = ["libvlccore9", "libvlc5", "vlc-bin", "vlc-plugin-base"];
+const PAQUETS_LINUX = ["libvlccore9", "libvlc5", "vlc-bin", "vlc-plugin-base", "vlc-plugin-video-output"];
+
+/**
+ * Les greffons qui permettent d'afficher une image sur un bureau Linux.
+ *
+ * `vlc-plugin-base` ne les contient pas : Debian les range dans un paquet à part,
+ * `vlc-plugin-video-output`, qu'on ne prenait pas. Le VLC emporté savait donc décoder mais **pas
+ * montrer** — ses seules sorties étaient `fb`, `vdummy`, `vmem` et `yuv`.
+ *
+ * Le symptôme était trompeur au possible :
+ *
+ *     vlc: unknown option or missing mandatory argument `--drawable-xid=…'
+ *
+ * L'option n'était pas inconnue de VLC : elle est **déclarée par le greffon de sortie X11**, absent.
+ * On a donc cherché du côté des chemins et des permissions ce qui manquait au paquet lui-même.
+ *
+ * D'où cette vérification : le préparateur échoue franchement si aucune sortie d'affichage n'a été
+ * emportée, plutôt que de livrer un lecteur muet qui ne se découvrira qu'à l'usage.
+ */
+const SORTIES_AFFICHAGE = [
+  "libxcb_x11_plugin.so", "libxcb_xv_plugin.so", "libgl_plugin.so",
+  "libglx_plugin.so", "libwl_shell_surface_plugin.so",
+];
 
 function sourceVlc() {
   const trouve = SOURCES_WINDOWS.find((chemin) => existsSync(path.join(chemin, "vlc.exe")));
@@ -200,6 +222,23 @@ function preparerVlcLinux(destination) {
   if (manquants.length > 0) {
     throw new Error(`Ces morceaux manquent dans les paquets Ubuntu : ${manquants.join(", ")}.`);
   }
+
+  /*
+   * Un lecteur qui ne sait pas afficher n'est pas un lecteur, et cela doit se voir **ici**.
+   *
+   * Sans ce contrôle, l'absence des sorties vidéo ne s'est manifestée qu'après quatre révisions, au
+   * bout d'une installation réelle, sous la forme d'une erreur qui accusait une option. Le
+   * préparateur en est le seul juge possible : il est le seul endroit où l'on sache ce qu'on a
+   * effectivement emporté.
+   */
+  const sorties = path.join(destination, "plugins", "video_output");
+  const affichage = SORTIES_AFFICHAGE.filter((greffon) => existsSync(path.join(sorties, greffon)));
+  if (affichage.length === 0) {
+    throw new Error(
+      "Aucune sortie vidéo dans les paquets Ubuntu : le VLC emporté saurait décoder mais pas afficher. "
+      + `Attendu l'un de ${SORTIES_AFFICHAGE.join(", ")} dans plugins/video_output.`);
+  }
+  console.log(`  sorties d'affichage emportées : ${affichage.join(", ")}`);
   const licence = path.join(arbre, "usr", "share", "doc", "vlc-bin", "copyright");
   if (existsSync(licence)) cpSync(licence, path.join(destination, "COPYING.txt"));
 

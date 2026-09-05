@@ -266,6 +266,21 @@ function montrerInjoignable(adresse: string): void {
 app.setName("FlixTunes");
 
 /**
+ * **On demande X11 sur Linux, et ce n'est pas une préférence : c'est une dépendance.**
+ *
+ * VLC dessine dans notre fenêtre parce qu'on lui passe son identifiant — `--drawable-xid`, un
+ * identifiant **X11**. VLC 3 ne sait pas s'incruster dans une surface Wayland ; sous une session
+ * Wayland, l'application doit donc passer par XWayland pour que cet identifiant existe et désigne
+ * quelque chose.
+ *
+ * Electron s'y trouve déjà par défaut aujourd'hui, ce qui explique que l'image s'affiche. Mais ce
+ * défaut lui appartient et peut changer d'une version à l'autre — et le jour où il changerait, la
+ * panne serait exactement celle qu'on vient de mettre quatre révisions à comprendre : une option
+ * refusée, un écran noir, et aucune trace disant pourquoi. On le déclare donc.
+ */
+if (process.platform === "linux") app.commandLine.appendSwitch("ozone-platform", "x11");
+
+/**
  * **Une seule instance, et les suivantes réveillent celle qui existe.**
  *
  * Rien ne l'empêchait. Deux lancements donnaient deux fenêtres, deux VLC dessinant chacun dans la
