@@ -1,5 +1,41 @@
 # Journal des versions
 
+## 0.5.7.r23 — Debian sépare ce que Windows réunit
+
+La r22 a donné les sorties vidéo à VLC ; l'interface de commande, elle, se chargeait puis renonçait :
+
+```
+lua interface error: Error loading script …/lua/intf/http.luac:
+lua/intf/http.lua:279: Unable to find the `http' directory
+```
+
+- **Les modules Lua et leurs données ne sont pas au même endroit.** Debian range les modules compilés
+  — `intf`, `playlist`, `meta` — sous `/usr/lib/…/vlc/lua/`, et leurs **ressources** sous
+  `/usr/share/vlc/lua/`, dont le dossier `http` : la page web de l'interface, ses scripts, ses
+  feuilles de style. Deux paquets, deux emplacements, un seul dossier `lua` une fois installé. Sous
+  Windows tout cela cohabite dans un seul dossier, ce qui explique que la même chaîne fonctionne
+  depuis toujours de ce côté et jamais de l'autre.
+
+  On ne se sert pourtant pas de cette page — le pilotage passe par `requests/status.json`. Mais
+  `http.lua` vérifie sa racine **avant** de servir quoi que ce soit et refuse de démarrer sans elle :
+  c'est une dépendance de l'interface, pas de notre usage.
+- **`vlc-data` est donc emporté**, et ses données Lua fusionnées avec les modules. Le bundle Linux
+  passe de 14,9 à **15,4 Mio**.
+- **Les paquets sans architecture sont gérés.** `vlc-data` ne contient rien de compilé : Debian le
+  publie sous `all`, et le demander en `amd64` rendait un 404 franc — première tentative refusée pour
+  cette seule raison.
+- **Le préparateur vérifie maintenant `lua/http/index.html`**, comme il vérifie les sorties vidéo.
+  L'interface de commande est **le** moyen de piloter la lecture : sans elle, le client de bureau ne
+  sait ni mettre en pause, ni se déplacer, ni même savoir où il en est. Son absence doit arrêter la
+  préparation, pas se découvrir à l'usage.
+
+**Le motif de cette série, et ce qu'il coûte.** Trois révisions pour trois morceaux du même VLC —
+d'abord les données, puis les sorties vidéo, enfin les ressources de l'interface. Chaque fois, la
+même erreur de méthode : vérifier que le paquet *contient quelque chose* plutôt que vérifier qu'il
+*fonctionne*. Les deux contrôles ajoutés au préparateur ne rattrapent que ce qu'on sait déjà avoir
+manqué ; seule une exécution réelle prouverait le reste, et elle demande une machine Linux que la
+chaîne de construction n'a pas.
+
 ## 0.5.7.r22 — le VLC emporté ne sait pas afficher, et il fallait le dire
 
 La journalisation ajoutée en r21 a rendu son verdict dès le premier essai :

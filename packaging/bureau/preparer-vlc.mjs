@@ -73,7 +73,18 @@ const LANGUE_GARDEE = "fr";
 const ARCHITECTURE_LINUX = process.env.FLIXTUNES_ARCH_LINUX ?? "x86_64-linux-gnu";
 const VERSION_VLC_LINUX = process.env.FLIXTUNES_VERSION_VLC ?? "3.0.23-1";
 const DEPOT_UBUNTU = process.env.FLIXTUNES_DEPOT_UBUNTU ?? "http://archive.ubuntu.com/ubuntu/pool/universe/v/vlc";
-const PAQUETS_LINUX = ["libvlccore9", "libvlc5", "vlc-bin", "vlc-plugin-base", "vlc-plugin-video-output"];
+const PAQUETS_LINUX = [
+  "libvlccore9", "libvlc5", "vlc-bin", "vlc-plugin-base", "vlc-plugin-video-output", "vlc-data",
+];
+
+/**
+ * Les paquets qui ne dépendent d'aucune architecture, et s'appellent donc `_all.deb`.
+ *
+ * `vlc-data` ne contient que des fichiers de données — pages, icônes, scripts Lua : rien de compilé,
+ * donc rien qui distingue un processeur d'un autre. Debian le publie sous `all`, et le demander en
+ * `amd64` rend un 404 franc.
+ */
+const PAQUETS_SANS_ARCHITECTURE = new Set(["vlc-data"]);
 
 /**
  * Les greffons qui permettent d'afficher une image sur un bureau Linux.
@@ -186,7 +197,8 @@ function preparerVlcLinux(destination) {
   mkdirSync(destination, { recursive: true });
 
   for (const nom of PAQUETS_LINUX) {
-    const fichier = `${nom}_${VERSION_VLC_LINUX}_amd64.deb`;
+    const architecture = PAQUETS_SANS_ARCHITECTURE.has(nom) ? "all" : "amd64";
+    const fichier = `${nom}_${VERSION_VLC_LINUX}_${architecture}.deb`;
     executer(`curl -fsSL -o "${fichier}" "${DEPOT_UBUNTU}/${fichier}"`, atelier);
     executer(`"${tar}" -xf "${fichier}"`, atelier);
     const charge = readdirSync(atelier).find((entree) => entree.startsWith("data.tar"));
@@ -208,6 +220,29 @@ function preparerVlcLinux(destination) {
   copier(path.join(arbre, "usr", "bin", "vlc"), path.join(destination, "vlc"));
   copier(path.join(lib, "vlc", "plugins"), path.join(destination, "plugins"));
   copier(path.join(lib, "vlc", "lua"), path.join(destination, "lua"));
+  /*
+   * **Les données Lua vivent ailleurs que les modules Lua, et il fallait les deux.**
+   *
+   * Debian sépare ce que Windows réunit. `/usr/lib/…/vlc/lua/` porte les modules compilés — `intf`,
+   * `playlist`, `meta` —, copiés juste au-dessus. `/usr/share/vlc/lua/` porte leurs **ressources**,
+   * dont le dossier `http` : la page web, ses scripts, ses feuilles de style. Deux paquets, deux
+   * emplacements, un seul dossier `lua` une fois installé.
+   *
+   * Sans lui, l'interface de commande se charge puis renonce :
+   *
+   *     lua interface error: Error loading script …/lua/intf/http.luac:
+   *     lua/intf/http.lua:279: Unable to find the `http' directory
+   *
+   * On ne se sert pourtant pas de cette page — le pilotage passe par `requests/status.json`. Mais
+   * `http.lua` vérifie sa racine avant de servir quoi que ce soit, et refuse de démarrer sans elle.
+   * C'est une dépendance de l'interface, pas de notre usage.
+   */
+  const donnees = path.join(arbre, "usr", "share", "vlc", "lua");
+  if (existsSync(donnees)) {
+    for (const entree of readdirSync(donnees, { withFileTypes: true })) {
+      copier(path.join(donnees, entree.name), path.join(destination, "lua", entree.name));
+    }
+  }
   for (const dossier of [lib, path.join(lib, "vlc")]) {
     for (const entree of readdirSync(dossier, { withFileTypes: true })) {
       if (!entree.isFile() || !/^libvlc.*\.so(\.\d+)+$/.test(entree.name)) continue;
@@ -231,6 +266,18 @@ function preparerVlcLinux(destination) {
    * préparateur en est le seul juge possible : il est le seul endroit où l'on sache ce qu'on a
    * effectivement emporté.
    */
+  /*
+   * L'interface de commande est **le** moyen de piloter la lecture : sans elle, le client de bureau
+   * ne sait ni mettre en pause, ni déplacer la lecture, ni même savoir où elle en est. Son absence
+   * doit donc arrêter la préparation, au même titre qu'une sortie vidéo manquante.
+   */
+  const racineHttp = path.join(destination, "lua", "http", "index.html");
+  if (!existsSync(racineHttp)) {
+    throw new Error(
+      "Le dossier `lua/http` manque : l'interface de commande de VLC refusera de démarrer. "
+      + "Il vient du paquet vlc-data, sous /usr/share/vlc/lua.");
+  }
+
   const sorties = path.join(destination, "plugins", "video_output");
   const affichage = SORTIES_AFFICHAGE.filter((greffon) => existsSync(path.join(sorties, greffon)));
   if (affichage.length === 0) {
