@@ -1,5 +1,35 @@
 # Journal des versions
 
+## 0.5.7.r21 — on disait à VLC où sont ses greffons, jamais où sont ses données
+
+L'application démarre sous Debian depuis la r20 : le profil AppArmor a levé le blocage du bac à sable.
+Restait le VLC emporté, qui n'ouvrait pas son interface de commande.
+
+- **Le paquet contient tout ce qu'il faut** — vérifié sur ses octets : le binaire en `0755`,
+  `libvlccore.so.9`, 371 fichiers de greffons, et surtout `lua/intf/http.luac` et
+  `lua/intf/modules/httprequests.luac`. Il ne manquait donc rien ; ce qui manquait, c'est ce qu'on
+  **dit** à VLC au lancement.
+- **`VLC_DATA_PATH` n'était pas posé.** On indiquait `VLC_PLUGIN_PATH` et `LD_LIBRARY_PATH` — les
+  greffons et les bibliothèques —, jamais le répertoire de **données**. Or l'interface HTTP qui sert à
+  piloter la lecture n'est pas un greffon : c'est un script Lua, que VLC va chercher dans son
+  répertoire de données — sur Linux, un chemin compilé en dur, typiquement `/usr/share/vlc`.
+
+  Sous Windows, VLC résout ce répertoire **relativement à son exécutable**, si bien que le VLC emporté
+  fonctionnait sans qu'on ait rien à dire. Sous Linux, il pointait vers un VLC système que la machine
+  n'a pas — c'est précisément pour cela qu'on en emporte un. `--extraintf http` ne trouvait alors
+  aucune interface de ce nom, se taisait, et l'application concluait après six secondes que « VLC n'a
+  pas ouvert son interface de commande ». Le constat était juste ; il lui manquait sa cause.
+- **Et cette cause est désormais rapportée.** Les plaintes de VLC sur sa sortie d'erreur étaient
+  jetées, sauf en mode verbeux — c'est-à-dire perdues exactement quand elles servent. Elles sont
+  gardées, bornées à six cents caractères, et jointes au message d'échec : un greffon introuvable ou
+  une bibliothèque absente se disent maintenant d'eux-mêmes, au lieu de laisser accuser l'interface.
+- 20 tests de bureau.
+
+**Ce que je ne peux pas vérifier d'ici.** Je n'ai pas de machine Ubuntu : le diagnostic tient au fait
+que le paquet est complet, que le seul chemin non transmis est celui des données, et que ce chemin est
+justement celui dont l'interface HTTP dépend. Si l'interface ne s'ouvre toujours pas, le message
+d'erreur portera désormais la plainte de VLC — et c'est elle qui dira où chercher.
+
 ## 0.5.7.r20 — l'application quittait au lancement, et n'avait pas d'icône
 
 Le `.deb` s'installe depuis la r19. Restaient deux défauts que seule une installation réelle pouvait

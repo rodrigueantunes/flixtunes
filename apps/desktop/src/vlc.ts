@@ -201,6 +201,8 @@ const DELAI_OUVERTURE_MS = 25_000;
 const PERIODE_ETAT_MS = 250;
 
 export class Lecteur {
+  /** Les dernières lignes d'erreur de VLC, gardées pour pouvoir dire pourquoi il n'a pas démarré. */
+  private plaintes = "";
   /** Vrai le temps d'un arrêt qu'on a demandé : ce qui suit n'est alors pas une panne. */
   private arretDemande = false;
   /** Le dernier départ inattendu de VLC, pour que l'interface puisse le dire au lieu de se figer. */
@@ -337,6 +339,7 @@ export class Lecteur {
     const dessin = this.poignee();
     if (!dessin) throw new Error("La fenêtre vidéo n'est pas prête");
     this.port = await portLibre();
+    this.plaintes = "";
     this.motDePasse = randomBytes(18).toString("hex");
     const surface = process.platform === "win32" ? `--drawable-hwnd=${dessin}` : `--drawable-xid=${dessin}`;
     const arguments_ = [
@@ -376,7 +379,16 @@ export class Lecteur {
     // et le processus qui écrit dedans finit par se bloquer. Un lecteur vidéo qui se fige au bout de
     // quelques minutes est exactement le genre de défaut qu'on ne rattache jamais à sa cause.
     processus.stderr?.on("data", (morceau: Buffer) => {
-      if (process.env.FLIXTUNES_VLC_VERBEUX === "1") console.log("[vlc]", String(morceau).trimEnd());
+      const texte = String(morceau).trimEnd();
+      if (process.env.FLIXTUNES_VLC_VERBEUX === "1") console.log("[vlc]", texte);
+      /*
+       * Les dernières plaintes de VLC sont conservées, et pas seulement affichées en mode verbeux.
+       *
+       * Quand l'interface de commande ne s'ouvre pas, c'est la seule chose qui dise **pourquoi** — et
+       * elle partait à la poubelle. On garde de quoi tenir dans un message sans le noyer : les
+       * premières lignes sont les plus utiles, une erreur de chargement se plaignant tout de suite.
+       */
+      this.plaintes = `${this.plaintes}${this.plaintes ? "\n" : ""}${texte}`.slice(0, 600);
     });
     /*
      * **La mort de VLC ne se voyait pas.**
@@ -424,6 +436,22 @@ export class Lecteur {
     return {
       ...process.env,
       VLC_PLUGIN_PATH: path.join(dossier, "plugins"),
+      /*
+       * **`VLC_DATA_PATH` manquait, et c'est ce qui privait le paquet Linux de son interface.**
+       *
+       * On disait à VLC où trouver ses greffons et ses bibliothèques, jamais où trouver ses
+       * **données**. Or l'interface HTTP dont on se sert pour piloter la lecture n'est pas un
+       * greffon : c'est un script Lua, `lua/intf/http.luac`, que VLC va chercher dans son répertoire
+       * de données — sur Linux, un chemin compilé en dur, typiquement `/usr/share/vlc`.
+       *
+       * Sous Windows, VLC résout ce répertoire **relativement à son exécutable**, si bien que le VLC
+       * emporté fonctionnait sans qu'on ait rien à dire. Sous Linux, non : le répertoire de données
+       * pointait vers un VLC système que la machine n'a pas — c'est bien pour cela qu'on en emporte
+       * un. `--extraintf http` ne trouvait alors aucune interface de ce nom, se taisait, et
+       * l'application concluait après six secondes que « VLC n'a pas ouvert son interface de
+       * commande ». Le diagnostic était juste ; il manquait sa cause.
+       */
+      VLC_DATA_PATH: dossier,
       LD_LIBRARY_PATH: [dossier, process.env.LD_LIBRARY_PATH].filter(Boolean).join(":"),
     };
   }
@@ -435,7 +463,11 @@ export class Lecteur {
       if (statut) return;
       await new Promise((resoudre) => setTimeout(resoudre, 100));
     }
-    throw new Error("VLC n'a pas ouvert son interface de commande");
+    // On rapporte ce que VLC a dit : sans cela, le message accuse l'interface alors que la cause est
+    // presque toujours en amont — un greffon introuvable, une bibliothèque absente, un chemin faux.
+    throw new Error(this.plaintes
+      ? `VLC n'a pas ouvert son interface de commande. Il signale : ${this.plaintes}`
+      : "VLC n'a pas ouvert son interface de commande");
   }
 
   // Une liste de paires plutôt qu'un objet : VLC accepte plusieurs `option` pour une même ouverture,
