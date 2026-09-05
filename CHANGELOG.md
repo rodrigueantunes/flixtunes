@@ -2,6 +2,19 @@
 
 ## 0.5.7.r26 — un écran qui ne savait pas dire « ça avance »
 
+- **Les livraisons partent désormais sur GitHub**, `tools/Publier-Release.ps1`. **Tous** les fichiers
+  d'une même estampille : client Android, APKG du NAS, `.msi` et `.deb` du bureau, archive des sources
+  NAS, installateurs de serveur, empreintes. Rien n'est trié — ce qui a été construit ensemble
+  s'installe ensemble, et qui télécharge doit trouver la pièce qui lui manque.
+
+  La description est **la section correspondante de ce journal, reprise telle quelle** : elle est
+  écrite pour être lue, et la recopier à la main serait la laisser diverger. L'étiquette vise le
+  commit exact plutôt que la branche, faute de quoi elle désignerait bientôt autre chose que ce qui a
+  été construit.
+
+  Publier reste un geste **séparé** de construire : le premier est sans conséquence, le second est
+  public et ne se reprend pas.
+
 La navigation est redevenue fluide après la r25. Mais l'écran d'avancement affichait « 0 saison
 traitée » depuis huit minutes, et rien ne permettait de savoir si le travail progressait. J'ai
 moi-même conclu au blocage sur cette base — **à tort** : relevé sur le NAS, la passe est passée de 357
