@@ -117,7 +117,7 @@ Write-Host ("{0,10:N1} Mio  au total" -f ($total / 1MB))
 $commit = (& git -C $racine rev-parse HEAD).Trim()
 
 # GitHub n'accepte pour cible qu'un commit qu'il connait deja. Sans cette verification, l'echec arrive
-# apres coup sous la forme d'un « Release.target_commitish is invalid » qui ne dit pas ce qui manque -
+# apres coup sous la forme d'un 'Release.target_commitish is invalid' qui ne dit pas ce qui manque -
 # et il arrive parfois apres le televersement, ce qui est le pire moment pour l'apprendre.
 $distantes = @(& git -C $racine branch -r --contains $commit 2>$null)
 if ($distantes.Count -eq 0) {
