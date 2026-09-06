@@ -1657,9 +1657,15 @@ export async function registerRoutes(app: FastifyInstance) {
      * faisait déjà pour l'épisode suivant, que le voisinage lui livre complet. Mais à l'ouverture il
      * ne recevait que cette réponse-ci, qui décrit les flux et rien d'autre : faute de titre, son
      * bandeau affichait « FlixTunes » pendant tout le film.
+     *
+     * **Le type en fait partie.** Une vidéo de plateforme porte le nom de sa chaîne en titre et le
+     * sien en dessous, sans numérotation : son numéro d'épisode est un nombre de jours depuis 1970,
+     * et le bandeau annonçait « S1 E20670 » sur un téléviseur. Le lecteur savait déjà s'en abstenir —
+     * il le fait à l'enchaînement, où le voisinage livre le média entier — mais cette réponse-ci ne
+     * lui disait pas à quoi il avait affaire. Une série, elle, garde ses saisons et ses épisodes.
      */
     return { ...info, title: media.title, showTitle: media.showTitle,
-      seasonNumber: media.seasonNumber, episodeNumber: media.episodeNumber };
+      seasonNumber: media.seasonNumber, episodeNumber: media.episodeNumber, kind: media.kind };
   });
   // Une planche de cent vignettes plutôt qu'une image par survol : voir `getTimelineSheet`. La
   // ressource est immuable une fois produite, d'où le cache d'un an — c'est ce qui rend le second

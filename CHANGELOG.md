@@ -1,5 +1,24 @@
 # Journal des versions
 
+## 0.5.8.r10 — « S1 E20670 » sur le bandeau du lecteur
+
+<!-- release -->
+### Le lecteur ne numérote plus une vidéo de plateforme
+
+- **Le bandeau annonçait « TPZ — S1 E20670 · Guillaume Pley : clap de fin d'une LEGEND ».** Ce numéro
+  est un nombre de jours depuis 1970 : c'est ainsi qu'une vidéo web est rangée, et c'est ce qui la
+  trie. Le lecteur savait déjà s'en abstenir — il le faisait à l'enchaînement automatique, où le
+  voisinage lui livre le média entier —, mais **la réponse qui ouvre une lecture ne lui disait pas à
+  quoi il avait affaire** : elle portait le titre, la chaîne, la saison et l'épisode, et pas le type.
+  Elle le porte désormais.
+- **Une série garde ses saisons et ses épisodes**, où la numérotation veut dire quelque chose. La
+  correction ne vaut que pour les vidéos.
+<!-- /release -->
+
+C'est le même défaut qu'aux deux révisions précédentes, à un endroit de plus : une projection qui
+oublie un champ, et un écran qui ne peut plus faire la différence entre une vidéo et un épisode. Le
+cas de test le vérifie dans les deux sens — sans le type, la vidéo *et* la série échouent.
+
 ## 0.5.8.r9 — des titres qui se lisent, une barre qui tient sur une ligne
 
 <!-- release -->
