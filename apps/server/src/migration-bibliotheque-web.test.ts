@@ -4,7 +4,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { appliquerLesMigrations, MIGRATIONS, ouvrirLesTypesDeBibliotheque, ouvrirLesTypesDeMedia } from "./migrations.js";
+import {
+  appliquerLesMigrations, elargirLaContrainte, MIGRATIONS, ouvrirLesTypesDeBibliotheque, ouvrirLesTypesDeMedia,
+} from "./migrations.js";
 
 /**
  * Ouvrir `library_folders` à un cinquième type, sans emporter le catalogue.
@@ -239,6 +241,59 @@ describe("ouverture des provenances de vignette", () => {
     expect(schemaDe(base, "artwork_assets")).toContain("'youtube'");
     expect(() => base.exec(`INSERT INTO artwork_assets (id, catalog_id, role, source, local_path)
       VALUES ('art2', 'cat1', 'poster', 'youtube', 'D:/artwork/art2.jpg')`)).not.toThrow();
+  });
+});
+
+describe("formes de schéma rencontrées en production", () => {
+  /**
+   * Une table déjà reconstruite par le passé porte son nom **entre guillemets**.
+   *
+   * SQLite réécrit la définition après un `ALTER TABLE ... RENAME TO`, et guillemette le nouveau nom.
+   * C'est le cas d'`artwork_assets`, reconstruite lors de l'ouverture aux fournisseurs libres. La
+   * migration cherchait `CREATE TABLE artwork_assets` : elle ne trouvait rien, la substitution ne se
+   * faisait pas, et la recréation d'une table existante interrompait le démarrage du serveur.
+   *
+   * Relevé sur une installation réelle, migrations 2 et 3 appliquées et la 4 en échec.
+   */
+  it("reconstruit une table dont le nom est guillemeté", () => {
+    const base = baseAvecMediatheque();
+    base.exec(`
+      CREATE TABLE illustrations_ancien (
+        id TEXT PRIMARY KEY,
+        source TEXT NOT NULL CHECK(source IN ('local', 'tmdb')),
+        chemin TEXT NOT NULL
+      );
+      ALTER TABLE illustrations_ancien RENAME TO illustrations;
+      CREATE INDEX idx_illustrations_source ON illustrations(source);
+      INSERT INTO illustrations (id, source, chemin) VALUES ('a1', 'tmdb', 'D:/a1.jpg');
+    `);
+    expect(schemaDe(base, "illustrations"), "SQLite guillemette le nom après un renommage")
+      .toContain('CREATE TABLE "illustrations"');
+
+    elargirLaContrainte(base, "illustrations",
+      "CHECK(source IN ('local', 'tmdb'))", "CHECK(source IN ('local', 'tmdb', 'youtube'))");
+
+    expect(compte(base, "illustrations")).toBe(1);
+    expect(schemaDe(base, "illustrations")).toContain("'youtube'");
+  });
+
+  /**
+   * Les index ne survivent pas à `DROP TABLE`, et doivent être rejoués.
+   *
+   * `database.ts` les recrée au démarrage suivant en `IF NOT EXISTS`, mais s'y fier laisse le schéma
+   * incomplet entre les deux — et sur une installation réelle, `media_items` s'est retrouvée sans un
+   * seul de ses six index parce que le démarrage suivant n'a jamais eu lieu.
+   */
+  it("rejoue les index de la table reconstruite", () => {
+    const base = baseAvecMediatheque();
+    base.exec("CREATE INDEX idx_media_titre ON media_items(title)");
+
+    ouvrirLesTypesDeMedia(base);
+
+    const index = (base.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'media_items' AND sql IS NOT NULL",
+    ).all() as unknown as Array<{ name: string }>).map((ligne) => ligne.name);
+    expect(index).toContain("idx_media_titre");
   });
 });
 

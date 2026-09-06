@@ -1,5 +1,34 @@
 # Journal des versions
 
+## 0.5.8.r2 — une migration qui ne savait pas lire un nom entre guillemets
+
+<!-- release -->
+### Correction d'une mise à jour qui empêchait le serveur de démarrer
+
+- **Une table déjà renommée par le passé n'était pas reconnue.** SQLite réécrit la définition d'une
+  table après un `ALTER TABLE … RENAME TO`, et **guillemette** alors son nom : `artwork_assets`,
+  reconstruite lors de l'ouverture aux fournisseurs libres, est enregistrée
+  `CREATE TABLE "artwork_assets" (…)`. La migration cherchait la forme sans guillemets, ne trouvait
+  rien, et tentait de recréer une table existante — l'erreur interrompait le démarrage. Les deux
+  migrations précédentes passaient, portant sur des tables jamais renommées.
+- **Les index sont rejoués après une reconstruction.** `DROP TABLE` les emporte, et la table recréée
+  ne les contient pas. `database.ts` les rétablit au démarrage suivant, mais s'y fier laisse le schéma
+  incomplet entre les deux — et sans démarrage suivant, il le reste.
+
+Aucune donnée n'était en jeu : les deux défauts laissent la base intacte, seul le service refusait de
+se lever. Une installation touchée se répare en installant cette révision.
+<!-- /release -->
+
+Les deux défauts ont la même origine : mes cas de test créaient les tables telles que `database.ts`
+les écrit aujourd'hui, alors qu'une base en service porte l'histoire de ses migrations. Une table de
+production a une forme que sa définition d'origine ne décrit plus.
+
+Ce qui a permis d'aller vite, c'est que la base réelle est lisible depuis le poste : `schema_migrations`
+annonçait 1, 2, 3 — la quatrième manquante —, et la contrainte d'`artwork_assets` était restée
+inchangée. Le diagnostic tenait dans ces deux lignes, et la correction a été éprouvée sur une copie de
+cette base avant d'être écrite : 4 684 illustrations, 10 362 fiches, 9 773 médias et 1 459
+progressions inchangés, index conservé, intégrité vérifiée, en 585 ms.
+
 ## 0.5.8.r1 — un rayon pour ce qui vient du web
 
 <!-- release -->

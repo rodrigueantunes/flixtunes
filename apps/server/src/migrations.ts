@@ -89,9 +89,32 @@ export function elargirLaContrainte(base: DatabaseSync, table: string, ancienne:
   }
 
   const provisoire = `${table}_elargie`;
-  const nouvelleTable = schema
-    .replace(`CREATE TABLE ${table}`, `CREATE TABLE ${provisoire}`)
-    .replace(ancienne, nouvelle);
+
+  /*
+   * Le nom de la table peut être guillemeté dans le schéma stocké.
+   *
+   * SQLite réécrit la définition après un `ALTER TABLE ... RENAME TO`, et il **guillemette** alors le
+   * nouveau nom : une table déjà reconstruite une fois par le passé est enregistrée
+   * `CREATE TABLE "artwork_assets" (…)`. Chercher `CREATE TABLE artwork_assets` n'y trouve rien, la
+   * substitution ne se fait pas, et l'on tente de recréer une table qui existe — l'erreur interrompt
+   * alors le démarrage du serveur. Relevé sur une installation réelle, pas supposé.
+   */
+  const enTete = new RegExp(`^CREATE TABLE\\s+"?${table}"?`);
+  if (!enTete.test(schema)) throw new Error(`L'en-tête de ${table} n'a pas la forme attendue.`);
+  const nouvelleTable = schema.replace(enTete, `CREATE TABLE ${provisoire}`).replace(ancienne, nouvelle);
+
+  /*
+   * Les index ne survivent pas à la reconstruction, et il faut les rejouer.
+   *
+   * `DROP TABLE` emporte les index de la table, et la nouvelle est créée à partir de la seule
+   * définition de la table — qui ne les contient pas. `database.ts` les recrée bien au démarrage
+   * suivant en `IF NOT EXISTS`, mais s'y fier revient à laisser le schéma incomplet entre les deux :
+   * une migration doit rendre une base entière, pas une base qui guérira peut-être. Relevé sur une
+   * installation réelle, où `media_items` s'est retrouvée sans un seul de ses six index.
+   */
+  const index = (base.prepare(
+    "SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL",
+  ).all(table) as unknown as Array<{ sql: string }>).map((ligne) => ligne.sql);
 
   base.exec("PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE;");
   try {
@@ -101,6 +124,7 @@ export function elargirLaContrainte(base: DatabaseSync, table: string, ancienne:
       DROP TABLE ${table};
       ALTER TABLE ${provisoire} RENAME TO ${table};
     `);
+    for (const creation of index) base.exec(`${creation};`);
     const orphelines = base.prepare("PRAGMA foreign_key_check").all();
     if (orphelines.length) throw new Error(`${orphelines.length} references orphelines apres reconstruction.`);
     base.exec("COMMIT;");
