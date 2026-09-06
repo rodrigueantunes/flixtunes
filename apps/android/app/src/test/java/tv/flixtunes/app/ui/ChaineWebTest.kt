@@ -80,6 +80,29 @@ class ChaineWebPresentationTest {
     }
 
     @Test
+    fun `le rayon annonce par le serveur tranche`() {
+        // Une chaine dont tous les paliers seraient vides, ou dont un palier porterait autre chose :
+        // la forme ne sait pas conclure, le rayon si.
+        val chaine = Details(
+            item = media("show", "Chaine documentaire"),
+            seasons = listOf(palier("Archives", emptyList())),
+            related = emptyList(),
+            libraryKind = "web",
+        )
+        assertTrue(chaine.estChaineWeb)
+
+        // Et l'inverse : une serie annoncee comme telle ne devient jamais une chaine, quelle que
+        // soit la forme de ses paliers.
+        val serie = Details(
+            item = media("show", "Une serie"),
+            seasons = listOf(palier("Saison 1", listOf(media("video", "Un pilote mal type")))),
+            related = emptyList(),
+            libraryKind = "tv",
+        )
+        assertFalse(serie.estChaineWeb)
+    }
+
+    @Test
     fun `un dossier vide ne fait pas passer une chaine pour une serie`() {
         // Un dossier dont aucune video n'est disponible ne prouve rien et ne doit rien refuter :
         // exiger que tous les paliers portent des videos faisait retomber la chaine sur la fiche des

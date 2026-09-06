@@ -927,7 +927,23 @@ export interface MediaDetails {
    * `libraryId` permet d'ouvrir la correction de correspondance depuis la fiche, c'est-à-dire depuis
    * l'écran où l'erreur d'identification se constate, sans passer par la gestion des bibliothèques.
    */
-  item: MediaItem & { seasonCount?: number; libraryId?: string | null };
+  item: MediaItem & {
+    seasonCount?: number;
+    libraryId?: string | null;
+    /**
+     * Le type de la bibliothèque dont vient la fiche.
+     *
+     * **Le serveur le sait ; jusqu'ici il ne le disait pas**, et chaque écran redéduisait « est-ce du
+     * web ? » à sa façon — un type de média ici, la forme des paliers là, un drapeau passé à une
+     * grille ailleurs. Trois déductions, trois occasions de se tromper, et trois révisions passées à
+     * les corriger une par une. Une chaîne web est rangée comme une série : rien dans sa forme ne la
+     * distingue, seule sa bibliothèque le dit.
+     *
+     * Absent pour tout ce qui ne vient pas d'une bibliothèque : les films et les séries n'en
+     * dépendent nulle part.
+     */
+    libraryKind?: LibraryKind | null;
+  };
   /**
    * Nom de la source telle qu'elle existe réellement sur le stockage.
    *

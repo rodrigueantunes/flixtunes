@@ -191,6 +191,14 @@ data class SourceVersion(val mediaId: String, val name: String, val quality: Str
 @Immutable
 data class Details(
     val item: Media, val seasons: List<Season>, val related: List<Media>, val source: SourceDetails? = null,
+    /**
+     * Le rayon dont vient la fiche, tel que le serveur le nomme — `web`, `tv`, `movie`, `other`.
+     *
+     * **Le serveur le sait ; il ne le disait pas.** Chaque écran redéduisait « est-ce du web ? » à sa
+     * façon, et chaque déduction a eu son angle mort. Nul pour un serveur plus ancien que ce champ :
+     * les repères de forme restent alors le dernier recours.
+     */
+    val libraryKind: String? = null,
     /** Résolution, plage dynamique et codec réellement observés dans les fichiers. */
     val qualities: List<String> = emptyList(),
     /** Les fichiers d'un même film, quand il en existe plusieurs. Vide sinon. */
@@ -291,6 +299,8 @@ fun parseDetails(json: JSONObject) = Details(
         if (version.isNull("fileSizeBytes")) null else version.optLong("fileSizeBytes"),
     ) }.orEmpty(),
     libraryId = json.getJSONObject("item").stringOrNull("libraryId"),
+    // Le rayon vient avec la fiche : c'est ce qui évite de le redéduire de sa forme, écran par écran.
+    libraryKind = json.getJSONObject("item").stringOrNull("libraryKind"),
     people = json.optJSONArray("people")?.objects()?.map { person -> PersonCredit(
         person.getString("id"), person.getString("name"), person.stringOrNull("profileUrl"),
         person.getString("role"), person.stringOrNull("character"), person.stringOrNull("job"), person.optInt("order"),

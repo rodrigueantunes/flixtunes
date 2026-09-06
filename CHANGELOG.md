@@ -1,5 +1,39 @@
 # Journal des versions
 
+## 0.5.8.r11 — le rayon d'une fiche voyage avec elle
+
+<!-- release -->
+### La cause commune, nommée
+
+- **Une chaîne est rangée comme une série et une vidéo comme un épisode** : c'est ce qui leur donne
+  la fiche, la reprise et l'enchaînement sans une ligne de code neuve, et c'est aussi pourquoi rien
+  dans leur forme ne les distingue. Le serveur le sait ; il ne le disait pas. Chaque écran redéduisait
+  « est-ce du web ? » à sa façon — le type du média ici, la nature des paliers là, un drapeau passé à
+  une grille ailleurs — et chacune de ces déductions a eu son angle mort, réparé à une révision
+  différente. **La fiche porte désormais son rayon**, et les écrans ne le devinent plus.
+
+### Ce que la revue a trouvé
+
+- **La fiche d'une chaîne s'annonçait en saisons et en épisodes sur le client Web.** Elle s'atteint
+  depuis la recherche : une vidéo trouvée ouvre la fiche de sa chaîne. On y lisait « SÉRIE · Toutes
+  les saisons · 4 saisons · Saison 1 · Épisodes ». On y lit maintenant « CHAÎNE · Tous les dossiers ·
+  4 dossiers », puis le nom du dossier et ses vidéos, chacune avec sa date de publication.
+- **« Épisode suivant » sur les deux clients** — carte d'enchaînement et flèches de voisinage — alors
+  que ce qui suit une vidéo est une vidéo.
+- **Android annonçait « Film » devant une vidéo**, deux fois : sur la ligne de métadonnées de la
+  vitrine et sur l'accroche d'une fiche. Une vidéo se présente par sa date.
+- **La reconnaissance d'une chaîne sur Android** reposait encore sur la forme de ses paliers. Elle lit
+  le rayon ; la forme ne sert plus que face à un serveur plus ancien que ce champ.
+<!-- /release -->
+
+Rien de ce qui sert aux films, aux séries ou au direct ne change : chaque correction est conditionnée
+au rayon web ou au type `video`, et le champ ajouté est absent partout ailleurs.
+
+Deux constats de cette revue ne sont pas des défauts mais des décisions, et restent en attente : la
+recherche ne trouve jamais une **chaîne** — seulement ses vidéos — et une vidéo regardée n'entre ni
+dans « Continuer à regarder » ni dans l'historique, par la clause d'étanchéité posée à la création du
+rayon. Ajouter une chaîne à « Ma liste » est possible mais sans effet visible, pour la même raison.
+
 ## 0.5.8.r10 — « S1 E20670 » sur le bandeau du lecteur
 
 <!-- release -->

@@ -169,6 +169,8 @@
   <string name="fiche_type_film">Film</string>
   <string name="fiche_type_serie">Série</string>
   <string name="fiche_type_episode">Épisode</string>
+  <!-- Une video de plateforme : ni film, ni episode. -->
+  <string name="fiche_type_video">Vidéo</string>
   <string name="fiche_distribution_equipe">Distribution et équipe</string>
   <string name="fiche_talents">Talents</string>
   <string name="fiche_aimer_aussi">Vous aimerez peut-être</string>
@@ -298,6 +300,9 @@
   <string name="lecteur_autoplay_compte">Épisode suivant dans %1$d s</string>
   <!-- Surtitre de la carte d'enchaînement ; le temps restant est porté par la jauge. -->
   <string name="lecteur_autoplay_titre">Épisode suivant</string>
+  <!-- Ce qui suit une video dans une chaine est une video, pas un episode. -->
+  <string name="lecteur_autoplay_titre_video">Vidéo suivante</string>
+  <string name="lecteur_video_suivante">Vidéo suivante</string>
   <string name="lecteur_passer_generique">Passer le générique</string>
   <string name="lecteur_autoplay_maintenant">Lire maintenant</string>
 </resources>

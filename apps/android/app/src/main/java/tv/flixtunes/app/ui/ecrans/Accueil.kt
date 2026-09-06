@@ -423,6 +423,9 @@ import tv.flixtunes.app.ui.tv.NavigationTelevision
     val principal = when (media.kind) {
         "episode" -> "Saison ${media.seasonNumber ?: 0} · Épisode ${media.episodeNumber ?: 0}"
         "show" -> media.year?.toString() ?: stringResource(R.string.fiche_type_serie)
+        // Une vidéo de plateforme se présente par sa date, jamais par une année qu'elle n'a pas :
+        // sans ce cas, elle tombait dans le repli et s'annonçait « Film ».
+        "video" -> media.secondaryText
         else -> media.year?.toString() ?: stringResource(R.string.fiche_type_film)
     }
     val duree = media.runtimeSeconds?.let { "${(it / 60.0).roundToInt()} min" }

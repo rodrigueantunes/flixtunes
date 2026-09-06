@@ -161,6 +161,8 @@ import tv.flixtunes.app.ui.TexteDoux
                         when (item.kind) {
                             "show" -> stringResource(R.string.fiche_type_serie)
                             "episode" -> stringResource(R.string.fiche_type_episode)
+                            // Le repli annonçait « Film » devant une vidéo de plateforme.
+                            "video" -> stringResource(R.string.fiche_type_video)
                             else -> stringResource(R.string.fiche_type_film)
                         },
                     )

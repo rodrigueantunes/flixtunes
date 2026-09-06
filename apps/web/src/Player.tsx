@@ -1353,8 +1353,9 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
         <div><b>{media.showTitle ?? media.title}</b>{media.showTitle && <span>{media.kind === "video"
           ? media.title
           : <>S{media.seasonNumber} E{media.episodeNumber} · {media.title}</>}</span>}</div>
-        {neighbors.previous && <button className="player-compact-button player-icon-button" onClick={() => onPlayMedia(neighbors.previous!.id)} aria-label="Épisode précédent">|◀</button>}
-        {neighbors.next && <button className="player-compact-button player-icon-button" onClick={() => onPlayMedia(neighbors.next!.id)} aria-label="Épisode suivant">▶|</button>}
+        {/* « Épisode » n'a pas de sens dans une chaîne : ce qui suit une vidéo est une vidéo. */}
+        {neighbors.previous && <button className="player-compact-button player-icon-button" onClick={() => onPlayMedia(neighbors.previous!.id)} aria-label={neighbors.previous.kind === "video" ? "Vidéo précédente" : "Épisode précédent"}>|◀</button>}
+        {neighbors.next && <button className="player-compact-button player-icon-button" onClick={() => onPlayMedia(neighbors.next!.id)} aria-label={neighbors.next.kind === "video" ? "Vidéo suivante" : "Épisode suivant"}>▶|</button>}
         <button className="player-compact-button" onClick={() => setInfoOpen((open) => !open)} aria-expanded={infoOpen}>Infos</button>
         <button className="player-tracks-button" onClick={() => setSettingsOpen((open) => !open)} aria-expanded={settingsOpen}>Pistes</button>
         {session && <span className={`playback-mode ${session.mode}`}>{session.mode === "direct" ? "Direct Play" : session.mode === "remux" ? "Remux HLS" : "Transcodage HLS"}</span>}
@@ -1461,7 +1462,7 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
         * l'image, en bas à droite, et au-dessus de la barre de progression.
         */}
       {nextCountdown != null && neighbors.next && <div className="player-next">
-        <span>Épisode suivant</span>
+        <span>{neighbors.next.kind === "video" ? "Vidéo suivante" : "Épisode suivant"}</span>
         <b>{neighbors.next.title}</b>
         {neighbors.next.kind !== "video" && neighbors.next.showTitle
           && neighbors.next.seasonNumber != null && neighbors.next.episodeNumber != null

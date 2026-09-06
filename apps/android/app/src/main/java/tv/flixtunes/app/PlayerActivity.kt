@@ -1357,6 +1357,7 @@ class PlayerActivity : ComponentActivity() {
             etatLecteur = etatLecteur.copy(
                 episodePrecedent = voisins?.optJSONObject("previous") != null,
                 episodeSuivant = voisinSuivant != null,
+                suivantEstUneVideo = voisinSuivant?.optString("kind") == "video",
             )
             // Les deux marqueurs de générique, calculés par le serveur à partir des chapitres du
             // fichier : une seule lecture des intitulés pour le Web comme pour Android.

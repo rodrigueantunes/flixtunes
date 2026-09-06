@@ -1,5 +1,5 @@
 import type {
-  CatalogFilter, CatalogPage, CatalogPerson, CatalogQuery, CatalogSort,
+  CatalogFilter, CatalogPage, CatalogPerson, CatalogQuery, CatalogSort, LibraryKind,
   HomeResponse, MediaDetails, MediaItem, MediaSourceVersion, PersonDetails, PlaybackNeighbors, Profile, SeasonDetails,
 } from "@flixtunes/contracts";
 
@@ -703,6 +703,21 @@ export function searchCatalog(profileId: string, query: string): Array<MediaItem
   return [...shows, ...media].slice(0, 80);
 }
 
+/**
+ * Le type de la bibliothèque d'une fiche — ce que le client ne peut pas deviner.
+ *
+ * Une chaîne web est stockée comme une série et une vidéo comme un épisode : c'est ce qui leur donne
+ * la fiche, la reprise et l'enchaînement sans code neuf, et c'est aussi pourquoi aucune forme ne les
+ * distingue. Les écrans s'en remettaient à des indices — le type du média, la nature des paliers —
+ * qui ont chacun leur angle mort. La bibliothèque, elle, tranche sans ambiguïté.
+ */
+function kindDeLaBibliotheque(libraryId: string | null): LibraryKind | null {
+  if (!libraryId) return null;
+  const ligne = db.prepare("SELECT kind FROM library_folders WHERE id = ?").get(libraryId) as
+    { kind: LibraryKind } | undefined;
+  return ligne?.kind ?? null;
+}
+
 function peopleForCatalog(catalogId: string): CatalogPerson[] {
   const rows = db.prepare(`
     SELECT person.id, person.name, person.profile_url, credit.role, credit.character, credit.job, credit.credit_order
@@ -892,6 +907,7 @@ export function getDetails(profileId: string, id: string): MediaDetails | null {
         // bouton se conditionne à sa présence. Le chemin des séries l'attachait, celui des films non,
         // si bien que la correction n'était offerte que pour les séries.
         libraryId: catalog.library_id,
+        libraryKind: kindDeLaBibliotheque(catalog.library_id),
       },
       source: versions[0] ? { kind: "file", name: versions[0].name } : sourceFile(movie.id),
       versions,
@@ -956,7 +972,8 @@ export function getDetails(profileId: string, id: string): MediaDetails | null {
   const aVenir = tousLesEpisodes.find((episode) => !episode.completed);
   const firstEpisode = commence ?? aVenir ?? tousLesEpisodes[0] ?? null;
   const firstEpisodeProgress = firstEpisode as MediaItemWithProgress | null;
-  const item: MediaItemWithProgress & { seasonCount: number; libraryId: string | null } = {
+  const item: MediaItemWithProgress & { seasonCount: number; libraryId: string | null;
+    libraryKind: LibraryKind | null } = {
     id: catalog.id,
     catalogId: catalog.id,
     playableMediaId: firstEpisode?.id ?? null,
@@ -981,6 +998,7 @@ export function getDetails(profileId: string, id: string): MediaDetails | null {
       && seasonDetails.filter((season) => season.episodes.length > 0).every((season) => season.completed),
     seasonCount: seasonDetails.length,
     libraryId: catalog.library_id,
+    libraryKind: kindDeLaBibliotheque(catalog.library_id),
     inWatchlist: Boolean(db.prepare("SELECT 1 FROM profile_watchlist WHERE profile_id = ? AND catalog_id = ?").get(profileId, catalog.id)),
   };
   return { item, source: sourceShowFolder(firstEpisode?.id ?? null), qualities: showQualities(catalog.id),

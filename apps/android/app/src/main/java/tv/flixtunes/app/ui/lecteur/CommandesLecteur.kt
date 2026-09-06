@@ -212,7 +212,10 @@ fun CommandesLecteur(etat: EtatLecteur, actions: ActionsLecteur, modifier: Modif
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(
-                stringResource(R.string.lecteur_autoplay_titre).uppercase(),
+                stringResource(
+                    if (etat.suivantEstUneVideo) R.string.lecteur_autoplay_titre_video
+                    else R.string.lecteur_autoplay_titre,
+                ).uppercase(),
                 color = BleuClair,
                 fontSize = (gabarit.tailleTexte - 3).sp,
                 letterSpacing = 1.4.sp,
@@ -384,7 +387,10 @@ private fun BandeauHaut(etat: EtatLecteur, actions: ActionsLecteur) {
         )
         if (!compact && etat.episodeSuivant) BoutonLecteur(
             "▶|", actions.episodeSuivant, actions.reveiller,
-            description = stringResource(R.string.lecteur_episode_suivant),
+            description = stringResource(
+                if (etat.suivantEstUneVideo) R.string.lecteur_video_suivante
+                else R.string.lecteur_episode_suivant,
+            ),
         )
         BoutonLecteur(stringResource(R.string.lecteur_infos), actions.ouvrirInfos, actions.reveiller,
             description = "Informations de lecture")
@@ -579,7 +585,10 @@ private fun LigneCommandes(etat: EtatLecteur, actions: ActionsLecteur) {
         )
         if (gabarit.commandesEmpilees && etat.episodeSuivant) BoutonLecteur(
             "▶|", actions.episodeSuivant, actions.reveiller,
-            description = stringResource(R.string.lecteur_episode_suivant),
+            description = stringResource(
+                if (etat.suivantEstUneVideo) R.string.lecteur_video_suivante
+                else R.string.lecteur_episode_suivant,
+            ),
         )
         BoutonLecteur(vitesseLisible(etat.vitesse), actions.ouvrirVitesse, actions.reveiller)
         BoutonLecteur("Qualité", actions.ouvrirQualite, actions.reveiller)

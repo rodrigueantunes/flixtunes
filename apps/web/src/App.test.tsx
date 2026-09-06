@@ -275,6 +275,37 @@ describe("expérience Web FlixTunes", () => {
     expect(dialog).not.toHaveTextContent("Premier signal");
   });
 
+  it("annonce une chaîne web en dossiers et en vidéos, jamais en saisons", async () => {
+    /*
+     * Cette fiche s'atteint depuis la recherche : une vidéo trouvee ouvre la fiche de sa chaine. Elle
+     * s'annoncait alors « SÉRIE · Toutes les saisons · 4 saisons · Saison 1 · Épisodes », parce
+     * qu'une chaine est **rangee** comme une serie et que rien dans sa forme ne l'en distingue.
+     *
+     * Le rayon vient maintenant du serveur, avec la fiche. C'est ce champ que ce cas surveille : s'il
+     * disparaissait, aucune erreur ne serait levee — la fiche redeviendrait simplement une serie.
+     */
+    const chaine: MediaItem = { ...show, id: "chaine-1", catalogId: "chaine-1", title: "Chaine documentaire" };
+    apiMock.details.mockResolvedValueOnce({
+      item: { ...chaine, libraryKind: "web" },
+      seasons: [{ id: "dossier-1", number: 1, title: "Grands formats", overview: null, posterUrl: null,
+        completed: false, episodes: [{ ...episodeOne, kind: "video", title: "Les routes du sel", airDate: "2024-11-12" }] }],
+      related: [],
+    } as unknown as MediaDetails);
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Voyage Azur", level: 1 });
+    fireEvent.click(screen.getByRole("link", { name: "Séries TV" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Voir Les Veilleurs" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Chaîne");
+    expect(dialog).toHaveTextContent("Dossiers");
+    expect(dialog).toHaveTextContent("Vidéos");
+    expect(dialog).toHaveTextContent("12 novembre 2024");
+    expect(dialog).not.toHaveTextContent("Saison");
+    expect(dialog).not.toHaveTextContent("Épisodes");
+  });
+
   it("déplace le focus dans une fenêtre, l'y enferme, puis le rend à son déclencheur", async () => {
     // Le balisage « role=dialog aria-modal » promet ces trois comportements sans les fournir. Sans
     // eux, une personne au clavier ou au lecteur d'écran reste dans la page de fond : la fenêtre

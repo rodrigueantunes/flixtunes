@@ -75,15 +75,23 @@ internal fun segmentsDuPalier(saison: Season): List<String> =
     else saison.title.split(SEPARATEUR).map { it.trim() }.filter { it.isNotEmpty() }
 
 /**
- * Cette fiche est-elle une chaîne web ? Ses paliers ne contiennent que des vidéos.
+ * Cette fiche est-elle une chaîne web ?
  *
- * Un palier **vide** ne prouve rien et ne doit rien réfuter. Exiger que tous soient des dossiers
- * revenait à le faire : un dossier dont aucune vidéo n'est disponible suffisait à faire retomber la
- * chaîne sur la fiche des séries, où elle s'annonçait en saisons et en épisodes. On demande donc
- * qu'au moins un palier porte des vidéos, et qu'aucun ne porte autre chose.
+ * **Le rayon tranche, la forme ne fait que dépanner.** Une chaîne est stockée comme une série : rien
+ * dans sa forme ne la distingue avec certitude, et les repères qu'on en tirait ont chacun eu leur
+ * angle mort — un dossier vide suffisait à la faire retomber sur la fiche des séries, où elle
+ * s'annonçait en saisons et en épisodes.
+ *
+ * Le repère de forme reste, en second : il sert face à un serveur plus ancien que ce champ. Il
+ * demande qu'au moins un palier porte des vidéos, et qu'aucun ne porte autre chose — un palier vide
+ * ne prouve rien et ne doit rien réfuter.
  */
 internal val Details.estChaineWeb: Boolean
-    get() = seasons.any { it.estDossier } && seasons.none { saison -> saison.episodes.any { it.kind != "video" } }
+    get() = when (libraryKind) {
+        "web" -> seasons.isNotEmpty()
+        null -> seasons.any { it.estDossier } && seasons.none { saison -> saison.episodes.any { it.kind != "video" } }
+        else -> false
+    }
 
 /**
  * L'ordre d'affichage des vidéos.

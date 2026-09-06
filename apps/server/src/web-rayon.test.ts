@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "./database.js";
-import { listCatalog } from "./catalog-view.js";
+import { getDetails, listCatalog, searchCatalog } from "./catalog-view.js";
 import { normaliseForSearch } from "./search-normalise.js";
 
 /**
@@ -117,5 +117,39 @@ describe("étanchéité des rayons", () => {
     const page = listCatalog(profileId, { kind: "web", limit: 200 });
     expect(page.total).toBe(page.items.length);
     expect(page.items.every((item) => (item.showTitle ?? item.title) !== SERIE)).toBe(true);
+  });
+});
+
+/**
+ * Ce que la fiche dit de son rayon.
+ *
+ * **Le serveur le sait ; jusqu'ici il ne le disait pas.** Chaque écran redéduisait « est-ce du web ? »
+ * à sa façon — le type du média ici, la forme des paliers là, un drapeau passé à une grille ailleurs —
+ * et chacune de ces déductions a eu son angle mort, réparé à une révision différente. Une chaîne est
+ * rangée comme une série : rien dans sa forme ne la distingue, seule sa bibliothèque le dit.
+ */
+describe("le rayon d'une fiche", () => {
+  const ficheDe = (titre: string) => {
+    const ligne = db.prepare("SELECT id FROM catalog_items WHERE title = ? AND kind IN ('show', 'movie')")
+      .get(titre) as { id: string } | undefined;
+    return ligne ? getDetails(profileId, ligne.id) : null;
+  };
+
+  it("dit « web » pour une chaîne", () => {
+    expect(ficheDe(CHAINE)?.item.libraryKind).toBe("web");
+  });
+
+  it("dit « tv » pour une série et « movie » pour un film", () => {
+    // Le cas inverse compte autant : la marque doit désigner le rayon, pas signaler une exception.
+    expect(ficheDe(SERIE)?.item.libraryKind).toBe("tv");
+    expect(ficheDe(FILM)?.item.libraryKind).toBe("movie");
+  });
+
+  it("marque aussi la chaîne qu'on atteint depuis une de ses vidéos", () => {
+    // C'est le chemin réel : une vidéo trouvée par la recherche ouvre la fiche de sa chaîne, et c'est
+    // là que la fiche s'annonçait en saisons et en épisodes.
+    const video = searchCatalog(profileId, `${CHAINE} — video`)[0];
+    expect(video?.kind).toBe("episode");
+    expect(getDetails(profileId, video!.catalogId!)?.item.libraryKind).toBe("web");
   });
 });

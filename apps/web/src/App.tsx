@@ -105,15 +105,26 @@ export function Icon({ name }: {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d={paths[name]} /></svg>;
 }
 
+/**
+ * Une date de publication, telle qu'elle se lit sous un titre de vidéo.
+ *
+ * Une date absente ne devient pas une date approchée : on écrit « Vidéo », qui dit ce qu'on sait.
+ * Afficher le jour de l'analyse mentirait sur la seule information que ce rayon trie.
+ */
+export function dateWebLisible(airDate: string | null | undefined): string {
+  if (!airDate) return "Vidéo";
+  const instant = new Date(`${airDate}T00:00:00Z`);
+  if (Number.isNaN(instant.getTime())) return "Vidéo";
+  return instant.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+}
+
 function MediaCard({ item, onOpen, onContext }: {
   item: CardItem; onOpen: (item: CardItem) => void; onContext?: (item: CardItem, x: number, y: number) => void;
 }) {
   const [posterState, setPosterState] = useState<"loading" | "ready" | "failed">(item.posterUrl ? "loading" : "failed");
   // Une video de plateforme n'a ni saison ni numero : elle se presente par sa date de publication,
   // qui est aussi ce sur quoi son rayon la trie.
-  const meta = item.kind === "video"
-    ? (item.airDate ? new Date(`${item.airDate}T00:00:00Z`).toLocaleDateString("fr-FR",
-      { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }) : "Vidéo")
+  const meta = item.kind === "video" ? dateWebLisible(item.airDate)
     : item.kind === "episode" ? `S${item.seasonNumber} · E${item.episodeNumber}`
     : item.seasonCount != null ? `${item.seasonCount} saison${item.seasonCount > 1 ? "s" : ""}`
       : item.year ?? "Film";
@@ -717,6 +728,14 @@ function DetailsModal({ details, demande, profile, onPlay, onOpen, onOpenPerson,
   const [selectedVersion, setSelectedVersion] = useState(details.versions?.[0]?.mediaId ?? details.item.id);
   const activeSeason = details.seasons.find((entry) => entry.number === season);
   const episodes = activeSeason?.episodes ?? [];
+  /*
+   * Cette fiche vient-elle du rayon Web ?
+   *
+   * On ne le déduit plus de la forme : le serveur le dit. Les déductions maison — le type du média,
+   * la nature des paliers — ont chacune eu leur angle mort, et une chaîne rangée comme une série ne
+   * s'en distingue par aucun indice fiable.
+   */
+  const estWeb = details.item.libraryKind === "web";
   /**
    * Ce qu'on lance quand on appuie sur « Lecture » ou « Reprendre ».
    *
@@ -760,7 +779,7 @@ function DetailsModal({ details, demande, profile, onPlay, onOpen, onOpenPerson,
   const toggleWatchlist = async () => { const next = !inWatchlist; await api.setWatchlist(item.catalogId ?? item.id, profile.id, next); setInWatchlist(next); onChanged(); };
   return <div className="modal-backdrop details-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}><div className="details-modal" role="dialog" aria-modal="true" aria-labelledby="details-title" ref={dialogRef}>
     <div className="details-hero" style={item.backdropUrl ? { backgroundImage: `linear-gradient(0deg,#10141d 2%,transparent 75%),linear-gradient(90deg,#10141ddd,transparent),url(${item.backdropUrl})` } : undefined}>
-      <button className="details-close" onClick={onClose} aria-label="Fermer">×</button><div><span className="eyebrow">{item.kind === "show" ? "Série" : item.kind === "episode" ? "Épisode" : item.kind === "video" ? "Vidéo" : "Film"}</span><h1 id="details-title">{item.showTitle ?? item.title}</h1>
+      <button className="details-close" onClick={onClose} aria-label="Fermer">×</button><div><span className="eyebrow">{estWeb && item.kind === "show" ? "Chaîne" : item.kind === "show" ? "Série" : item.kind === "episode" ? "Épisode" : item.kind === "video" ? "Vidéo" : "Film"}</span><h1 id="details-title">{item.showTitle ?? item.title}</h1>
       <p>{[item.year, item.runtimeSeconds ? `${Math.round(item.runtimeSeconds / 60)} min` : null, "Dans votre médiathèque"].filter(Boolean).join(" · ")}</p>
       {Boolean(details.qualities?.length) && <div className="quality-badges" aria-label="Qualités disponibles">
         {details.qualities!.map((quality) => <span key={quality}>{quality}</span>)}
@@ -797,14 +816,25 @@ function DetailsModal({ details, demande, profile, onPlay, onOpen, onOpenPerson,
           <strong>{person.name}</strong><small>{person.character || roleLabel[person.role]}</small>
         </button>)}</div>
       </section>}
-      {details.seasons.length > 0 && <section className="season-browser"><header><div><span className="eyebrow">Toutes les saisons</span><h2>Saisons</h2></div><span>{details.seasons.length} saison{details.seasons.length > 1 ? "s" : ""}</span></header>
+      {/*
+        * Une chaîne web n'a ni saisons ni épisodes, et sa fiche ne doit pas les nommer.
+        *
+        * Elle est pourtant stockée comme une série : c'est ce qui lui donne la fiche, la reprise et
+        * l'enchaînement sans code neuf, et c'est pourquoi rien dans sa forme ne la distingue. Cette
+        * fiche s'atteint depuis la recherche — une vidéo trouvée ouvre la fiche de sa chaîne — et
+        * s'annonçait alors « Toutes les saisons · 4 saisons · Saison 1 · Épisodes ». Le serveur dit
+        * désormais de quel rayon vient la fiche ; on ne le devine plus.
+        */}
+      {details.seasons.length > 0 && <section className="season-browser"><header><div><span className="eyebrow">{estWeb ? "Tous les dossiers" : "Toutes les saisons"}</span><h2>{estWeb ? "Dossiers" : "Saisons"}</h2></div><span>{details.seasons.length} {estWeb ? "dossier" : "saison"}{details.seasons.length > 1 ? "s" : ""}</span></header>
         <div className="season-grid">{details.seasons.map((entry) => { const poster = entry.posterUrl ?? item.posterUrl; return <button key={entry.id} className={season === entry.number ? "season-card active" : "season-card"} aria-pressed={season === entry.number} onClick={() => setSeason(entry.number)}>
-          <span className="season-poster" style={poster ? { backgroundImage: `url(${poster})` } : undefined}>{!poster && <b>{entry.number}</b>}<i>{entry.episodes.length} épisode{entry.episodes.length > 1 ? "s" : ""}</i></span>
-          <strong>{entry.title || `Saison ${entry.number}`}</strong><small>{entry.overview ?? `Voir les épisodes de la saison ${entry.number}`}</small>
+          <span className="season-poster" style={poster ? { backgroundImage: `url(${poster})` } : undefined}>{!poster && <b>{estWeb ? "🗀" : entry.number}</b>}<i>{entry.episodes.length} {estWeb ? "vidéo" : "épisode"}{entry.episodes.length > 1 ? "s" : ""}</i></span>
+          <strong>{entry.title || `Saison ${entry.number}`}</strong><small>{entry.overview ?? (estWeb ? "Voir les vidéos de ce dossier" : `Voir les épisodes de la saison ${entry.number}`)}</small>
         </button>; })}</div>
       </section>}
-      {details.seasons.length > 0 && <section className="episodes"><header><div><span className="eyebrow">Saison {season}</span><h2>Épisodes</h2></div><div><span>{episodes.length} épisode{episodes.length > 1 ? "s" : ""}</span>{activeSeason && <button className="watched-toggle" onClick={() => void toggleSeasonWatched()}>{activeSeason.episodes.length > 0 && activeSeason.episodes.every(isWatched) ? "Marquer la saison non vue" : "✓ Marquer la saison vue"}</button>}</div></header>
-        <div>{episodes.map((episode) => <article key={episode.id}><button className="episode-play" onClick={() => play(episode)}><span>{episode.episodeNumber}</span><Icon name="play" /></button><div><b>{episode.title}</b><small>{episode.runtimeSeconds ? `${Math.round(episode.runtimeSeconds / 60)} min` : "Durée inconnue"}</small><p>{episode.overview ?? "Description non disponible."}</p><span className="episode-progress"><i style={{ width: `${episode.progressPercent}%` }} /></span></div><button className="watched-toggle" onClick={() => void toggleWatched(episode)}>{isWatched(episode) ? "Vu ✓" : "Marquer vu"}</button></article>)}</div>
+      {details.seasons.length > 0 && <section className="episodes"><header><div><span className="eyebrow">{estWeb ? (activeSeason?.title || "Dossier") : `Saison ${season}`}</span><h2>{estWeb ? "Vidéos" : "Épisodes"}</h2></div><div><span>{episodes.length} {estWeb ? "vidéo" : "épisode"}{episodes.length > 1 ? "s" : ""}</span>{activeSeason && <button className="watched-toggle" onClick={() => void toggleSeasonWatched()}>{activeSeason.episodes.length > 0 && activeSeason.episodes.every(isWatched)
+          ? (estWeb ? "Marquer le dossier non vu" : "Marquer la saison non vue")
+          : (estWeb ? "✓ Marquer le dossier vu" : "✓ Marquer la saison vue")}</button>}</div></header>
+        <div>{episodes.map((episode) => <article key={episode.id}><button className="episode-play" onClick={() => play(episode)}>{!estWeb && <span>{episode.episodeNumber}</span>}<Icon name="play" /></button><div><b>{episode.title}</b><small>{estWeb ? dateWebLisible(episode.airDate) : episode.runtimeSeconds ? `${Math.round(episode.runtimeSeconds / 60)} min` : "Durée inconnue"}</small><p>{episode.overview ?? "Description non disponible."}</p><span className="episode-progress"><i style={{ width: `${episode.progressPercent}%` }} /></span></div><button className="watched-toggle" onClick={() => void toggleWatched(episode)}>{isWatched(episode) ? "Vu ✓" : "Marquer vu"}</button></article>)}</div>
       </section>}
       {details.related.length > 0 && <Rail title="Vous aimerez peut-être" items={details.related} onOpen={onOpen} onContext={onContext} />}
       {details.collection && <Rail title={details.collection.name} items={details.collection.items} onOpen={onOpen} onContext={onContext} />}

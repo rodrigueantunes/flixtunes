@@ -63,6 +63,14 @@ data class EtatLecteur(
     val lignesInfos: List<LigneInfo> = emptyList(),
     val episodePrecedent: Boolean = false,
     val episodeSuivant: Boolean = false,
+    /**
+     * Ce qui suit est-il une vidéo de plateforme plutôt qu'un épisode ?
+     *
+     * Change les mots, rien d'autre : « Vidéo suivante » au lieu d'« Épisode suivant ». Dans une
+     * chaîne, ce qui suit une vidéo est une vidéo — parler d'épisode y désigne quelque chose qui
+     * n'existe pas.
+     */
+    val suivantEstUneVideo: Boolean = false,
     /** Saute à la fin de l'introduction. Proposé sur les séries seulement. */
     val passerGenerique: () -> Unit = {},
     /** `PiP` n'existe pas partout : le bouton disparaît là où le système ne le propose pas. */
