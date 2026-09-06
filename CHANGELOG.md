@@ -1,5 +1,35 @@
 # Journal des versions
 
+## 0.5.8.r6 — un message qui envoyait chercher le défaut ailleurs
+
+<!-- release -->
+### Dire la vraie raison d'un refus
+
+- **« Aucune chaîne trouvée pour ce nom » s'affichait devant une chaîne de quatre millions
+  d'abonnés.** Trois causes très différentes — clé absente, budget épuisé, chaîne réellement
+  introuvable — rendaient la même réponse vide, et l'écran les traduisait toutes par la dernière.
+  Relevé sur une installation réelle : 99 unités de quota restantes, une recherche en coûtant 100.
+  La clé fonctionnait, la requête était juste, seul le budget manquait. Chacune de ces causes a
+  désormais son message.
+- **Le budget du jour s'affiche avant toute dépense**, et passe au rouge quand il ne suffit plus à une
+  recherche. Le bouton annonce déjà son prix.
+
+### Une seconde porte oubliée
+
+- **Le gestionnaire de bibliothèques ouvrait l'écran de correspondances du catalogue pour une
+  bibliothèque web**, avec ses propositions TMDB et TVDB. L'aiguillage posé à la révision précédente
+  ne couvrait que l'entrée depuis l'accueil ; les deux points d'entrée choisissent maintenant l'écran
+  selon le type de la bibliothèque.
+<!-- /release -->
+
+Ces deux défauts sont de la même famille que ceux des révisions précédentes, et méritent d'être
+nommés comme tels : une correction appliquée là où le défaut a été vu, sans chercher les autres
+endroits où la même faute se répète. L'aiguillage avait été posé à un point d'entrée sur deux ; le
+message de refus avait été écrit pour un seul de ses trois motifs.
+
+Le second est le plus coûteux des deux, et pas en unités : un message faux fait chercher le défaut là
+où il n'est pas. Une journée a été passée à soupçonner la clé, l'API et la requête — toutes correctes.
+
 ## 0.5.8.r5 — une identité qu'on retrouvait chaque jour, au prix fort
 
 <!-- release -->

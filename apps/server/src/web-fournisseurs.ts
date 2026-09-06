@@ -84,6 +84,31 @@ function depenser(unites: number): void {
     .run(CLE_QUOTA, JSON.stringify({ date: etat.date, depense: etat.depense + unites }));
 }
 
+/**
+ * Pourquoi une recherche ne partira pas, ou `null` si rien ne l'empêche.
+ *
+ * Sans cela, un refus de budget et une chaîne réellement introuvable rendent la même réponse — et
+ * l'écran annonçait « Aucune chaîne trouvée pour ce nom » alors que la chaîne existe et compte quatre
+ * millions d'abonnés. Un message faux coûte plus cher qu'un message absent : on cherche le défaut là
+ * où il n'est pas.
+ */
+export function empechementYoutube(cout: number, cleExplicite?: string | null): string | null {
+  const cle = cleExplicite !== undefined ? cleExplicite : getProviderConfiguration().youtubeApiKey;
+  if (!cle) return "Aucune clé YouTube n'est enregistrée : ajoutez-la dans l'écran des fournisseurs.";
+  const etat = quotaDuJour();
+  if (etat.depense + cout > etat.plafond) {
+    return `Budget YouTube épuisé pour aujourd'hui (${etat.depense} sur ${etat.plafond} unités).`
+      + " Il se réinitialise à minuit heure du Pacifique, soit 9 h en France.";
+  }
+  return null;
+}
+
+/** Ce qu'il reste à dépenser aujourd'hui, pour l'afficher. */
+export function budgetYoutube(): { depense: number; plafond: number; reste: number } {
+  const etat = quotaDuJour();
+  return { depense: etat.depense, plafond: etat.plafond, reste: Math.max(0, etat.plafond - etat.depense) };
+}
+
 /** Reste-t-il de quoi payer cet appel ? */
 export function quotaDisponible(cout: number): boolean {
   const etat = quotaDuJour();

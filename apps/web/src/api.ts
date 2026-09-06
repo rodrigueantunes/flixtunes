@@ -158,6 +158,9 @@ export interface CorrespondanceWeb {
   verrouillee: boolean;
 }
 
+/** Ce qu'il reste à dépenser aujourd'hui sur l'API de la plateforme. */
+export interface BudgetWeb { depense: number; plafond: number; reste: number }
+
 /** Un candidat de plateforme. Jamais un film ni une série : les deux mondes ne se croisent pas. */
 export interface CandidatWeb {
   titre: string | null;
@@ -355,7 +358,8 @@ export const api = {
     const search = new URLSearchParams({ profileId });
     if (options.libraryId) search.set("libraryId", options.libraryId);
     if (options.toutes) search.set("toutes", "1");
-    return request<CorrespondanceWeb[]>(`/web/correspondances?${search.toString()}`);
+    return request<{ budget: BudgetWeb; lignes: CorrespondanceWeb[] }>(
+      `/web/correspondances?${search.toString()}`);
   },
   candidatsWeb: (profileId: string, id: string, q?: string) => {
     const search = new URLSearchParams({ profileId });

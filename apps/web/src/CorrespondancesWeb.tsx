@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { LibraryFolder } from "@flixtunes/contracts";
-import { api, type CandidatWeb, type CorrespondanceWeb } from "./api";
+import { api, type BudgetWeb, type CandidatWeb, type CorrespondanceWeb } from "./api";
 
 /**
  * Les correspondances d'une bibliothèque web.
@@ -21,6 +21,7 @@ export function CorrespondancesWeb({ library, profileId, onClose, onChanged }: {
   onChanged: () => void;
 }) {
   const [lignes, setLignes] = useState<CorrespondanceWeb[]>([]);
+  const [budget, setBudget] = useState<BudgetWeb | null>(null);
   // Tout est affiche par defaut : on vient ici pour corriger, y compris ce que l'analyse croit
   // avoir bien identifie. Un ecran qui annonce « tout est identifie » ne rend aucun service.
   const [toutes, setToutes] = useState(true);
@@ -33,7 +34,9 @@ export function CorrespondancesWeb({ library, profileId, onClose, onChanged }: {
 
   const charger = useCallback(async () => {
     try {
-      setLignes(await api.correspondancesWeb(profileId, { libraryId: library.id, toutes }));
+      const reponse = await api.correspondancesWeb(profileId, { libraryId: library.id, toutes });
+      setLignes(reponse.lignes);
+      setBudget(reponse.budget);
       setMotif(null);
     } catch (cause) {
       setMotif(cause instanceof Error ? cause.message : "Liste indisponible.");
@@ -80,6 +83,17 @@ export function CorrespondancesWeb({ library, profileId, onClose, onChanged }: {
         <span className="eyebrow">Web</span>
         <h1 id="web-corr-titre">Correspondances — {library.name}</h1>
         <p>Les candidats viennent de la plateforme, jamais d’une base de films ou de séries.</p>
+        {/*
+          * Le budget, avant toute dépense.
+          *
+          * Une recherche coûte cent unités sur les 9 000 d'une journée. Le montrer évite le pire des
+          * messages : « aucune chaîne trouvée » là où la chaîne existe et où c'est le budget qui
+          * manquait — ce qui envoie chercher le défaut là où il n'est pas.
+          */}
+        {budget && <p className={budget.reste < 100 ? "web-budget epuise" : "web-budget"}>
+          Budget YouTube : {budget.reste} unités restantes sur {budget.plafond}
+          {budget.reste < 100 && " — une recherche en coûte 100, elle ne partira pas avant 9 h."}
+        </p>}
       </div>
       <button className="details-close" onClick={onClose} aria-label="Fermer">×</button>
     </header>

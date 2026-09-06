@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import type { LibraryFolder, LibraryInput, LibraryKind, MetadataLanguage, ScanJob, ScanMode, ScanScope } from "@flixtunes/contracts";
 import { api, type EtatGeneriques } from "./api";
 import { MetadataManager } from "./MetadataManager";
+import { CorrespondancesWeb } from "./CorrespondancesWeb";
 import { FolderBrowser } from "./FolderBrowser";
 import { ProviderSetup } from "./ProviderSetup";
 import { DiagnosticsPanel } from "./DiagnosticsPanel";
@@ -26,7 +27,12 @@ function statusLabel(library: LibraryFolder): string {
   }
 }
 
-export function LibraryManager({ onClose, onChanged }: { onClose: () => void; onChanged: () => void }) {
+export function LibraryManager({ onClose, onChanged, profileId }: {
+  onClose: () => void;
+  onChanged: () => void;
+  /** Requis par l'écran des correspondances web, dont les routes travaillent pour un profil. */
+  profileId?: string;
+}) {
   const [libraries, setLibraries] = useState<LibraryFolder[]>([]);
   const [form, setForm] = useState<LibraryInput>({ name: "", path: "", kind: "movie", language: "fr-FR", organizeSeasons: false });
   const [loading, setLoading] = useState(true);
@@ -163,7 +169,16 @@ export function LibraryManager({ onClose, onChanged }: { onClose: () => void; on
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      {metadataLibrary ? <MetadataManager library={metadataLibrary} onClose={() => setMetadataLibrary(null)} onChanged={onChanged} /> :
+      {/*
+        * Deuxieme porte vers l'ecran des correspondances, et elle avait ete oubliee.
+        *
+        * Celle de l'accueil aiguillait deja sur le type de la bibliotheque ; celle-ci non, si bien
+        * qu'une bibliotheque web ouvrait l'ecran du catalogue et s'y voyait proposer TMDB et TVDB.
+        */}
+      {metadataLibrary ? (metadataLibrary.kind === "web" && profileId
+        ? <CorrespondancesWeb library={metadataLibrary} profileId={profileId}
+          onClose={() => setMetadataLibrary(null)} onChanged={onChanged} />
+        : <MetadataManager library={metadataLibrary} onClose={() => setMetadataLibrary(null)} onChanged={onChanged} />) :
       <section className="library-modal" role="dialog" aria-modal="true" aria-labelledby="libraries-title">
         <header>
           <div><span className="eyebrow">Configuration du serveur</span><h2 id="libraries-title">Bibliothèques</h2></div>

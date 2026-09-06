@@ -1392,3 +1392,7 @@ html.bureau-video, body.bureau-video { background: transparent; }
 .web-corr-etat dt { color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; }
 .web-corr-etat dd { margin: 0; font-size: .84rem; font-weight: 600; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
+
+/* Le budget de l'API, montré avant toute dépense — rouge quand il ne suffit plus à une recherche. */
+.web-budget { margin: .3rem 0 0; color: var(--muted); font-size: .8rem; }
+.web-budget.epuise { color: #ffb7c0; }

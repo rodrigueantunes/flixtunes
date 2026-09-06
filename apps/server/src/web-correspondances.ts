@@ -1,6 +1,8 @@
 import { db } from "./database.js";
 import { cacheRemoteArtwork } from "./artwork.js";
-import { chercherYoutube, identifierChaineYoutube, resoudreYoutube } from "./web-fournisseurs.js";
+import {
+  budgetYoutube, chercherYoutube, empechementYoutube, identifierChaineYoutube, resoudreYoutube,
+} from "./web-fournisseurs.js";
 import { identifiantDepuisUrl, type IdentiteWeb } from "./web-identite.js";
 
 /**
@@ -34,6 +36,11 @@ export interface CorrespondanceWeb {
   /** `automatic` quand la plateforme a répondu, `unmatched` sinon, `manual` après correction. */
   statut: string;
   verrouillee: boolean;
+}
+
+/** L'état du budget YouTube, joint à la liste pour que l'écran le montre avant toute dépense. */
+export function budgetDesCorrespondancesWeb(): { depense: number; plafond: number; reste: number } {
+  return budgetYoutube();
 }
 
 /**
@@ -113,6 +120,11 @@ export async function candidatsPourFicheWeb(catalogId: string, requete?: string)
   if (!fiche) return { candidats: [], motif: "Fiche introuvable." };
 
   const terme = requete?.trim() || fiche.title;
+
+  // Une recherche coute cent unites : dire pourquoi elle ne partira pas vaut mieux que de rendre une
+  // liste vide, que l'ecran traduirait en « rien trouve » — ce qui serait faux.
+  const empechement = empechementYoutube(100);
+  if (empechement) return { candidats: [], motif: empechement };
 
   if (fiche.kind === "show") {
     const trouvee = await identifierChaineYoutube(terme).catch(() => null);

@@ -1113,7 +1113,7 @@ export function App() {
       {view === "live" && directDisponible && <Suspense fallback={<HomeSkeleton />}><LiveTv onPlay={ouvrirChaine} /></Suspense>}
       {home && view === "history" && <section className="catalog-page"><header className="catalog-header"><div><span className="eyebrow">Votre activité</span><h1>Historique</h1></div></header><Rail title="Déjà vus" items={home.completed} onOpen={openDetails} onContext={openContext} /><Rail title="Historique récent" items={home.watchedRecently} onOpen={openDetails} onContext={openContext} /></section>}
     </main><footer><span>FlixTunes</span><button onClick={() => setLibrariesOpen(true)}>Gérer les bibliothèques</button><small>Votre cinéma. Votre réseau.</small></footer>
-    {librariesOpen && <LibraryManager onClose={() => { setLibrariesOpen(false); void loadHome(); }} onChanged={() => void loadHome()} />}
+    {librariesOpen && <LibraryManager profileId={profile?.id} onClose={() => { setLibrariesOpen(false); void loadHome(); }} onChanged={() => void loadHome()} />}
     {profileOpen && <ProfilePanel group={group} profiles={profiles} selected={profile} onSelect={selectProfile}
       onChanged={() => refreshProfiles(group)} onBackGroup={() => { setProfileOpen(false); setProfile(null); setHome(null); setGroupOpen(true); }}
       onClose={() => { if (profile) setProfileOpen(false); else setGroupOpen(true); }} />}

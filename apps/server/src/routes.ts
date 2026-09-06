@@ -106,7 +106,7 @@ import { diagnostiquerWan } from "./wan-diagnostic.js";
 import { activerLesGeneriques, arreterLaPasse, etatDesGeneriques, generiquesActifs } from "./marqueurs-passe.js";
 import { etatDuSchema } from "./migrations.js";
 import {
-  appliquerCorrespondanceWeb, candidatsPourFicheWeb, listerCorrespondancesWeb,
+  appliquerCorrespondanceWeb, budgetDesCorrespondancesWeb, candidatsPourFicheWeb, listerCorrespondancesWeb,
 } from "./web-correspondances.js";
 import {
   compteDuJeton,
@@ -723,11 +723,16 @@ export async function registerRoutes(app: FastifyInstance) {
     const profile = profileFromRequest(request);
     if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
     const query = request.query as { libraryId?: string; toutes?: string; limite?: string };
-    return listerCorrespondancesWeb({
-      libraryId: query.libraryId,
-      toutes: query.toutes === "1" || query.toutes === "true",
-      limite: Number(query.limite) || undefined,
-    });
+    return {
+      // Le budget voyage avec la liste : l'ecran doit pouvoir dire ce qu'une recherche coutera avant
+      // qu'on la lance, et pourquoi elle ne partira pas quand il est epuise.
+      budget: budgetDesCorrespondancesWeb(),
+      lignes: listerCorrespondancesWeb({
+        libraryId: query.libraryId,
+        toutes: query.toutes === "1" || query.toutes === "true",
+        limite: Number(query.limite) || undefined,
+      }),
+    };
   });
 
   app.get<{ Params: IdParams }>("/api/web/correspondances/:id/candidats", async (request, reply) => {

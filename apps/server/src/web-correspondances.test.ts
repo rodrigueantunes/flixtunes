@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { db } from "./database.js";
 import { candidatsPourFicheWeb, listerCorrespondancesWeb } from "./web-correspondances.js";
 import { noterCorrespondanceWeb } from "./web-analyse.js";
+import { quotaDuJour } from "./web-fournisseurs.js";
+import { saveProviderConfiguration } from "./provider-settings.js";
 import type { IdentiteWeb } from "./web-identite.js";
 
 /**
@@ -31,6 +33,9 @@ const identite = (extra: Partial<IdentiteWeb> = {}): IdentiteWeb => ({
 });
 
 function poser(): void {
+  // Une cle d'essai, pour que les cas eprouvent le vrai chemin : sans elle, l'empechement annonce est
+  // « aucune cle », ce qui est juste mais masque tout ce qui vient apres.
+  saveProviderConfiguration({ youtubeApiKey: "cle-d-essai-web" });
   db.prepare("INSERT INTO library_folders (id, path, kind, language) VALUES (?, ?, 'web', 'fr-FR')")
     .run(bibliothequeWeb, `D:/${bibliothequeWeb}`);
   db.prepare("INSERT INTO library_folders (id, path, kind, language) VALUES (?, ?, 'movie', 'fr-FR')")
@@ -61,6 +66,8 @@ function poser(): void {
 }
 
 afterEach(() => {
+  saveProviderConfiguration({ youtubeApiKey: null });
+  db.prepare("DELETE FROM server_settings WHERE key = 'web_quota_youtube'").run();
   for (const id of [bibliothequeWeb, bibliothequeFilms]) {
     db.prepare("DELETE FROM catalog_items WHERE library_id = ?").run(id);
     db.prepare("DELETE FROM library_folders WHERE id = ?").run(id);
@@ -132,6 +139,14 @@ describe("statut d'une fiche web", () => {
 });
 
 describe("candidats proposés", () => {
+  it("dit qu'aucune clé n'est enregistrée plutôt que « rien trouvé »", async () => {
+    // Sans cle, aucune recherche ne peut partir : le dire evite de chercher un defaut ailleurs.
+    poser();
+    saveProviderConfiguration({ youtubeApiKey: null });
+    const { motif } = await candidatsPourFicheWeb(chaineId);
+    expect(motif).toMatch(/Aucune clé YouTube/);
+  });
+
   it("ne propose rien pour une vidéo dont la chaîne est inconnue", async () => {
     // Chercher sans chaine identifiee rendrait la video d'un autre au titre voisin — et couterait
     // cent unites de quota pour ce faux resultat. L'ecran doit le dire, pas deviner.
@@ -139,6 +154,27 @@ describe("candidats proposés", () => {
     const { candidats, motif } = await candidatsPourFicheWeb(videoSansChaine);
     expect(candidats).toHaveLength(0);
     expect(motif).toMatch(/chaîne n'est pas encore identifiée/);
+  });
+
+  it("dit que le budget est épuisé plutôt que « rien trouvé »", async () => {
+    /*
+     * Le pire message est celui qui envoie chercher le défaut ailleurs.
+     *
+     * Constaté a l'ecran : « Aucune chaîne trouvée pour ce nom » devant une chaîne de quatre millions
+     * d'abonnés, alors qu'il restait 99 unités de quota et qu'une recherche en coûte 100. La chaîne
+     * existait, la clé fonctionnait, la requête était juste — seul le budget manquait.
+     */
+    poser();
+    const etat = quotaDuJour();
+    db.prepare(`INSERT INTO server_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+      .run("web_quota_youtube", JSON.stringify({ date: etat.date, depense: etat.plafond - 1 }));
+
+    const { candidats, motif } = await candidatsPourFicheWeb(chaineId);
+
+    expect(candidats).toHaveLength(0);
+    expect(motif).toMatch(/Budget YouTube épuisé/);
+    expect(motif).not.toMatch(/Aucune chaîne trouvée/);
   });
 
   it("refuse une fiche qui n'existe pas", async () => {
