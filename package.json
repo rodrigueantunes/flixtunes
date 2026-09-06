@@ -1,7 +1,7 @@
 {
   "name": "flixtunes",
   "private": true,
-  "version": "0.5.7",
+  "version": "0.5.8",
   "packageManager": "pnpm@11.19.0",
   "scripts": {
     "dev": "pnpm --parallel --filter @flixtunes/server --filter @flixtunes/web dev",

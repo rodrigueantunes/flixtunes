@@ -1,5 +1,93 @@
 # Journal des versions
 
+## 0.5.8.r1 — un rayon pour ce qui vient du web
+
+<!-- release -->
+### Un cinquième type de bibliothèque
+
+- **Les dossiers web deviennent un rayon à part.** L'arborescence est lue par position :
+  `Web / Plateforme / Chaîne / …dossiers libres… / vidéo`. Le premier niveau nomme la provenance, le
+  deuxième la chaîne, tout ce qui suit appartient à la personne. Rien n'est deviné, et un rangement
+  fautif est signalé au lieu d'être rattrapé au jugé.
+- **Le rayon est étanche.** Une chaîne n'apparaît ni dans Films ni dans Séries TV, et aucune série
+  n'entre dans le rayon Web. La séparation est portée par le type de la bibliothèque, jamais par la
+  forme des fiches — les deux sont identiques en base.
+- **L'entrée de navigation n'existe que si un dossier est déclaré**, sur les trois clients. Même règle
+  que la télévision en direct : éteinte, la fonction n'existe nulle part.
+
+### Les vidéos ne sont pas des épisodes
+
+- **Nouveau type de média `video`.** Elles étaient d'abord enregistrées en `episode` pour hériter sans
+  code neuf de la reprise et de l'enchaînement. Le raccourci ne tenait pas : le type voyage avec la
+  fiche, et les écrans annonçaient « S1 · E20024 » — le numéro d'épisode étant un nombre de jours. Une
+  vidéo se présente désormais par son titre et sa date de publication, et faute de date connue, elle
+  ne s'en invente pas.
+- **La date de publication est stockée.** Elle était analysée depuis toujours et jetée aussitôt.
+- **Le repérage des génériques ignore ces vidéos**, puisqu'il filtre sur le type `episode` : des heures
+  de décodage évitées sur des contenus qui n'ont pas de générique de série.
+
+### Métadonnées : le fichier d'abord, la plateforme ensuite
+
+- **Aucune base de films ou de séries n'est interrogée pour une bibliothèque web.** C'est une
+  exclusion, pas un réordonnancement : une vidéo intitulée « Star Wars — analyse » y trouverait une
+  correspondance à score élevé, appliquée comme une certitude que rien ne viendrait relire.
+- **Ce que le fichier dit de lui-même est lu en premier** — annexe `.info.json` et balises du
+  conteneur, sans un seul appel réseau ni aucune clé. Sur une médiathèque constituée avec un
+  téléchargeur, cela suffit souvent.
+- **Connecteur YouTube Data API v3 et résolveur oEmbed.** La provenance décide de l'interlocuteur :
+  on ne cherche jamais une vidéo Dailymotion sur YouTube. Sans clé, aucun appel n'est fait et le rayon
+  fonctionne sur les seules métadonnées locales.
+- **Budget de quota.** Une résolution par identifiant coûte 1 unité, une recherche par titre en coûte
+  100 — soit environ 9 000 vidéos par jour contre 90. Trois règles en découlent : on ne demande rien
+  quand le fichier a déjà tout dit, l'identifiant prime sur le titre quand il est là, et l'on s'arrête
+  avant d'épuiser la clé plutôt qu'après, l'épuiser la rendant inutilisable jusqu'au lendemain.
+- **Les vignettes sont figées à la première réussite** : téléchargées une fois, servies localement, et
+  plus jamais redemandées — y compris si la plateforme change la sienne.
+
+### Écrans
+
+- **Client Web** : mosaïque de chaînes, puis de dossiers dans lesquels on entre, puis de vidéos en
+  cartes paysage avec leur date sous le titre. Fil d'Ariane, tri modifiable — plus récentes d'abord
+  par défaut.
+- **Android mobile et TV** : le même écran, transcrit du Web qui reste la référence graphique. Les
+  tailles viennent des jetons du CSS et non d'un choix local.
+
+### Schéma
+
+- **Trois migrations**, appliquées par le registre et précédées d'une sauvegarde automatique :
+  `library_folders` accepte le type `web`, `media_items` le type `video`, `artwork_assets` la
+  provenance `youtube`.
+- SQLite ne modifiant pas une contrainte `CHECK`, chacune reconstruit sa table. Les clés étrangères
+  sont désarmées **avant** l'ouverture de la transaction, où le pragma serait sans effet : sans cette
+  précaution, reconstruire `media_items` effacerait par cascade les progressions de lecture et les
+  préférences de sous-titres de tous les profils. La cascade est rééprouvée après coup, une
+  reconstruction pouvant la rompre en silence.
+<!-- /release -->
+
+Ce qui a le plus compté dans cette étape n'est pas ce qui a été ajouté, mais ce qui a été corrigé en
+cours de route.
+
+**Le raccourci « une chaîne est une série » a tenu trois commits avant de céder.** Il donnait
+gratuitement la fiche, la reprise et l'enchaînement, et je l'avais présenté comme invisible. Il ne
+l'était pas : l'accueil montrait quatorze vidéos dans « Ajouts récents », étiquetées « S1 · E20024 ».
+Vérifié sur `/api/home` — quatorze avant, zéro après. La leçon est que le type d'un média voyage
+partout où l'application le traite, et qu'aucun rayon ne peut rattraper cela par des clauses.
+
+**Une première migration a vidé la table des fiches** sur une base d'essai peuplée, sans lever la
+moindre erreur : `PRAGMA foreign_key_check` rendait zéro violation, la cascade ayant proprement fait
+son travail. Le pragma `foreign_keys` est sans effet une fois une transaction ouverte, et le registre
+en ouvre une — d'où le drapeau `gereSaTransaction`. C'est parce que l'essai portait sur une base
+peuplée que le défaut s'est vu.
+
+**Deux garde-fous du dépôt ont rattrapé des fuites de conception.** `wan-exposition.test.ts` a refusé
+la nouvelle route tant qu'aucune décision d'exposition distante n'était inscrite. `match-providers.test.ts`
+a refusé que YouTube devienne une cible de correction manuelle — on aurait pu attribuer un film à une
+vidéo. Aucun des deux n'aurait été trouvé par relecture.
+
+**Le compilateur validait un contrat périmé.** `node_modules/@flixtunes/contracts` est une copie et
+non un lien : élargir `LibraryKind` ne produisait aucune erreur jusqu'à resynchronisation manuelle,
+après quoi les deux vrais sites sont apparus.
+
 ## 0.5.7.r26 — un écran qui ne savait pas dire « ça avance »
 
 <!-- release -->

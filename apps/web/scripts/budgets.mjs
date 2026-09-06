@@ -66,8 +66,21 @@ const BUDGETS = {
    * télécharge vingt-sept pour cent de moins.
    *
    * Refuser ce déplacement au nom du chiffre aurait conservé le poids là où il coûte le plus.
+   *
+   * **Relevé de 200 à 204 Kio le 6 septembre 2026, pour le rayon Web.** Le poste tenait à 199,6 Kio,
+   * soit 99,8 % — il n'y avait plus de marge, et c'est le premier arrivant qui l'a constaté. Le rayon
+   * pèse **1,96 Kio compressé** : un cinquième fichier différé, téléchargé seulement par qui ouvre
+   * cette section, et rien du tout pour les autres. C'est exactement ce que ce poste existe pour
+   * encourager — l'inverse d'une dérive.
+   *
+   * Le libellé, lui, ment un peu désormais : ce poste ne mesure plus « le lecteur » mais **tout ce qui
+   * est chargé à la demande**. Le renommer demanderait de reprendre les relevés qui le citent ; le
+   * dire ici coûte une phrase.
+   *
+   * Deux kilooctets et demi de marge, comme pour la feuille de style. Le prochain qui les dépassera
+   * devra à son tour s'expliquer.
    */
-  jsDiffere: { limite: 200 * Kio, libelle: "Lecteur chargé à la demande (gzip)" },
+  jsDiffere: { limite: 204 * Kio, libelle: "Lecteur chargé à la demande (gzip)" },
   imageUnitaire: { limite: 96 * Kio, libelle: "Image la plus lourde (brute)" },
   mediaDemarrage: { limite: 128 * Kio, libelle: "Son de démarrage (brut)" },
   totalDemarrage: { limite: 320 * Kio, libelle: "Tout ce qui part au premier affichage (gzip + images)" },

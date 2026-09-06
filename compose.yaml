@@ -1,7 +1,7 @@
 services:
   flixtunes:
     build: .
-    image: flixtunes:0.5.7
+    image: flixtunes:0.5.8
     container_name: flixtunes
     restart: unless-stopped
     network_mode: host
