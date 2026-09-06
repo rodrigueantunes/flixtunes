@@ -1,5 +1,63 @@
 # Journal des versions
 
+## 0.5.8.r3 — deux vignettes qu'on redemandait sans fin, et une recherche qui cherchait partout
+
+<!-- release -->
+### Deux défauts silencieux du rayon Web
+
+- **Les vignettes n'étaient enregistrées nulle part.** Le fichier était bien téléchargé, mais l'adresse
+  locale rendue n'était pas écrite sur la fiche. Deux conséquences : aucune image ne s'affichait, et la
+  garde « déjà illustré » ne se déclenchait jamais — l'avatar de chaque chaîne était donc redemandé
+  **à chaque analyse**, cent unités de quota par chaîne et par passage.
+- **La recherche par titre n'était pas restreinte à la chaîne.** Elle envoyait le nom de la chaîne et
+  le titre dans une requête mondiale, où une vidéo homonyme d'un autre auteur pouvait être retenue —
+  puis appliquée comme une certitude, l'appariement ne repassant jamais dessus. La résolution suit
+  désormais l'ordre du rangement : plateforme, puis chaîne — identifiée une fois, son identifiant
+  retenu sur la fiche —, puis le titre **dans cette chaîne-là**. Sans chaîne identifiée, on ne cherche
+  pas du tout.
+
+### Corriger une correspondance web
+
+- **Un écran de correction propre au rayon Web**, entièrement distinct de celui du catalogue : ses
+  routes, sa requête, sa validation. Le centre de correspondances des films est plafonné à 250 lignes
+  triées par confiance croissante ; une bibliothèque web y ferait entrer des milliers de vidéos et en
+  chasserait les films. Rien de ce qui sert au catalogue n'est modifié.
+- **Une fiche web reçoit un vrai statut** — résolue quand on sait de quelle vidéo il s'agit sur la
+  plateforme, à traiter sinon. Sans cela, toutes héritaient du défaut et se déclaraient douteuses.
+- Deux façons de corriger : chercher un candidat par son titre, ou coller l'adresse relevée dans un
+  navigateur. Le résultat est verrouillé — une correction est une intention, aucune analyse ne la
+  défait. Une vidéo se cherche toujours **dans sa chaîne** : celle dont la chaîne n'est pas identifiée
+  n'a aucun candidat, et l'écran le dit.
+
+### Navigation et lecture
+
+- **Le retour arrière ramène à l'écran d'où l'on vient.** L'ancre du lecteur ne désigne aucune vue ;
+  elle était lue comme « accueil », et l'écouteur écrasait la vue courante. **Le défaut valait aussi
+  pour Films et Séries TV.**
+- **La chaîne et le dossier ouverts survivent au lecteur**, comme les filtres de la grille du direct.
+- **Une carte « dossier parent »** en tête de grille, sur les deux clients : le fil d'Ariane est en
+  haut de page, hors de portée au bas d'une longue liste — et hors du parcours du focus, à la
+  télécommande.
+- **Le lecteur n'annonce plus « S1 E20024 » pour une vidéo** : la chaîne en titre, la vidéo en
+  sous-titre, sans numérotation. Sur le Web, sur Android, et dans l'annonce de la suivante.
+
+### Réglages
+
+- **La clé YouTube se saisit dans l'écran des fournisseurs.** Elle n'existait qu'en variable
+  d'environnement du serveur — donc hors de portée sur un NAS où l'application s'installe en paquet.
+<!-- /release -->
+
+Les deux défauts silencieux ont été trouvés parce que la même demande a été répétée. « Pour chaque
+vidéo on récupère la vignette et on sauvegarde pour ne pas rechercher de nouveau » décrivait ce que le
+code prétendait faire ; le vérifier plutôt que le confirmer a montré que l'écriture manquait. Il n'y a
+pas de meilleure raison de relire du code que quelqu'un qui redemande la même chose.
+
+Et une mise au point sur un chiffre avancé dans cette étape : les 6 589 fiches résolues et les 1 555 à
+traiter citées en cours de route sont des **épisodes de séries**, pas des vidéos web. Elles ont été
+lues dans une requête portant sur tout le catalogue et attribuées au rayon Web sans vérification. Le
+risque décrit — des milliers de fiches web chassant les films du centre de correspondances — reste
+réel, mais il est hypothétique : aucune bibliothèque web n'existe encore sur l'installation observée.
+
 ## 0.5.8.r2 — une migration qui ne savait pas lire un nom entre guillemets
 
 <!-- release -->

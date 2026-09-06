@@ -193,21 +193,28 @@ export async function resoudreYoutube(identifiant: string, options: OptionsFourn
  *
  * C'est la voie que vous avez demandée quand l'identifiant manque, et elle fonctionne. Mais son prix
  * impose une règle : **on ne cherche que ce qu'on ne peut pas résoudre**, et on s'arrête net dès que
- * le plafond du jour est atteint. Le nom de la chaîne est joint à la requête : deux vidéos peuvent
- * porter le même titre, la chaîne les départage.
+ * le plafond du jour est atteint.
+ *
+ * La recherche est **restreinte à la chaîne**, par son identifiant de plateforme. Joindre son nom à
+ * la requête ne suffisait pas : la recherche restait mondiale, et une « Rétrospective 2024 » publiée
+ * par n'importe qui pouvait être retenue. Sans chaîne identifiée, on ne cherche pas du tout —
+ * c'est aussi ce qui évite de dépenser cent unités pour une réponse dont on ne pourrait rien faire.
  */
 export async function chercherYoutube(
-  chaine: string,
+  chaineId: string,
   titre: string,
   options: OptionsFournisseur = {},
 ): Promise<IdentiteWeb | null> {
   const cle = cleYoutube(options);
   if (!cle) return null;
+  // Sans chaine identifiee, on ne cherche pas : une recherche non restreinte trouverait la video
+  // d'une autre chaine au titre voisin, et la donnerait pour certaine.
+  if (!chaineId) return null;
   if (options.comptabiliser !== false && !quotaDisponible(COUT.search)) return null;
 
-  const requete = `${chaine} ${titre}`.trim();
   const url = "https://www.googleapis.com/youtube/v3/search"
-    + `?part=snippet&type=video&maxResults=1&q=${encodeURIComponent(requete)}&key=${encodeURIComponent(cle)}`;
+    + `?part=snippet&type=video&maxResults=1&channelId=${encodeURIComponent(chaineId)}`
+    + `&q=${encodeURIComponent(titre)}&key=${encodeURIComponent(cle)}`;
   const charge = await lireJson(url, options);
   if (options.comptabiliser !== false) depenser(COUT.search);
 
@@ -231,6 +238,39 @@ export async function chercherYoutube(
     description: texte(extrait["description"]),
     vignette: meilleureVignette(extrait["thumbnails"]),
   };
+}
+
+/**
+ * Identifier une chaîne : son identifiant sur la plateforme, et son avatar.
+ *
+ * C'est la première marche de la résolution, et elle commande tout le reste. Tant qu'on ne sait pas
+ * **de quelle chaîne** il s'agit, chercher le titre d'une vidéo revient à le chercher dans le monde
+ * entier : deux chaînes publient couramment une « Rétrospective 2024 », et rien ne les départage.
+ *
+ * Elle coûte cent unités, comme toute recherche — mais **une seule fois par chaîne**, son résultat
+ * étant retenu sur la fiche. Les vidéos, elles, s'y appuient ensuite gratuitement.
+ */
+export async function identifierChaineYoutube(
+  nom: string,
+  options: OptionsFournisseur = {},
+): Promise<{ identifiant: string; avatar: string | null } | null> {
+  const cle = cleYoutube(options);
+  if (!cle) return null;
+  if (options.comptabiliser !== false && !quotaDisponible(COUT.search)) return null;
+
+  const url = "https://www.googleapis.com/youtube/v3/search"
+    + `?part=snippet&type=channel&maxResults=1&q=${encodeURIComponent(nom)}&key=${encodeURIComponent(cle)}`;
+  const charge = await lireJson(url, options);
+  if (options.comptabiliser !== false) depenser(COUT.search);
+
+  const premier = Array.isArray(charge?.["items"]) ? (charge["items"] as unknown[])[0] : null;
+  if (!premier || typeof premier !== "object") return null;
+  const entree = premier as Record<string, unknown>;
+  const identifiant = texte((entree["id"] as Record<string, unknown> | undefined)?.["channelId"])
+    ?? texte((entree["snippet"] as Record<string, unknown> | undefined)?.["channelId"]);
+  if (!identifiant) return null;
+  const extrait = (entree["snippet"] ?? {}) as Record<string, unknown>;
+  return { identifiant, avatar: meilleureVignette(extrait["thumbnails"]) };
 }
 
 /**

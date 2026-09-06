@@ -106,6 +106,9 @@ import { diagnostiquerWan } from "./wan-diagnostic.js";
 import { activerLesGeneriques, arreterLaPasse, etatDesGeneriques, generiquesActifs } from "./marqueurs-passe.js";
 import { etatDuSchema } from "./migrations.js";
 import {
+  appliquerCorrespondanceWeb, candidatsPourFicheWeb, listerCorrespondancesWeb,
+} from "./web-correspondances.js";
+import {
   compteDuJeton,
   creerCompteDistant,
   jetonCompteDeLaRequete,
@@ -706,6 +709,44 @@ export async function registerRoutes(app: FastifyInstance) {
         SELECT 1 FROM library_folders lib WHERE lib.id = c.library_id AND lib.kind = 'web')`)
       .get() as { total: number };
     return { disponible: ligne.bibliotheques > 0, bibliotheques: ligne.bibliotheques, chaines: chaines.total };
+  });
+
+  /**
+   * Les correspondances des bibliothèques web — un chemin séparé, et c'est le sujet.
+   *
+   * Le centre de correspondances du catalogue est plafonné à 250 lignes triées par confiance : une
+   * bibliothèque web y ferait entrer des milliers de vidéos et chasserait les films et les séries de
+   * la liste. Ces routes ne partagent donc rien avec les siennes — ni requête, ni validation, ni
+   * plafond. Aucune régression possible sur le catalogue : il n'est pas touché.
+   */
+  app.get("/api/web/correspondances", async (request, reply) => {
+    const profile = profileFromRequest(request);
+    if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
+    const query = request.query as { libraryId?: string; toutes?: string; limite?: string };
+    return listerCorrespondancesWeb({
+      libraryId: query.libraryId,
+      toutes: query.toutes === "1" || query.toutes === "true",
+      limite: Number(query.limite) || undefined,
+    });
+  });
+
+  app.get<{ Params: IdParams }>("/api/web/correspondances/:id/candidats", async (request, reply) => {
+    const profile = profileFromRequest(request);
+    if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
+    const query = request.query as { q?: string };
+    if (query.q && query.q.length > 200) return reply.code(400).send({ message: "Recherche trop longue" });
+    return candidatsPourFicheWeb(request.params.id, query.q);
+  });
+
+  app.post<{ Params: IdParams }>("/api/web/correspondances/:id", async (request, reply) => {
+    const profile = profileFromRequest(request);
+    if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
+    const corps = request.body as { identifiant?: unknown };
+    const identifiant = typeof corps?.identifiant === "string" ? corps.identifiant : "";
+    if (!identifiant.trim()) return reply.code(400).send({ message: "Identifiant ou adresse requis" });
+    const resultat = await appliquerCorrespondanceWeb(request.params.id, identifiant, profile.language);
+    if (!resultat.applique) return reply.code(422).send({ message: resultat.message });
+    return resultat;
   });
 
   app.get("/api/live/fiabilites", async (request, reply) => {

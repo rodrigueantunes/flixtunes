@@ -11,7 +11,9 @@ import { MATCH_THRESHOLDS, rankMetadataMatches } from "./match-engine.js";
 import { normaliseForSearch } from "./search-normalise.js";
 import { artworkUrlIsGenerated, cacheGeneratedArtwork, cacheLocalArtwork, cacheRemoteArtwork, findLocalArtwork } from "./artwork.js";
 import { fetchMetadataWithProviders, searchAllMetadata } from "./metadata-providers.js";
-import { analyserVideoWeb, illustrerVideoWeb, libelleDuPalierDuFichier } from "./web-analyse.js";
+import {
+  analyserVideoWeb, illustrerVideoWeb, libelleDuPalierDuFichier, noterCorrespondanceWeb,
+} from "./web-analyse.js";
 import type { EntityMetadata, MetadataBundle } from "./tmdb.js";
 import { recordEntityProvenance } from "./metadata-fields.js";
 import {
@@ -707,8 +709,11 @@ export async function scanLibraryById(libraryId: string, options: ScanOptions = 
 
       const catalog = await syncCatalog(library, parsed, bundle, filePath, previous?.catalog_id ?? null);
       if (lectureWeb) {
+        // Sans statut explicite, une video web herite du defaut `unmatched` et se declare douteuse
+        // meme quand la plateforme l'a parfaitement identifiee.
+        noterCorrespondanceWeb(catalog.catalogId, lectureWeb.identite);
         await illustrerVideoWeb({
-          catalogId: catalog.catalogId, chaineId: rootCatalogId(catalog.catalogId),
+          library, catalogId: catalog.catalogId, chaineId: rootCatalogId(catalog.catalogId),
           chemin: lectureWeb.chemin, identite: lectureWeb.identite, langue: library.language,
         });
       }

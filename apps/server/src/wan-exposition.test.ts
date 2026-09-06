@@ -50,6 +50,10 @@ const REFUS_ASSUMES = new Set([
   // L'ouvrir maintenant exposerait une route dont personne ne se sert encore — ouvrir sans decider,
   // ce que ce registre existe pour empecher.
   "GET /api/web",
+  // Les correspondances web suivent la meme regle : corriger une fiche est un geste
+  // d'administration, qui reste sur le reseau local comme les corrections du catalogue.
+  "GET /api/web/correspondances", "GET /api/web/correspondances/:id/candidats",
+  "POST /api/web/correspondances/:id",
   "GET /api/scans", "POST /api/scans", "GET /api/scans/skipped",
   "POST /api/scans/:id/cancel", "POST /api/scans/:id/retry",
   "GET /api/corrections", "POST /api/corrections", "POST /api/corrections/preview",

@@ -1345,7 +1345,14 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
       )}
       <div className="player-top">
         <button className="player-icon-button" onClick={onClose} aria-label="Fermer le lecteur">←</button>
-        <div><b>{media.showTitle ?? media.title}</b>{media.showTitle && <span>S{media.seasonNumber} E{media.episodeNumber} · {media.title}</span>}</div>
+        {/*
+          * Une video de plateforme porte le nom de sa chaine en titre et le sien en sous-titre — sans
+          * numerotation, qui n'aurait aucun sens : son numero d'episode est un nombre de jours, et le
+          * lecteur annoncait « S1 E20024 ».
+          */}
+        <div><b>{media.showTitle ?? media.title}</b>{media.showTitle && <span>{media.kind === "video"
+          ? media.title
+          : <>S{media.seasonNumber} E{media.episodeNumber} · {media.title}</>}</span>}</div>
         {neighbors.previous && <button className="player-compact-button player-icon-button" onClick={() => onPlayMedia(neighbors.previous!.id)} aria-label="Épisode précédent">|◀</button>}
         {neighbors.next && <button className="player-compact-button player-icon-button" onClick={() => onPlayMedia(neighbors.next!.id)} aria-label="Épisode suivant">▶|</button>}
         <button className="player-compact-button" onClick={() => setInfoOpen((open) => !open)} aria-expanded={infoOpen}>Infos</button>
@@ -1456,7 +1463,8 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
       {nextCountdown != null && neighbors.next && <div className="player-next">
         <span>Épisode suivant</span>
         <b>{neighbors.next.title}</b>
-        {neighbors.next.showTitle && neighbors.next.seasonNumber != null && neighbors.next.episodeNumber != null
+        {neighbors.next.kind !== "video" && neighbors.next.showTitle
+          && neighbors.next.seasonNumber != null && neighbors.next.episodeNumber != null
           && <em>S{neighbors.next.seasonNumber} E{neighbors.next.episodeNumber}</em>}
         <div className="player-next-jauge" role="timer" aria-live="off"
           aria-label={`Lecture dans ${nextCountdown} secondes`}>

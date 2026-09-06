@@ -1315,6 +1315,35 @@ html.bureau-video, body.bureau-video { background: transparent; }
 .web-progression > i { display: block; height: 100%; border-radius: 2px; background: var(--accent); }
 
 /*
+ * La carte de remontée se distingue des dossiers sans les imiter : son geste est l'inverse du leur, et
+ * la confondre avec un dossier ferait descendre là où l'on voulait remonter.
+ */
+.web-carte-remonter .web-dossier-icone { color: var(--muted); font-size: 1.6rem; line-height: 1; }
+.web-carte-remonter .web-nom { color: var(--muted); }
+
+/*
+ * Corriger une correspondance web.
+ *
+ * Le bouton est discret et distinct de la carte : cliquer une vidéo la lance, et c'est le geste
+ * principal — comme l'étoile de la grille du direct, la correction ne doit pas le rendre hésitant.
+ */
+.web-carte-enveloppe { position: relative; display: grid; }
+.web-corriger { padding: .25rem .5rem; border: 0; border-radius: var(--rayon-pastille);
+  background: transparent; color: var(--muted); font: inherit; font-size: .74rem; cursor: pointer;
+  justify-self: start; }
+.web-corriger:hover, .web-corriger:focus-visible { color: var(--blue-light); }
+.web-correction { display: grid; gap: var(--pas-1); padding: var(--pas-2);
+  border: 1px solid var(--line); border-radius: var(--rayon-panneau); background: #ffffff0a; }
+.web-correction-ligne { display: flex; gap: var(--pas-1); }
+.web-correction-ligne input { flex: 1; min-width: 0; }
+.web-candidat { display: grid; gap: .1rem; padding: .45rem .6rem; border: 1px solid var(--line);
+  border-radius: var(--rayon-commande); background: #ffffff08; color: inherit; text-align: left;
+  cursor: pointer; }
+.web-candidat:hover, .web-candidat:focus-visible { border-color: var(--blue-light); background: #ffffff14; }
+.web-candidat small { color: var(--muted); font-size: .74rem; }
+.web-correction-motif { margin: 0; color: var(--muted); font-size: .78rem; }
+
+/*
  * Le fil d'Ariane.
  *
  * Il n'est pas décoratif : sans lui, on entre dans une arborescence sans pouvoir remonter autrement

@@ -3,6 +3,7 @@ import type { CatalogPerson, ChaineDirect, HomeResponse, LibraryFolder, MediaDet
 import { api } from "./api";
 import { ecrireCache, lireCache, oublierCache } from "./server-cache";
 import { oublierSouvenirDirect } from "./memoire-direct";
+import { oublierSouvenirWeb } from "./memoire-web";
 import { lireSouvenirCatalogue, oublierSouvenirsCatalogue, retenirSouvenirCatalogue } from "./memoire-catalogue";
 import { reposerDefilement } from "./defilement";
 import { scrollBehavior } from "./motion";
@@ -67,11 +68,24 @@ const ANCRES: Record<AppView, string> = {
   home: "top", movies: "films", shows: "series", web: "web", live: "direct", history: "historique",
 };
 
-function viewFromHash(): AppView {
-  if (typeof window === "undefined") return "home";
+/**
+ * La vue que désigne l'ancre, ou `null` si l'ancre n'en désigne aucune.
+ *
+ * L'ouverture du lecteur écrit `#lecture/<id>`, qui n'est la vue de personne. Cette fonction rendait
+ * alors « accueil », et l'écouteur de changement d'ancre écrasait la vue courante : à la fermeture du
+ * lecteur, on retombait sur l'accueil au lieu de l'écran d'où l'on venait. Le défaut valait pour
+ * Films et Séries TV autant que pour le rayon Web.
+ *
+ * Rendre `null` laisse l'appelant décider — et ne rien décider est ici la bonne réponse.
+ */
+function vueDeLAncre(): AppView | null {
+  if (typeof window === "undefined") return null;
   const ancre = window.location.hash.replace(/^#/, "");
-  const trouvee = (Object.keys(ANCRES) as AppView[]).find((vue) => ANCRES[vue] === ancre);
-  return trouvee && trouvee !== "home" ? trouvee : "home";
+  return (Object.keys(ANCRES) as AppView[]).find((vue) => ANCRES[vue] === ancre) ?? null;
+}
+
+function viewFromHash(): AppView {
+  return vueDeLAncre() ?? "home";
 }
 
 export function Icon({ name }: {
@@ -900,6 +914,9 @@ export function App() {
     if (profile?.id === profilPrecedent.current) return;
     profilPrecedent.current = profile?.id ?? null;
     oublierSouvenirDirect();
+    // Un profil enfant ne voit pas les mêmes chaînes : rouvrir celle d'un autre serait un souvenir
+    // qui ment, exactement comme pour la grille du direct.
+    oublierSouvenirWeb();
     oublierSouvenirsCatalogue();
   }, [profile?.id]);
 
@@ -936,7 +953,16 @@ export function App() {
   }, []);
   useEffect(() => { if (profile) { localStorage.setItem("flixtunes.profile", profile.id); void loadHome(profile); } }, [profile?.id]);
   useEffect(() => { const timer = window.setTimeout(() => { if (query.trim() && profile) void api.search(query, profile.id).then(setResults).catch(() => setResults([])); else setResults([]); }, 250); return () => window.clearTimeout(timer); }, [query, profile?.id]);
-  useEffect(() => { const onHashChange = () => { setPlaying(playingFromHash()); setView(viewFromHash()); }; window.addEventListener("hashchange", onHashChange); return () => window.removeEventListener("hashchange", onHashChange); }, []);
+  useEffect(() => {
+    const onHashChange = () => {
+      setPlaying(playingFromHash());
+      // L'ancre du lecteur ne designe aucune vue : on garde celle d'ou l'on vient, pour y revenir.
+      const vue = vueDeLAncre();
+      if (vue) setView(vue);
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
   useEffect(() => { const onKey = (event: KeyboardEvent) => {
     const typing = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement;
     if (event.key === "Escape") { setSearchOpen(false); setProfileOpen(false); setProfileToUnlock(null); setLibrariesOpen(false); setDetails(null); setPersonDetails(null); setQuickMenu(null); return; }

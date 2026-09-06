@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { db } from "./database.js";
 import {
-  avatarDeChaineYoutube, chercherYoutube, dureeIso, quotaDisponible, quotaDuJour,
+  avatarDeChaineYoutube, chercherYoutube, dureeIso, identifierChaineYoutube, quotaDisponible, quotaDuJour,
   resoudreParOEmbed, resoudreYoutube,
 } from "./web-fournisseurs.js";
 
@@ -81,22 +81,57 @@ describe("résolution par identifiant", () => {
 });
 
 describe("recherche par titre", () => {
-  it("joint le nom de la chaîne au titre", async () => {
-    // Deux videos peuvent porter le meme titre : la chaine les departage. C'est aussi ce que
-    // l'utilisateur a decrit — on a le fournisseur et la chaine, donc ca va.
+  it("cherche dans la chaîne, et pas dans le monde entier", async () => {
+    /*
+     * La chaîne d'abord, la vidéo ensuite, et **dans cette chaîne-là**.
+     *
+     * Joindre le nom de la chaîne à la requête ne suffisait pas : la recherche restait mondiale, et
+     * une « Rétrospective 2024 » publiée par n'importe qui pouvait être retenue — puis appliquée
+     * comme une certitude, l'appariement ne repassant jamais dessus.
+     */
     const faux = faussaire({ items: [{ id: { videoId: "abc12345678" }, snippet: {
       title: "Le monde en cartes", channelTitle: "Arte", publishedAt: "2024-01-15T00:00:00Z", thumbnails: {} } }] });
 
-    const lu = await chercherYoutube("Arte", "Le monde en cartes",
+    const lu = await chercherYoutube("UC-arte-officiel", "Le monde en cartes",
       { cleYoutube: CLE, comptabiliser: false, recuperer: faux.recuperer });
 
     expect(lu?.identifiant).toBe("abc12345678");
-    expect(faux.appels[0]).toContain(encodeURIComponent("Arte Le monde en cartes"));
+    expect(faux.appels[0]).toContain("channelId=UC-arte-officiel");
+    expect(faux.appels[0]).toContain(encodeURIComponent("Le monde en cartes"));
+  });
+
+  it("ne cherche pas du tout sans chaîne identifiée", async () => {
+    // Cent unités de quota pour une réponse dont on ne pourrait rien faire, et un risque de fausse
+    // correspondance : les deux raisons de s'abstenir vont dans le même sens.
+    const faux = faussaire({ items: [] });
+    expect(await chercherYoutube("", "Le monde en cartes",
+      { cleYoutube: CLE, comptabiliser: false, recuperer: faux.recuperer })).toBeNull();
+    expect(faux.appels).toHaveLength(0);
   });
 
   it("rend null quand la recherche ne trouve pas de vidéo", async () => {
     const faux = faussaire({ items: [{ id: { kind: "youtube#channel" }, snippet: {} }] });
-    expect(await chercherYoutube("Arte", "Introuvable",
+    expect(await chercherYoutube("UC-arte-officiel", "Introuvable",
+      { cleYoutube: CLE, comptabiliser: false, recuperer: faux.recuperer })).toBeNull();
+  });
+});
+
+describe("identification d'une chaîne", () => {
+  it("rend son identifiant et son avatar en une seule recherche", async () => {
+    // Une recherche, deux réponses : l'identifiant qui sert à chercher ses vidéos, et l'avatar qui
+    // sert à l'afficher. Cent unités payées une fois par chaîne, et retenues ensuite.
+    const faux = faussaire({ items: [{ id: { channelId: "UC-arte-officiel" }, snippet: {
+      thumbnails: { high: { url: "https://i.example/avatar.jpg" } } } }] });
+
+    const lu = await identifierChaineYoutube("Arte", { cleYoutube: CLE, comptabiliser: false, recuperer: faux.recuperer });
+
+    expect(lu?.identifiant).toBe("UC-arte-officiel");
+    expect(lu?.avatar).toBe("https://i.example/avatar.jpg");
+  });
+
+  it("rend null quand la chaîne n'est pas trouvée", async () => {
+    const faux = faussaire({ items: [] });
+    expect(await identifierChaineYoutube("Chaine inconnue",
       { cleYoutube: CLE, comptabiliser: false, recuperer: faux.recuperer })).toBeNull();
   });
 });
@@ -117,7 +152,7 @@ describe("quota", () => {
     await resoudreYoutube("dQw4w9WgXcQ", { cleYoutube: CLE, recuperer: faux.recuperer });
     expect(quotaDuJour().depense, "une résolution coûte une unité").toBe(1);
 
-    await chercherYoutube("Arte", "Un titre", { cleYoutube: CLE, recuperer: faux.recuperer });
+    await chercherYoutube("UC-arte-officiel", "Un titre", { cleYoutube: CLE, recuperer: faux.recuperer });
     expect(quotaDuJour().depense, "une recherche en coûte cent").toBe(101);
   });
 

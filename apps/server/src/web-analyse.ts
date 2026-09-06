@@ -4,7 +4,7 @@ import type { ParsedMedia } from "./media-parser.js";
 import { cleDuPalier, episodeDepuisLeWeb, libelleDuPalier } from "./web-catalogue.js";
 import { lireCheminWeb, type CheminWeb, type RefusChemin } from "./web-chemins.js";
 import { fusionnerIdentites, lireAnnexeDuDisque, lireBalisesWeb, type IdentiteWeb } from "./web-identite.js";
-import { avatarDeChaineYoutube, chercherYoutube, resoudreParOEmbed, resoudreYoutube } from "./web-fournisseurs.js";
+import { chercherYoutube, identifierChaineYoutube, resoudreParOEmbed, resoudreYoutube } from "./web-fournisseurs.js";
 import { cacheRemoteArtwork } from "./artwork.js";
 
 /**
@@ -81,6 +81,45 @@ export type LectureWeb =
   | { valide: false; message: string };
 
 /**
+ * L'identité d'une chaîne sur sa plateforme, résolue une seule fois.
+ *
+ * C'est la première marche, et elle commande le reste : tant qu'on ignore **de quelle chaîne** il
+ * s'agit, chercher le titre d'une vidéo revient à le chercher dans le monde entier. Deux chaînes
+ * publient couramment une « Rétrospective 2024 », et rien ne les départagerait.
+ *
+ * Elle coûte cent unités de quota, donc elle se retient à deux niveaux. Sur la fiche de la chaîne
+ * d'abord — `external_id`, qui survit aux redémarrages. Et en mémoire le temps d'une analyse, parce
+ * que la fiche n'existe pas encore quand on traite le **premier** fichier d'une chaîne neuve : sans
+ * ce second niveau, ce fichier-là paierait une recherche que le suivant paierait à nouveau.
+ */
+const chainesConnues = new Map<string, { identifiant: string; avatar: string | null } | null>();
+
+async function identiteDeLaChaine(
+  library: LibraryFolder,
+  chemin: CheminWeb,
+): Promise<{ identifiant: string; avatar: string | null } | null> {
+  if (chemin.plateforme !== "youtube") return null;
+  const cle = chemin.chaineDossier;
+
+  const enregistree = db.prepare(
+    `SELECT external_id FROM catalog_items
+     WHERE library_id = ? AND kind = 'show' AND source_folder = ? AND external_provider = 'youtube'`,
+  ).get(library.id, cle) as { external_id: string | null } | undefined;
+  if (enregistree?.external_id) return { identifiant: enregistree.external_id, avatar: null };
+
+  if (chainesConnues.has(cle)) return chainesConnues.get(cle) ?? null;
+  const trouvee = await identifierChaineYoutube(chemin.chaine).catch(() => null);
+  chainesConnues.set(cle, trouvee);
+  return trouvee;
+}
+
+/** Retenir sur la fiche de la chaîne son identifiant de plateforme, pour ne plus le chercher. */
+function retenirIdentiteDeChaine(chaineId: string, identifiant: string): void {
+  db.prepare(`UPDATE catalog_items SET external_provider = 'youtube', external_id = ?,
+    updated_at = CURRENT_TIMESTAMP WHERE id = ? AND metadata_locked = 0`).run(identifiant, chaineId);
+}
+
+/**
  * Demander à la plateforme ce que le fichier n'a pas dit.
  *
  * Trois principes, dans cet ordre.
@@ -98,7 +137,11 @@ export type LectureWeb =
  *
  * Un échec de fournisseur ne fait pas échouer l'analyse : le fichier entre avec ce qu'il portait.
  */
-async function completerParLaPlateforme(chemin: CheminWeb, locale: IdentiteWeb): Promise<IdentiteWeb | null> {
+async function completerParLaPlateforme(
+  library: LibraryFolder,
+  chemin: CheminWeb,
+  locale: IdentiteWeb,
+): Promise<IdentiteWeb | null> {
   if (locale.titre && locale.publieeLe && locale.vignette) return null;
 
   const plateforme = chemin.plateforme ?? locale.plateforme;
@@ -111,9 +154,15 @@ async function completerParLaPlateforme(chemin: CheminWeb, locale: IdentiteWeb):
       const parOEmbed = await resoudreParOEmbed(plateforme, locale.url);
       if (parOEmbed) return parOEmbed;
     }
-    // Seul YouTube offre une recherche exploitable ici. Ailleurs, sans adresse d'origine, les
-    // métadonnées locales font seules — et le dire vaut mieux que d'inventer une correspondance.
-    if (plateforme === "youtube") return await chercherYoutube(chemin.chaine, locale.titre ?? chemin.titre);
+    if (plateforme === "youtube") {
+      // La chaîne d'abord, la vidéo ensuite, et **dans cette chaîne-là**. Sans chaîne identifiée on
+      // ne cherche pas : une recherche mondiale rendrait la vidéo d'un autre au titre voisin.
+      const chaine = await identiteDeLaChaine(library, chemin);
+      if (!chaine) return null;
+      return await chercherYoutube(chaine.identifiant, locale.titre ?? chemin.titre);
+    }
+    // Ailleurs, sans adresse d'origine, les métadonnées locales font seules — et le dire vaut mieux
+    // que d'inventer une correspondance.
     return null;
   } catch {
     return null;
@@ -136,7 +185,7 @@ export async function analyserVideoWeb(
 
   const locale = fusionnerIdentites(await lireAnnexeDuDisque(cheminFichier), lireBalisesWeb(payloadFfprobe));
   // Le fichier d'abord, la plateforme en rattrapage : c'est l'ordre le moins cher et le plus sûr.
-  const identite = fusionnerIdentites(locale, await completerParLaPlateforme(lecture.chemin, locale));
+  const identite = fusionnerIdentites(locale, await completerParLaPlateforme(library, lecture.chemin, locale));
   const cle = cleDuPalier(lecture.chemin);
   const palier = numeroDePalier(library, lecture.chemin, cle);
   const parsed = episodeDepuisLeWeb(
@@ -162,6 +211,21 @@ function dejaIllustree(catalogId: string): boolean {
 }
 
 /**
+ * Retenir l'adresse d'une image sur la fiche.
+ *
+ * `cacheRemoteArtwork` enregistre le fichier et rend son adresse locale, mais n'ecrit rien sur la
+ * fiche : c'est a l'appelant de le faire, et le chemin des films passe par `applyEntityArtwork` pour
+ * cela. Sans cette ecriture, deux choses cassent d'un coup — aucune vignette ne s'affiche, et
+ * `dejaIllustree` reste faux, donc l'avatar de la chaine est **redemande a chaque analyse**, cent
+ * unites de quota a chaque passage. C'est exactement ce que « figer une fois trouve » devait eviter.
+ */
+function retenirIllustration(catalogId: string, adresse: string | null): void {
+  if (!adresse) return;
+  db.prepare("UPDATE catalog_items SET poster_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+    .run(adresse, catalogId);
+}
+
+/**
  * Illustrer une video et sa chaine, une fois pour toutes.
  *
  * « La vignette de l'instant T, et ca conservera celle-ci ensuite » : l'image est telechargee au
@@ -175,6 +239,7 @@ function dejaIllustree(catalogId: string): boolean {
  * Un echec d'illustration n'interrompt rien : une fiche sans image reste une fiche.
  */
 export async function illustrerVideoWeb(args: {
+  library: LibraryFolder;
   catalogId: string;
   chaineId: string;
   chemin: CheminWeb;
@@ -183,14 +248,44 @@ export async function illustrerVideoWeb(args: {
 }): Promise<void> {
   try {
     if (args.identite.vignette && !dejaIllustree(args.catalogId)) {
-      await cacheRemoteArtwork(args.catalogId, "poster", args.identite.vignette, args.langue, "youtube");
+      retenirIllustration(args.catalogId,
+        await cacheRemoteArtwork(args.catalogId, "poster", args.identite.vignette, args.langue, "youtube"));
     }
   } catch { /* une fiche sans vignette reste une fiche */ }
 
   try {
     if (args.chemin.plateforme === "youtube" && !dejaIllustree(args.chaineId)) {
-      const avatar = await avatarDeChaineYoutube(args.chemin.chaine);
-      if (avatar) await cacheRemoteArtwork(args.chaineId, "poster", avatar, args.langue, "youtube");
+      // La même résolution sert l'avatar et l'identifiant : une recherche, deux réponses. Retenir
+      // l'identifiant sur la fiche évite de la refaire au prochain fichier de cette chaîne.
+      const chaine = await identiteDeLaChaine(args.library, args.chemin);
+      if (chaine) {
+        retenirIdentiteDeChaine(args.chaineId, chaine.identifiant);
+        if (chaine.avatar) {
+          retenirIllustration(args.chaineId,
+            await cacheRemoteArtwork(args.chaineId, "poster", chaine.avatar, args.langue, "youtube"));
+        }
+      }
     }
   } catch { /* idem pour la chaine */ }
+}
+
+/**
+ * Dire si une fiche web est résolue, ou si elle attend une correction.
+ *
+ * `match_status` vaut `unmatched` par défaut. Sans cette écriture, **toutes** les vidéos web se
+ * déclareraient douteuses — sur une médiathèque réelle, les 6 589 correctement identifiées comme les
+ * 1 555 qui ne le sont pas — et l'écran de correction n'apprendrait plus rien à personne.
+ *
+ * Le critère est le seul qui compte : sait-on **de quelle vidéo** il s'agit sur sa plateforme ? Un
+ * identifiant répond oui sans ambiguïté. Un titre lu dans un nom de fichier, non — c'est précisément
+ * ce qu'une correction manuelle vient trancher.
+ *
+ * Une fiche verrouillée n'est jamais retouchée : le verrou est une intention exprimée.
+ */
+export function noterCorrespondanceWeb(catalogId: string, identite: IdentiteWeb): void {
+  const resolue = Boolean(identite.identifiant);
+  db.prepare(`UPDATE catalog_items
+    SET match_status = ?, match_confidence = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND metadata_locked = 0 AND match_status <> 'manual'`)
+    .run(resolue ? "automatic" : "unmatched", resolue ? 1 : 0, catalogId);
 }

@@ -68,4 +68,26 @@ class IntituleLecteurTest {
         assertEquals("Top Gun", intitule.titre)
         assertNull(intitule.sousTitre)
     }
+
+    @Test
+    fun `une video web porte sa chaine en titre et son nom en sous-titre`() {
+        /*
+         * Sans le type, la mise en forme des series s'appliquait : le bandeau annoncait
+         * « S1 E20024 · Le monde en cartes », le numero d'episode d'une video etant un nombre de
+         * jours. Une video n'est pas un episode, et cela vaut jusque dans le lecteur.
+         */
+        val intitule = intituleLecteur(
+            titre = "Le monde en cartes", serie = "Arte", saison = 1, episode = 20024, kind = "video",
+        )
+        assertEquals("Arte", intitule.titre)
+        assertEquals("Le monde en cartes", intitule.sousTitre)
+    }
+
+    @Test
+    fun `un episode garde sa numerotation`() {
+        // Le type ne change rien pour les series : c'est la garantie que la correction n'a pas deborde.
+        val intitule = intituleLecteur(titre = "Le Choix", serie = "Silo", saison = 3, episode = 10, kind = "episode")
+        assertEquals("Silo", intitule.titre)
+        assertEquals("S3 E10 · Le Choix", intitule.sousTitre)
+    }
 }

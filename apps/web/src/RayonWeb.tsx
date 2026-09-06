@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import type { MediaDetails, MediaItem, SeasonDetails } from "@flixtunes/contracts";
-import { api } from "./api";
+import { api, type CandidatWeb } from "./api";
 import { Icon } from "./App";
+import { lireSouvenirWeb, retenirSouvenirWeb } from "./memoire-web";
 
 /**
  * Le rayon Web : des chaînes, leurs dossiers, leurs vidéos.
@@ -76,12 +77,106 @@ function Vignette({ url, nom, classe }: { url: string | null; nom: string; class
     onError={() => setEchouee(true)} />;
 }
 
+/**
+ * Corriger la correspondance d'une chaîne ou d'une vidéo.
+ *
+ * Volontairement à part du centre de correspondances des films : celui-ci est plafonné à 250 lignes
+ * triées par confiance, qu'une bibliothèque web remplirait à elle seule. Ici, on corrige la fiche
+ * qu'on a sous les yeux, sans passer par une liste.
+ *
+ * Deux façons de faire, parce qu'on n'a pas toujours la même chose sous la main : chercher un
+ * candidat par son titre, ou coller l'adresse trouvée dans un navigateur. La seconde est souvent la
+ * plus rapide quand on vient précisément de vérifier de quelle vidéo il s'agit.
+ */
+function CorrectionWeb({ profileId, item, genre, onCorrige }: {
+  profileId: string;
+  item: MediaItem;
+  genre: "chaine" | "video";
+  onCorrige: () => void;
+}) {
+  const [ouvert, setOuvert] = useState(false);
+  const [recherche, setRecherche] = useState("");
+  const [candidats, setCandidats] = useState<CandidatWeb[]>([]);
+  const [motif, setMotif] = useState<string | null>(null);
+  const [saisie, setSaisie] = useState("");
+  const [occupe, setOccupe] = useState(false);
+  const cible = item.catalogId ?? item.id;
+
+  async function chercher() {
+    setOccupe(true);
+    try {
+      const reponse = await api.candidatsWeb(profileId, cible, recherche || undefined);
+      setCandidats(reponse.candidats);
+      setMotif(reponse.motif);
+    } catch (cause) {
+      setMotif(cause instanceof Error ? cause.message : "Recherche impossible.");
+    } finally {
+      setOccupe(false);
+    }
+  }
+
+  async function appliquer(identifiant: string) {
+    setOccupe(true);
+    try {
+      const reponse = await api.corrigerWeb(profileId, cible, identifiant);
+      setMotif(reponse.message);
+      setCandidats([]);
+      setSaisie("");
+      onCorrige();
+    } catch (cause) {
+      setMotif(cause instanceof Error ? cause.message : "Correction refusée.");
+    } finally {
+      setOccupe(false);
+    }
+  }
+
+  if (!ouvert) {
+    return <button type="button" className="web-corriger" onClick={() => setOuvert(true)}>
+      Corriger la correspondance
+    </button>;
+  }
+
+  return <div className="web-correction">
+    <div className="web-correction-ligne">
+      <input value={recherche} onChange={(event) => setRecherche(event.target.value)}
+        placeholder={genre === "chaine" ? "Nom de la chaîne" : "Titre de la vidéo"}
+        aria-label={genre === "chaine" ? "Chercher une chaîne" : "Chercher une vidéo"} />
+      <button type="button" disabled={occupe} onClick={() => void chercher()}>Chercher</button>
+    </div>
+    {candidats.map((candidat) => <button key={candidat.identifiant ?? candidat.url} type="button"
+      className="web-candidat" disabled={occupe || !candidat.identifiant}
+      onClick={() => candidat.identifiant && void appliquer(candidat.identifiant)}>
+      <b>{candidat.titre ?? candidat.identifiant}</b>
+      <small>{[candidat.chaine, candidat.publieeLe].filter(Boolean).join(" · ")}</small>
+    </button>)}
+    <div className="web-correction-ligne">
+      {/* Coller l'adresse est souvent le plus rapide : on vient de la vérifier dans un navigateur. */}
+      <input value={saisie} onChange={(event) => setSaisie(event.target.value)}
+        placeholder="…ou coller l'adresse ou l'identifiant" aria-label="Identifiant ou adresse" />
+      <button type="button" disabled={occupe || !saisie.trim()}
+        onClick={() => void appliquer(saisie.trim())}>Appliquer</button>
+    </div>
+    {motif && <p className="web-correction-motif" role="status">{motif}</p>}
+    <button type="button" className="web-corriger" onClick={() => setOuvert(false)}>Fermer</button>
+  </div>;
+}
+
 export function RayonWeb({ profileId, onPlay }: { profileId: string; onPlay: (item: MediaItem) => void }) {
   const [chaines, setChaines] = useState<MediaItem[]>([]);
-  const [chaine, setChaine] = useState<MediaItem | null>(null);
+  /*
+   * La position se relit au montage, et se réécrit à chaque pas.
+   *
+   * Lire une vidéo remplace tout l'écran par le lecteur : ce composant est démonté, et la chaîne
+   * ouverte comme le dossier où l'on était partiraient avec lui. On revenait donc à la liste des
+   * chaînes après être descendu de trois dossiers pour trouver celle-là.
+   */
+  const souvenir = lireSouvenirWeb();
+  const [chaine, setChaine] = useState<MediaItem | null>(souvenir.chaine);
   const [details, setDetails] = useState<MediaDetails | null>(null);
-  const [chemin, setChemin] = useState<string[]>([]);
-  const [tri, setTri] = useState<TriWeb>("recent");
+  const [chemin, setChemin] = useState<string[]>(souvenir.chemin);
+  const [tri, setTri] = useState<TriWeb>(souvenir.tri as TriWeb);
+
+  useEffect(() => { retenirSouvenirWeb({ chaine, chemin, tri }); }, [chaine, chemin, tri]);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState<string | null>(null);
 
@@ -164,6 +259,8 @@ export function RayonWeb({ profileId, onPlay }: { profileId: string; onPlay: (it
         </nav>
       </div>
       <div className="catalog-controls">
+        <CorrectionWeb profileId={profileId} item={chaine} genre="chaine"
+          onCorrige={() => setChaine({ ...chaine })} />
         <label className="sort-control"><span>Trier par</span>
           <select value={tri} onChange={(event) => setTri(event.target.value as TriWeb)} aria-label="Trier les vidéos">
             <option value="recent">Plus récentes d'abord</option>
@@ -176,7 +273,19 @@ export function RayonWeb({ profileId, onPlay }: { profileId: string; onPlay: (it
 
     {erreur && <p className="live-vide">{erreur}</p>}
 
-    {niveau.dossiers.length > 0 && <div className="web-grille web-grille-dossiers">
+    {(niveau.dossiers.length > 0 || chemin.length > 0) && <div className="web-grille web-grille-dossiers">
+      {/*
+        * Remonter d'un niveau, en tête de grille et non seulement dans le fil d'Ariane.
+        *
+        * Le fil est en haut de page ; au bas d'une longue liste de vidéos, y revenir demande de
+        * remonter tout l'écran. La carte, elle, est là où se trouve déjà le regard.
+        */}
+      {chemin.length > 0 && <button type="button" className="web-carte web-carte-dossier web-carte-remonter"
+        onClick={() => setChemin(chemin.slice(0, -1))}>
+        <span className="web-dossier-icone" aria-hidden="true">↰</span>
+        <span className="web-nom">Dossier parent</span>
+        <small>{chemin.length > 1 ? chemin[chemin.length - 2] : titreChaine}</small>
+      </button>}
       {niveau.dossiers.map((dossier) => <button key={dossier} type="button" className="web-carte web-carte-dossier"
         onClick={() => setChemin([...chemin, dossier])}>
         <span className="web-dossier-icone" aria-hidden="true"><Icon name="folder" /></span>
@@ -186,7 +295,14 @@ export function RayonWeb({ profileId, onPlay }: { profileId: string; onPlay: (it
     </div>}
 
     {niveau.videos.length > 0 && <div className="web-grille web-grille-videos">
-      {niveau.videos.map((video) => <button key={video.id} type="button" className="web-carte web-carte-video"
+      {niveau.videos.map((video) => <div key={video.id} className="web-carte-enveloppe">
+      {/*
+        * La correction est un bouton distinct, comme l'étoile de la grille du direct : cliquer une
+        * carte lance la vidéo, et rien ne doit rendre ce geste hésitant.
+        */}
+      <CorrectionWeb profileId={profileId} item={video} genre="video"
+        onCorrige={() => { if (chaine?.catalogId) void api.details(chaine.catalogId, profileId).then(setDetails); }} />
+      <button type="button" className="web-carte web-carte-video"
         disabled={!video.playableMediaId}
         onClick={() => video.playableMediaId && onPlay({ ...video, id: video.playableMediaId })}>
         <Vignette url={video.posterUrl ?? video.backdropUrl} nom={video.title} classe="web-paysage" />
@@ -194,7 +310,8 @@ export function RayonWeb({ profileId, onPlay }: { profileId: string; onPlay: (it
         {/* La date sous le titre : c'est le critère de tri, il doit se lire sans ouvrir la fiche. */}
         <small className="web-date">{dateLisible(video)}</small>
         {video.progressPercent > 0 && <i className="web-progression"><i style={{ width: `${video.progressPercent}%` }} /></i>}
-      </button>)}
+      </button>
+      </div>)}
     </div>}
 
     {!chargement && !niveau.dossiers.length && !niveau.videos.length

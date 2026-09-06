@@ -970,6 +970,7 @@ class PlayerActivity : ComponentActivity() {
             serie = texteUtile(media.optString("showTitle")),
             saison = media.optInt("seasonNumber", 0),
             episode = media.optInt("episodeNumber", 0),
+            kind = media.optString("kind").takeIf { it.isNotBlank() },
         )
         intent.putExtra(EXTRA_TITLE, intitule.titre)
         etatLecteur = etatLecteur.copy(titre = intitule.titre, sousTitre = intitule.sousTitre)
@@ -1560,7 +1561,10 @@ class PlayerActivity : ComponentActivity() {
                     autoplayRestantSecondes = kotlin.math.ceil(restant).toInt(),
                     autoplayTotalSecondes = kotlin.math.ceil(dureeSecondes - debut).toInt().coerceAtLeast(1),
                     autoplayTitre = texteUtile(suivant.optString("title")),
-                    autoplaySousTitre = numeroEpisode(suivant.optInt("seasonNumber", 0), suivant.optInt("episodeNumber", 0)),
+                    // Une video web n'annonce pas de numero : la carte d'enchainement reste muette
+                    // plutot que d'afficher un rang qui est un nombre de jours.
+                    autoplaySousTitre = if (suivant.optString("kind") == "video") null
+                    else numeroEpisode(suivant.optInt("seasonNumber", 0), suivant.optInt("episodeNumber", 0)),
                 )
                 if (restant <= 0.0) { demarrerEpisodeEnAttente(); return@launch }
                 delay(500)
@@ -1595,7 +1599,8 @@ class PlayerActivity : ComponentActivity() {
                 // Le titre de l'épisode en gras, son numéro en dessous : on sait déjà quelle série
                 // on regarde, c'est l'épisode qui s'annonce. C'est la forme de la carte du Web.
                 val titreSuivant = texteUtile(next.optString("title"))
-                val numeroSuivant = numeroEpisode(next.optInt("seasonNumber", 0), next.optInt("episodeNumber", 0))
+                val numeroSuivant = if (next.optString("kind") == "video") null
+                else numeroEpisode(next.optInt("seasonNumber", 0), next.optInt("episodeNumber", 0))
                 for (restant in DELAI_AUTOPLAY_SECONDES downTo 1) {
                     etatLecteur = etatLecteur.copy(
                         autoplayRestantSecondes = restant,

@@ -193,6 +193,22 @@ internal fun EcranChaineWeb(
             horizontalArrangement = Arrangement.spacedBy(gabarit.ecartCartes.dp),
             verticalArrangement = Arrangement.spacedBy(gabarit.ecartCartes.dp),
         ) {
+            /*
+             * Remonter d'un niveau, en tete de grille et non seulement dans le fil d'Ariane.
+             *
+             * Le fil est en haut de page ; au bas d'une longue liste de videos, y revenir demande de
+             * remonter tout l'ecran — et a la telecommande, de traverser toutes les cartes.
+             */
+            if (chemin.isNotEmpty()) {
+                item(key = "remonter") {
+                    CarteDossierWeb(
+                        nom = "Dossier parent",
+                        videos = null,
+                        sousTitre = chemin.getOrNull(chemin.size - 2) ?: details.item.displayTitle,
+                        onClick = { chemin = chemin.dropLast(1) },
+                    )
+                }
+            }
             items(niveau.dossiers, key = { "dossier-$it" }) { dossier ->
                 CarteDossierWeb(dossier, niveau.comptes[dossier] ?: 0) { chemin = chemin + dossier }
             }
@@ -220,7 +236,7 @@ private fun MietteDeChemin(libelle: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun CarteDossierWeb(nom: String, videos: Int, onClick: () -> Unit) {
+private fun CarteDossierWeb(nom: String, videos: Int?, sousTitre: String? = null, onClick: () -> Unit) {
     val gabarit = LocalGabarit.current
     Column(
         Modifier
@@ -229,7 +245,7 @@ private fun CarteDossierWeb(nom: String, videos: Int, onClick: () -> Unit) {
             .border(1.dp, Ligne, RoundedCornerShape(RayonPanneau))
             .cliquableAuFocus(
                 arrondi = RayonPanneau.value.toInt(),
-                onClickLabel = "Ouvrir le dossier $nom",
+                onClickLabel = if (videos == null) "Remonter au dossier parent" else "Ouvrir le dossier $nom",
                 onClick = onClick,
             )
             .padding(gabarit.margeInterne.dp / 2),
@@ -247,7 +263,9 @@ private fun CarteDossierWeb(nom: String, videos: Int, onClick: () -> Unit) {
             // Un dossier n'a rien à montrer : ses initiales tiennent lieu de vignette, comme le fait
             // déjà la grille du direct pour une chaîne sans logo.
             Text(
-                nom.take(2).uppercase(),
+                // La remontee porte une fleche, pas des initiales : son geste est l'inverse de celui
+                // d'un dossier, et la confondre ferait descendre la ou l'on voulait remonter.
+                if (videos == null) "↰" else nom.take(2).uppercase(),
                 color = Color.White.copy(alpha = .22f),
                 fontSize = 34.sp,
                 fontFamily = PoliceTitre,
@@ -264,7 +282,7 @@ private fun CarteDossierWeb(nom: String, videos: Int, onClick: () -> Unit) {
             overflow = TextOverflow.Ellipsis,
         )
         Text(
-            "$videos vidéo${if (videos > 1) "s" else ""}",
+            if (videos == null) sousTitre.orEmpty() else "$videos vidéo${if (videos > 1) "s" else ""}",
             color = Muet,
             fontSize = 12.sp,
             maxLines = 1,

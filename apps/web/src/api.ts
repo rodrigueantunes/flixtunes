@@ -145,6 +145,29 @@ function queteFacette(criteres: CriteresFacette): string {
   return quete ? `?${quete}` : "";
 }
 
+/** Une fiche web à corriger, telle que le serveur la nomme — « chaine » ou « video ». */
+export interface CorrespondanceWeb {
+  id: string;
+  genre: "chaine" | "video";
+  titre: string;
+  chaine: string | null;
+  posterUrl: string | null;
+  publieeLe: string | null;
+  identifiant: string | null;
+  statut: string;
+  verrouillee: boolean;
+}
+
+/** Un candidat de plateforme. Jamais un film ni une série : les deux mondes ne se croisent pas. */
+export interface CandidatWeb {
+  titre: string | null;
+  chaine: string | null;
+  identifiant: string | null;
+  url: string | null;
+  publieeLe: string | null;
+  vignette: string | null;
+}
+
 export const api = {
   remoteSession: () => request<SessionDistante>("/remote/session"),
   remoteLogin: (username: string, password: string) => request<{ token: string; account: string; expiresAt: string }>(
@@ -322,6 +345,28 @@ export const api = {
   etatLive: () => request<{ disponible: boolean; chaines: number; rafraichieLe: string | null }>("/live"),
   /** Le rayon Web existe-t-il ? Même règle que le direct : pas d'entrée vers une page vide. */
   etatWeb: () => request<{ disponible: boolean; bibliotheques: number; chaines: number }>("/web"),
+  /**
+   * Les correspondances des bibliothèques web.
+   *
+   * Chemin distinct de celui du catalogue, et c'est le sujet : le centre de correspondances des films
+   * est plafonné à 250 lignes, qu'une bibliothèque web remplirait à elle seule.
+   */
+  correspondancesWeb: (profileId: string, options: { libraryId?: string; toutes?: boolean } = {}) => {
+    const search = new URLSearchParams({ profileId });
+    if (options.libraryId) search.set("libraryId", options.libraryId);
+    if (options.toutes) search.set("toutes", "1");
+    return request<CorrespondanceWeb[]>(`/web/correspondances?${search.toString()}`);
+  },
+  candidatsWeb: (profileId: string, id: string, q?: string) => {
+    const search = new URLSearchParams({ profileId });
+    if (q) search.set("q", q);
+    return request<{ candidats: CandidatWeb[]; motif: string | null }>(
+      `/web/correspondances/${encodeURIComponent(id)}/candidats?${search.toString()}`);
+  },
+  corrigerWeb: (profileId: string, id: string, identifiant: string) =>
+    request<{ applique: boolean; message: string }>(
+      `/web/correspondances/${encodeURIComponent(id)}?profileId=${encodeURIComponent(profileId)}`,
+      { method: "POST", body: JSON.stringify({ identifiant }) }),
   listesLiveClient: (criteres: CriteresFacette = {}) =>
     request<Array<{ id: string; nom: string; classement: ClassementListe; chaines: number }>>(`/live/listes${queteFacette(criteres)}`),
   fiabilitesLive: () => request<Array<{ classement: ClassementListe; listes: number }>>("/live/fiabilites"),

@@ -15,6 +15,15 @@ export function ProviderSetup() {
    */
   const [tvdbApiKey, setTvdbApiKey] = useState("");
   const [tvdbSaving, setTvdbSaving] = useState(false);
+  /**
+   * Clé YouTube, pour les bibliothèques web.
+   *
+   * Elle n'existait qu'en variable d'environnement du serveur — donc hors de portée sur un NAS où
+   * l'application s'installe en paquet. Sans elle, le rayon Web fonctionne sur les seules
+   * métadonnées des fichiers : ni logo de chaîne, ni vignette, ni date pour ce qui n'en porte pas.
+   */
+  const [youtubeApiKey, setYoutubeApiKey] = useState("");
+  const [youtubeSaving, setYoutubeSaving] = useState(false);
   const [advanced, setAdvanced] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -86,6 +95,32 @@ export function ProviderSetup() {
         </label>
         <button disabled={tvdbSaving || tvdbApiKey.trim().length < 8}>
           {tvdbSaving ? "Vérification…" : "Activer TVDB"}
+        </button>
+      </form>
+      <form className="provider-form" onSubmit={async (event) => {
+        event.preventDefault();
+        if (youtubeApiKey.trim().length < 8) return;
+        setYoutubeSaving(true);
+        try {
+          const resultat = await api.configureMetadataProviders({ youtubeApiKey: youtubeApiKey.trim() });
+          setProviders(resultat.providers);
+          setYoutubeApiKey("");
+          setMessage("Clé YouTube enregistrée.");
+          setError(null);
+        } catch (cause) {
+          setError(cause instanceof Error ? cause.message : "Clé YouTube refusée");
+        } finally {
+          setYoutubeSaving(false);
+        }
+      }}>
+        <label className="provider-token">
+          <span>Clé d’API YouTube <em>(facultative)</em></span>
+          <input type="password" autoComplete="off" minLength={8} value={youtubeApiKey}
+            onChange={(event) => setYoutubeApiKey(event.target.value)}
+            placeholder="Titres, dates et vignettes des vidéos web" />
+        </label>
+        <button disabled={youtubeSaving || youtubeApiKey.trim().length < 8}>
+          {youtubeSaving ? "Vérification…" : "Activer YouTube"}
         </button>
       </form>
       <button type="button" className="provider-advanced-toggle" aria-expanded={advanced} onClick={() => setAdvanced(!advanced)}>{advanced ? "Masquer" : "Afficher"} l’état de tous les fournisseurs</button>
