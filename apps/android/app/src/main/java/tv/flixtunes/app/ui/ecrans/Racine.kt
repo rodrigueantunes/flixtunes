@@ -118,6 +118,14 @@ import tv.flixtunes.app.ui.MemoireTv
                 model::createProfile, model::updateProfile, model::deleteProfile, model::leaveGroup, state.error)
             state.personDetails != null -> EcranPersonne(state.personDetails, model::image, model::closePerson,
                 model::open, { menuMedia = it })
+            /*
+             * Une chaine web n'est pas une serie, et sa fiche ne doit pas lui ressembler : on y voit
+             * des dossiers dans lesquels on entre, puis des videos en paysage avec leur date. Le
+             * chargement, lui, est le meme — c'est une fiche de catalogue comme une autre.
+             */
+            state.details?.estChaineWeb == true -> EcranChaineWeb(
+                state.details, model::image, model::closeDetails, play, { menuMedia = it },
+            )
             state.details != null -> EcranFiche(state.details, model::image, model::closeDetails, play,
                 { model.toggleWatchlist() }, model::toggleWatched, model::toggleSeasonWatched,
                 model::open, model::openPerson, { genre -> model.closeDetails(); model.search(genre); section = "search" },

@@ -95,6 +95,25 @@ data class Gabarit(
      * cliquable. Le rendu télévision reste donc exactement celui d'avant.
      */
     val cibleTactile: Int,
+    /**
+     * Largeur d'une carte de chaîne, dans le rayon Web.
+     *
+     * Transcrite de `.web-grille-chaines` : plus étroite qu'une jaquette, parce qu'une chaîne se
+     * reconnaît à un avatar rond et à un nom, pas à une affiche.
+     */
+    val largeurChaineWeb: Int,
+    /** Côté de l'avatar rond d'une chaîne, transcrit de `.web-portrait`. */
+    val tailleAvatarChaine: Int,
+    /** Largeur d'une carte de dossier, transcrite de `.web-grille-dossiers`. */
+    val largeurDossierWeb: Int,
+    /**
+     * Largeur d'une carte de vidéo, transcrite de `.web-grille-videos`.
+     *
+     * La plus large des trois, et c'est voulu : une vidéo se choisit sur sa vignette, que les
+     * plateformes produisent en 16/9. C'est aussi ce qui a été demandé — « comme le direct, mais un
+     * peu plus gros par vidéo ».
+     */
+    val largeurVideoWeb: Int,
     /** Épaisseur du trait de la barre de progression. */
     val epaisseurBarre: Int,
     /**
@@ -118,6 +137,7 @@ data class Gabarit(
 
 /** Le gabarit de la surface tactile — téléphone et tablette. */
 val GABARIT_TACTILE = Gabarit(
+    largeurChaineWeb = 120, tailleAvatarChaine = 56, largeurDossierWeb = 150, largeurVideoWeb = 190,
     televiseur = false, margeEcran = 24, margeBord = 18, margeBasse = 104, largeurCarte = 130, largeurSaison = 152,
     tailleTitre = 30, tailleSection = 16, tailleTexte = 14, tailleLogo = 96,
     tailleTitreFiche = 38, tailleAccroche = 21, hauteurBandeau = 420, ecartCartes = 12, margeInterne = 16,
@@ -174,6 +194,7 @@ fun tailleTextureBandeauTv(memoire: MemoireTv): Int = when (memoire) {
  * grands aplats, sans activer la navigation au focus réservée au téléviseur.
  */
 val GABARIT_TABLETTE = Gabarit(
+    largeurChaineWeb = 142, tailleAvatarChaine = 68, largeurDossierWeb = 176, largeurVideoWeb = 228,
     televiseur = false, margeEcran = 32, margeBord = 28, margeBasse = 104, largeurCarte = 152, largeurSaison = 176,
     tailleTitre = 34, tailleSection = 18, tailleTexte = 15, tailleLogo = 108,
     tailleTitreFiche = 44, tailleAccroche = 23, hauteurBandeau = 440, ecartCartes = 14, margeInterne = 18,
@@ -191,6 +212,7 @@ val GABARIT_TABLETTE = Gabarit(
  * larges que la grille afin de rester confortables à trois mètres.
  */
 val GABARIT_TELEVISION = Gabarit(
+    largeurChaineWeb = 150, tailleAvatarChaine = 76, largeurDossierWeb = 184, largeurVideoWeb = 244,
     televiseur = true, margeEcran = 56, margeBord = 44, margeBasse = 40, largeurCarte = 148, largeurSaison = 188,
     tailleTitre = 42, tailleSection = 20, tailleTexte = 16, tailleLogo = 132,
     tailleTitreFiche = 52, tailleAccroche = 26, hauteurBandeau = 500, ecartCartes = 14, margeInterne = 18,
