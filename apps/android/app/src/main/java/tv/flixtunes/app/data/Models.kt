@@ -96,6 +96,17 @@ data class Media(
         "video" -> dateLisible(airDate) ?: "Vidéo"
         else -> year?.toString() ?: "Film"
     }
+
+    /**
+     * Ce qui se lit sous le titre dans le rayon Web.
+     *
+     * Une chaîne y est stockée comme une série — c'est ce qui lui donne la fiche et la reprise sans
+     * code neuf —, et la grille l'annonçait donc « 3 saisons » pour trois dossiers. Une chaîne n'a
+     * pas de saisons : le client Web, qui est la référence graphique, n'écrit rien sous le nom d'une
+     * chaîne, et cette transcription en fait autant. La ligne reste, vide, pour que toutes les cartes
+     * de la grille gardent la même hauteur.
+     */
+    val texteSecondaireWeb: String = if (kind == "show") "" else secondaryText
 }
 
 /** Une proposition du moteur local, avec le motif qui la justifie. */

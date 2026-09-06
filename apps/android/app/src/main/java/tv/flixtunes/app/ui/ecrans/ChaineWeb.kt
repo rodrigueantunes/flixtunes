@@ -74,9 +74,16 @@ internal fun segmentsDuPalier(saison: Season): List<String> =
     if (saison.title == HORS_DOSSIER) emptyList()
     else saison.title.split(SEPARATEUR).map { it.trim() }.filter { it.isNotEmpty() }
 
-/** Cette chaîne est-elle une chaîne web ? Ses paliers ne contiennent que des vidéos. */
+/**
+ * Cette fiche est-elle une chaîne web ? Ses paliers ne contiennent que des vidéos.
+ *
+ * Un palier **vide** ne prouve rien et ne doit rien réfuter. Exiger que tous soient des dossiers
+ * revenait à le faire : un dossier dont aucune vidéo n'est disponible suffisait à faire retomber la
+ * chaîne sur la fiche des séries, où elle s'annonçait en saisons et en épisodes. On demande donc
+ * qu'au moins un palier porte des vidéos, et qu'aucun ne porte autre chose.
+ */
 internal val Details.estChaineWeb: Boolean
-    get() = seasons.isNotEmpty() && seasons.all { it.estDossier }
+    get() = seasons.any { it.estDossier } && seasons.none { saison -> saison.episodes.any { it.kind != "video" } }
 
 /**
  * L'ordre d'affichage des vidéos.

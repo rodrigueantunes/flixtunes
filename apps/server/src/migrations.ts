@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { decoderEntitesHtml } from "./web-identite.js";
 
 /**
  * Les évolutions de schéma, numérotées, atomiques, et consignées.
@@ -178,6 +179,58 @@ export function ouvrirLesSourcesDeVignette(base: DatabaseSync): void {
     "CHECK(source IN ('local', 'tvmaze', 'wikidata', 'tmdb', 'youtube'))");
 }
 
+/**
+ * Rendre aux titres web les caractères que l'échappement HTML avait masqués.
+ *
+ * L'API de YouTube rend ses titres échappés pour du HTML, et ils étaient enregistrés tels quels :
+ * relevé à l'écran, « Greg &amp;amp; Greg retournent la street » et « L&amp;#39;amour propre ». Le
+ * défaut est corrigé à la lecture depuis cette version, mais ce qui est déjà en base y resterait
+ * jusqu'à une réanalyse complète — c'est-à-dire, en pratique, indéfiniment.
+ *
+ * La réparation ne touche **que les bibliothèques web**. Les autres fournisseurs rendent du texte
+ * brut, où une esperluette est une esperluette : y passer aurait été un risque sans contrepartie.
+ */
+export function reparerLesTitresEchappes(base: DatabaseSync): void {
+  const champsParTable: Array<{ table: string; champs: string[] }> = [
+    { table: "catalog_items", champs: ["title", "overview", "search_title"] },
+    { table: "media_items", champs: ["title", "search_title", "show_title"] },
+  ];
+
+  for (const { table, champs: souhaites } of champsParTable) {
+    /*
+     * On ne répare que les colonnes qui existent.
+     *
+     * `search_title` et `show_title` sont ajoutées après coup par `database.ts`, et une base assez
+     * ancienne peut ne pas les avoir. Une migration qui les nomme sans vérifier échouerait sur
+     * « no such column » — et le registre étant atomique, elle bloquerait toute la mise à jour pour
+     * une réparation cosmétique.
+     */
+    const presentes = new Set((base.prepare(`PRAGMA table_info(${table})`).all() as unknown as
+      Array<{ name: string }>).map((colonne) => colonne.name));
+    const champs = souhaites.filter((champ) => presentes.has(champ));
+    if (!champs.length || !presentes.has("library_id")) continue;
+
+    // Le pré-filtre `LIKE '%&%'` évite de relire toute la médiathèque : sans esperluette, aucune
+    // entité. Le décodage tranche ensuite, et l'écriture n'a lieu que si la valeur change vraiment.
+    const condition = champs.map((champ) => `${champ} LIKE '%&%'`).join(" OR ");
+    const lignes = base.prepare(`
+      SELECT id, ${champs.join(", ")} FROM ${table}
+      WHERE (${condition})
+        AND EXISTS (SELECT 1 FROM library_folders lib WHERE lib.id = ${table}.library_id AND lib.kind = 'web')
+    `).all() as unknown as Array<Record<string, string | null>>;
+
+    for (const ligne of lignes) {
+      const corrections = champs
+        .map((champ) => ({ champ, avant: ligne[champ], apres: ligne[champ] ? decoderEntitesHtml(ligne[champ]) : null }))
+        .filter((correction) => correction.apres !== correction.avant);
+      if (!corrections.length) continue;
+      const affectation = corrections.map((correction) => `${correction.champ} = ?`).join(", ");
+      base.prepare(`UPDATE ${table} SET ${affectation} WHERE id = ?`)
+        .run(...corrections.map((correction) => correction.apres), ligne["id"] as string);
+    }
+  }
+}
+
 export const MIGRATIONS: Migration[] = [
   {
     version: 2,
@@ -196,6 +249,11 @@ export const MIGRATIONS: Migration[] = [
     nom: "artwork_assets accepte la provenance youtube",
     gereSaTransaction: true,
     appliquer: ouvrirLesSourcesDeVignette,
+  },
+  {
+    version: 5,
+    nom: "les titres web retrouvent leurs esperluettes et leurs apostrophes",
+    appliquer: reparerLesTitresEchappes,
   },
 ];
 

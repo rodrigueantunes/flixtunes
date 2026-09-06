@@ -362,6 +362,8 @@ fun CarteMedia(
     restaurerFocus: Boolean = false,
     focusRestaure: () -> Unit = {},
     focusPris: () -> Unit = {},
+    /** La seconde ligne, quand le rayon la nomme autrement. Par défaut, celle du média. */
+    sousTitre: String? = null,
 ) {
     // Une grille TV peut contenir des milliers de fiches, mais une seule reçoit un focus restauré.
     // Ne pas créer de FocusRequester ni de coroutine d'effet pour toutes les autres retire du travail
@@ -436,7 +438,8 @@ fun CarteMedia(
             lineHeight = 18.sp,
             fontWeight = FontWeight.SemiBold,
         )
-        Text(media.secondaryText, color = Muet, fontSize = 12.sp)
+        Text(sousTitre ?: media.secondaryText, color = Muet, fontSize = 12.sp, maxLines = 1,
+            overflow = TextOverflow.Ellipsis)
     }
 }
 

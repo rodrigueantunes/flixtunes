@@ -56,7 +56,14 @@ fun NavigationTelevision(sectionCourante: String, offre: OffreDuServeur, choisir
             colors = ButtonDefaults.textButtonColors(contentColor = if (active) Color.White else Muet),
             interactionSource = source,
         ) {
-            Text(section.libelle, fontWeight = if (active) FontWeight.Bold else FontWeight.Normal)
+            // Un intitule de section ne se replie jamais sur deux lignes : dans une barre trop
+            // etroite, chaque repli grandit la barre entiere, et six sections en font un mur.
+            Text(
+                section.libelle,
+                fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                maxLines = 1,
+                softWrap = false,
+            )
         }
     }
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  cheminsAnnexe, fusionnerIdentites, identifiantDepuisUrl, lireAnnexeWeb, lireBalisesWeb,
-  normaliseDate, plateformeDepuisUrl, type IdentiteWeb,
+  cheminsAnnexe, decoderEntitesHtml, fusionnerIdentites, identifiantDepuisUrl, lireAnnexeWeb,
+  lireBalisesWeb, normaliseDate, plateformeDepuisUrl, type IdentiteWeb,
 } from "./web-identite.js";
 
 /**
@@ -176,5 +176,44 @@ describe("emplacement de l'annexe", () => {
       "/web/YouTube/Arte/Sujet [dQw4w9WgXcQ].mp4.info.json",
       "/web/YouTube/Arte/Sujet [dQw4w9WgXcQ].json",
     ]);
+  });
+});
+
+/**
+ * Les entités HTML d'un titre de plateforme.
+ *
+ * L'API de YouTube échappe ses textes pour du HTML ; le client, lui, affiche du texte. Sans décodage,
+ * « Greg &amp;amp; Greg retournent la street » se lit tel quel sur la carte, dans le lecteur et dans
+ * les résultats de recherche — constaté à l'écran sur une médiathèque réelle.
+ */
+describe("décodage des entités", () => {
+  it("rend l'esperluette, l'apostrophe et les guillemets", () => {
+    expect(decoderEntitesHtml("Greg &amp; Greg")).toBe("Greg & Greg");
+    expect(decoderEntitesHtml("L&#39;amour propre")).toBe("L'amour propre");
+    expect(decoderEntitesHtml("&quot;Le Pire Stagiaire&quot;")).toBe('"Le Pire Stagiaire"');
+    expect(decoderEntitesHtml("1 &lt; 2 &gt; 0")).toBe("1 < 2 > 0");
+  });
+
+  it("lit aussi les références hexadécimales", () => {
+    expect(decoderEntitesHtml("L&#x27;aspirateur")).toBe("L'aspirateur");
+    expect(decoderEntitesHtml("caf&#xe9;")).toBe("café");
+  });
+
+  it("ne décode qu'un seul cran", () => {
+    // Un texte doublement echappe a la source doit le rester d'un cran : decoder jusqu'au bout
+    // fabriquerait un balisage que personne n'a ecrit.
+    expect(decoderEntitesHtml("&amp;lt;b&amp;gt;")).toBe("&lt;b&gt;");
+  });
+
+  it("laisse en place ce qu'il ne sait pas rendre", () => {
+    // Une entite a moitie rendue serait pire que rien : elle ne serait plus reparable par une passe
+    // ulterieure, puisqu'on ne saurait plus ce qui a ete ecrit.
+    expect(decoderEntitesHtml("R&D et &inconnue; et &#0; et 100 % & fin"))
+      .toBe("R&D et &inconnue; et &#0; et 100 % & fin");
+  });
+
+  it("ne touche pas à un texte sans esperluette", () => {
+    const titre = "Le train de nuit, 1974";
+    expect(decoderEntitesHtml(titre)).toBe(titre);
   });
 });

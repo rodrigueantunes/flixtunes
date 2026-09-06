@@ -2,6 +2,8 @@ package tv.flixtunes.app.ui.ecrans
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -143,11 +145,32 @@ import tv.flixtunes.app.ui.tv.NavigationTelevision
                     Modifier.padding(start = if (compact) 8.dp else 12.dp),
                     taillePolice = if (compact) 11 else 13,
                 )
-                if (gabarit.televiseur) NavigationTelevision(section, offreDuServeur) { cle ->
-                    changerSection(cle)
-                    model.search("")
+                /*
+                 * Qui cède la place quand la barre est trop étroite.
+                 *
+                 * Une `Row` mesure ses enfants sans poids **dans l'ordre**, chacun avec ce qui reste :
+                 * les commandes de droite, mesurées en dernier, se retrouvaient donc à quelques points
+                 * de large, et « Réglages » s'y empilait lettre par lettre. La barre montait alors sur
+                 * toute la hauteur de l'écran — constaté sur téléviseur, où le rayon Web a ajouté une
+                 * sixième section à une rangée déjà pleine.
+                 *
+                 * La navigation porte désormais le poids : elle est mesurée **après** les commandes,
+                 * avec ce qu'elles laissent, et défile horizontalement si cela ne suffit pas. Le focus
+                 * de la télécommande y amène de lui-même la section visée.
+                 */
+                if (gabarit.televiseur) {
+                    Row(
+                        Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        NavigationTelevision(section, offreDuServeur) { cle ->
+                            changerSection(cle)
+                            model.search("")
+                        }
+                    }
+                } else {
+                    Spacer(Modifier.weight(1f))
                 }
-                Spacer(Modifier.weight(1f))
                 /*
                  * Actualiser, et seulement dans un catalogue.
                  *
@@ -160,6 +183,15 @@ import tv.flixtunes.app.ui.tv.NavigationTelevision
                  * Il repart de la première page plutôt que de demander la suite : c'est en tête de
                  * catalogue que les ajouts apparaissent, quel que soit le tri.
                  */
+                /*
+                 * Le libellé accompagne le pictogramme, sauf là où la place manque.
+                 *
+                 * Sur téléviseur, la rangée des sections occupe déjà le milieu de la barre ; le client
+                 * Web, qui est la référence graphique, n'écrit d'ailleurs rien à côté de sa loupe ni de
+                 * son engrenage. Le libellé reste sur tablette et sur grand écran tactile, où il n'a
+                 * jamais gêné personne.
+                 */
+                val libellesDesCommandes = !compact && !gabarit.televiseur
                 if (section == "movies" || section == "shows") {
                     BoutonTexte(
                         {
@@ -168,9 +200,9 @@ import tv.flixtunes.app.ui.tv.NavigationTelevision
                         },
                     ) {
                         Text("↻", fontSize = 20.sp)
-                        if (!compact) {
+                        if (libellesDesCommandes) {
                             Spacer(Modifier.width(6.dp))
-                            Text(stringResource(R.string.action_actualiser))
+                            Text(stringResource(R.string.action_actualiser), maxLines = 1, softWrap = false)
                         }
                     }
                 }
@@ -185,15 +217,17 @@ import tv.flixtunes.app.ui.tv.NavigationTelevision
                         },
                     ) {
                         Text("⌕", fontSize = 20.sp)
-                        Spacer(Modifier.width(6.dp))
-                        Text(stringResource(R.string.recherche))
+                        if (libellesDesCommandes) {
+                            Spacer(Modifier.width(6.dp))
+                            Text(stringResource(R.string.recherche), maxLines = 1, softWrap = false)
+                        }
                     }
                 }
                 BoutonTexte(ouvrirReglages) {
                     Text("⚙", fontSize = 18.sp)
-                    if (!compact) {
+                    if (libellesDesCommandes) {
                         Spacer(Modifier.width(6.dp))
-                        Text(stringResource(R.string.reglages))
+                        Text(stringResource(R.string.reglages), maxLines = 1, softWrap = false)
                     }
                 }
                 state.profile?.let { profile ->
@@ -260,6 +294,7 @@ import tv.flixtunes.app.ui.tv.NavigationTelevision
                     grid = webScroll,
                     sauterLettre = { model.setCatalogLetter("web", it) },
                     ancrePositionnee = { model.consumeCatalogAnchor("web") },
+                    rayonWeb = true,
                 )
                 /*
                  * La télévision en direct, entre le rayon Web et l'historique — l'ordre du menu du Web.

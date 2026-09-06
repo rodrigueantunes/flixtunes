@@ -37,6 +37,43 @@ export interface IdentiteWeb {
   playlist: string | null;
 }
 
+/**
+ * Les entités qu'une plateforme écrit à la place du caractère.
+ *
+ * Les cinq du XML, plus l'espace insécable — celles que YouTube emploie. Une entité qu'on ne connaît
+ * pas est laissée telle quelle : la rendre à moitié serait pire que ne rien faire, puisque le titre
+ * cesserait d'être réparable par une passe ultérieure.
+ */
+const ENTITES_NOMMEES: Record<string, string> = {
+  amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", nbsp: " ",
+};
+
+/**
+ * Rendre à un texte de plateforme les caractères que son transport a masqués.
+ *
+ * L'API de YouTube rend ses titres **échappés pour du HTML** : `Greg &amp; Greg retournent la
+ * street`, `L&#39;amour propre`, `&quot;Le Pire Stagiaire&quot;`. Notre client les affiche comme du
+ * texte — c'est ce qu'ils sont —, si bien que l'échappement se lisait tel quel sur la carte, dans le
+ * lecteur et dans les résultats de recherche.
+ *
+ * Le décodage se fait en **une seule passe**, et c'est voulu : `&amp;lt;` rend `&lt;` et non `<`. Un
+ * texte doublement échappé à la source doit le rester d'un cran, sinon on inventerait un balisage que
+ * personne n'a écrit.
+ */
+export function decoderEntitesHtml(valeur: string): string {
+  if (!valeur.includes("&")) return valeur;
+  return valeur.replace(/&(#[xX][0-9a-fA-F]+|#\d+|[a-zA-Z]+);/g, (entiere, corps: string) => {
+    if (!corps.startsWith("#")) return ENTITES_NOMMEES[corps.toLowerCase()] ?? entiere;
+    const hexadecimal = corps[1] === "x" || corps[1] === "X";
+    const point = Number.parseInt(hexadecimal ? corps.slice(2) : corps.slice(1), hexadecimal ? 16 : 10);
+    // Hors du plan Unicode, ou dans la plage des substituts, `fromCodePoint` leve ou fabrique une
+    // chaine invalide. Une entite qu'on ne sait pas rendre reste ecrite.
+    if (!Number.isFinite(point) || point <= 0 || point > 0x10ffff) return entiere;
+    if (point >= 0xd800 && point <= 0xdfff) return entiere;
+    return String.fromCodePoint(point);
+  });
+}
+
 const VIDE: IdentiteWeb = {
   titre: null, chaine: null, plateforme: null, identifiant: null, url: null,
   publieeLe: null, annee: null, description: null, dureeSecondes: null, vignette: null, playlist: null,

@@ -1,5 +1,43 @@
 # Journal des versions
 
+## 0.5.8.r9 — des titres qui se lisent, une barre qui tient sur une ligne
+
+<!-- release -->
+### Les titres venus de la plateforme
+
+- **« Greg &amp;amp; Greg retournent la street », « L&amp;#39;amour propre ».** L'API de YouTube rend ses
+  textes échappés pour du HTML ; le client, lui, affiche du texte. L'échappement se lisait donc tel
+  quel sur la carte, dans le lecteur et dans les résultats de recherche. Le décodage est posé au point
+  de passage unique par lequel toute réponse de plateforme entre — titre, nom de chaîne, description.
+- **Ce qui est déjà en base est réparé**, sans attendre une réanalyse complète qui n'aurait jamais eu
+  lieu. La réparation ne touche que les bibliothèques web : ailleurs, une esperluette est une
+  esperluette.
+
+### La barre du haut sur téléviseur
+
+- **« Réglages » s'empilait lettre par lettre et la barre montait sur toute la hauteur de l'écran.**
+  Une `Row` mesure ses enfants sans poids dans l'ordre, chacun avec ce qui reste : les commandes de
+  droite, mesurées en dernier, se retrouvaient larges de quelques points. Le rayon Web avait ajouté
+  une sixième section à une rangée déjà pleine. La navigation porte désormais le poids — elle est
+  mesurée après les commandes et défile si la place manque, le focus de la télécommande y amenant la
+  section visée — et plus aucun intitulé de la barre ne peut se replier sur deux lignes.
+- **La loupe et l'engrenage n'écrivent plus leur nom sur téléviseur**, comme sur le client Web qui
+  est la référence graphique. Le libellé reste sur tablette et sur grand écran tactile.
+
+### Une chaîne n'est pas une série, sur Android non plus
+
+- **La grille du rayon Web annonçait « 3 saisons » pour trois dossiers**, parce qu'elle est la même
+  que celle des films et des séries. Elle sait maintenant qu'elle sert des chaînes, et n'écrit rien
+  sous leur nom — ce que fait déjà le client Web.
+- **La fiche d'une chaîne retombait sur celle des séries dès qu'un seul dossier était vide**, et s'y
+  annonçait en saisons et en épisodes. Un palier sans vidéo disponible ne prouve rien ; il ne réfute
+  plus rien non plus.
+<!-- /release -->
+
+Les trois défauts ont la même racine : une donnée reprise telle qu'elle arrive, ou une forme
+interprétée comme si elle disait le fond. Un titre échappé lu comme du texte, une largeur de barre
+supposée suffisante, une chaîne rangée en série et présentée comme telle.
+
 ## 0.5.8.r8 — la carte de retour manquait aussi sur Android
 
 <!-- release -->

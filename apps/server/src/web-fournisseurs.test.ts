@@ -56,6 +56,32 @@ describe("résolution par identifiant", () => {
     expect(lu?.url).toBe("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
   });
 
+  it("rend le titre tel qu'il se lit, pas tel qu'il est échappé", async () => {
+    /*
+     * L'API de YouTube echappe ses textes pour du HTML. Notre client les affiche comme du texte —
+     * c'est ce qu'ils sont —, si bien que « Greg &amp; Greg retournent la street » se lisait tel quel
+     * sur la carte. Releve a l'ecran sur une mediatheque reelle.
+     */
+    const faux = faussaire({
+      items: [{
+        id: "abc12345678",
+        snippet: {
+          title: "Greg &amp; Greg retournent la street : L&#39;amour propre",
+          channelTitle: "Greg &amp; Guillotin",
+          description: "Une &quot;parodie&quot; &lt;courte&gt;.",
+          publishedAt: "2019-01-22T09:00:00Z",
+          thumbnails: { default: { url: "https://i.example/petite.jpg" } },
+        },
+        contentDetails: { duration: "PT3M" },
+      }],
+    });
+    const lu = await resoudreYoutube("abc12345678", { cleYoutube: CLE, comptabiliser: false, recuperer: faux.recuperer });
+
+    expect(lu?.titre).toBe("Greg & Greg retournent la street : L'amour propre");
+    expect(lu?.chaine).toBe("Greg & Guillotin");
+    expect(lu?.description).toBe('Une "parodie" <courte>.');
+  });
+
   it("prend la plus grande vignette proposée", async () => {
     // Elle est telechargee une fois puis servie localement : son poids ne se paie qu'au premier
     // passage, alors qu'une vignette trop petite se paie a chaque affichage.

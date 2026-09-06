@@ -119,6 +119,13 @@ import tv.flixtunes.app.ui.tailleTextureJaquetteTv
     grid: LazyGridState,
     sauterLettre: (String?) -> Unit,
     ancrePositionnee: () -> Unit,
+    /**
+     * Cette grille sert des chaînes web, pas des films ni des séries.
+     *
+     * Seule la seconde ligne des cartes en dépend, et le défaut laisse Films et Séries exactement
+     * dans l'état où ils étaient.
+     */
+    rayonWeb: Boolean = false,
 ) {
     val gabarit = LocalGabarit.current
     val edge = gabarit.margeBord.dp
@@ -217,6 +224,8 @@ import tv.flixtunes.app.ui.tailleTextureJaquetteTv
         chargerAvant = if (section.anchor == null) loadPrevious else null,
         chargerSuite = loadMore,
         focusPris = { demandesPrecharge.trySend(it) },
+        // Une chaîne n'a pas de saisons : dans le rayon Web, la carte n'écrit rien sous son nom.
+        sousTitre = if (rayonWeb) ({ media -> media.texteSecondaireWeb }) else null,
         grid = grid,
         modifier = Modifier.onPreviewKeyEvent { evenement ->
             if (!gabarit.televiseur) return@onPreviewKeyEvent false
@@ -444,6 +453,13 @@ import tv.flixtunes.app.ui.tailleTextureJaquetteTv
     focusPremier: Boolean = false,
     premierFocusRestaure: () -> Unit = {},
     focusPris: (Int) -> Unit = {},
+    /**
+     * Comment nommer la seconde ligne d'une carte, quand le rayon le sait mieux que le média.
+     *
+     * Cette grille sert le catalogue, la recherche et l'historique : elle n'a pas à connaître les
+     * rayons. Elle accepte seulement qu'on lui dicte cette ligne, et s'en remet au média sinon.
+     */
+    sousTitre: ((Media) -> String)? = null,
 ) {
     val gabarit = LocalGabarit.current
     val edge = gabarit.margeBord.dp
@@ -503,7 +519,8 @@ import tv.flixtunes.app.ui.tailleTextureJaquetteTv
                 menu = { ouvrirMenu(item) },
                 restaurerFocus = focusARestaurer == (item.catalogId ?: item.id) || (focusPremier && rang == 0),
                 focusRestaure = if (focusPremier && rang == 0) premierFocusRestaure else focusRestaure,
-                focusPris = { focusPris(rang) })
+                focusPris = { focusPris(rang) },
+                sousTitre = sousTitre?.invoke(item))
         }
         if (initialOffset + media.size < total) item(span = { GridItemSpan(maxLineSpan) }) {
             Box(Modifier.fillMaxWidth().padding(vertical = 22.dp), contentAlignment = Alignment.Center) {

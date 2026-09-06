@@ -4,6 +4,10 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import tv.flixtunes.app.data.Details
+import tv.flixtunes.app.data.Media
+import tv.flixtunes.app.data.Season
+import tv.flixtunes.app.ui.ecrans.estChaineWeb
 import tv.flixtunes.app.ui.ecrans.retourDeNiveau
 
 /**
@@ -39,5 +43,71 @@ class ChaineWebTest {
         assertEquals("Dossier parent", retour.libelle)
         assertEquals("Grands formats", retour.sousTitre)
         assertFalse(retour.sortDeLaChaine)
+    }
+}
+
+/** Un média minimal : seuls le type et le titre comptent pour ces cas. */
+private fun media(kind: String, titre: String = "Un titre", seasonCount: Int? = null, airDate: String? = null) = Media(
+    id = titre, catalogId = titre, playableMediaId = null, kind = kind, title = titre, year = null,
+    overview = null, posterUrl = null, backdropUrl = null, showTitle = null, seasonNumber = 1,
+    episodeNumber = 2, runtimeSeconds = null, progressPercent = 0, completed = false,
+    seasonCount = seasonCount, airDate = airDate,
+)
+
+private fun palier(titre: String, episodes: List<Media>) =
+    Season(id = titre, number = 1, title = titre, posterUrl = null, episodes = episodes)
+
+/**
+ * Une chaîne web n'a ni saison ni épisode, et ne doit pas s'en donner l'air.
+ *
+ * Elle est pourtant **stockée** comme une série : c'est ce qui lui vaut la fiche, la reprise et
+ * l'enchaînement sans code neuf. Rien dans sa forme ne la distingue, si bien que chaque écran qui
+ * s'en remet à la forme la présente en saisons — la grille du rayon disait « 3 saisons » pour trois
+ * dossiers, et la fiche retombait sur celle des séries dès qu'un dossier était vide.
+ */
+class ChaineWebPresentationTest {
+    @Test
+    fun `une chaine n'annonce pas de saisons dans le rayon Web`() {
+        assertEquals("3 saisons", media("show", seasonCount = 3).secondaryText)
+        assertEquals("", media("show", seasonCount = 3).texteSecondaireWeb)
+    }
+
+    @Test
+    fun `une video garde sa date dans le rayon Web`() {
+        val video = media("video", airDate = "2024-05-01")
+        assertEquals(video.secondaryText, video.texteSecondaireWeb)
+        assertTrue(video.texteSecondaireWeb.contains("2024"))
+    }
+
+    @Test
+    fun `un dossier vide ne fait pas passer une chaine pour une serie`() {
+        // Un dossier dont aucune video n'est disponible ne prouve rien et ne doit rien refuter :
+        // exiger que tous les paliers portent des videos faisait retomber la chaine sur la fiche des
+        // series, ou elle s'annoncait en saisons et en episodes.
+        val chaine = Details(
+            item = media("show", "Chaine documentaire"),
+            seasons = listOf(
+                palier("Grands formats", listOf(media("video", "Les routes du sel"))),
+                palier("Archives", emptyList()),
+            ),
+            related = emptyList(),
+        )
+        assertTrue(chaine.estChaineWeb)
+    }
+
+    @Test
+    fun `une serie reste une serie`() {
+        val serie = Details(
+            item = media("show", "Une serie"),
+            seasons = listOf(palier("Saison 1", listOf(media("episode", "Le pilote")))),
+            related = emptyList(),
+        )
+        assertFalse(serie.estChaineWeb)
+    }
+
+    @Test
+    fun `une fiche sans palier n'est pas une chaine`() {
+        val film = Details(item = media("movie", "Un film"), seasons = emptyList(), related = emptyList())
+        assertFalse(film.estChaineWeb)
     }
 }

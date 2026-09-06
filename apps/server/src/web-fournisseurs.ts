@@ -2,7 +2,7 @@ import { db } from "./database.js";
 import { getProviderConfiguration } from "./provider-settings.js";
 import { CircuitBreaker, fetchWithTimeout } from "./resilience.js";
 import type { Plateforme } from "./web-chemins.js";
-import { normaliseDate, type IdentiteWeb } from "./web-identite.js";
+import { decoderEntitesHtml, normaliseDate, type IdentiteWeb } from "./web-identite.js";
 
 /**
  * Interroger les plateformes, et seulement elles.
@@ -135,8 +135,19 @@ async function lireJson(url: string, options: OptionsFournisseur): Promise<Recor
   });
 }
 
+/**
+ * Une chaîne lue dans une réponse de plateforme, prête à être affichée.
+ *
+ * **Tout** ce que ce module extrait passe par ici — titre, nom de chaîne, description, identifiant,
+ * adresse de vignette —, et c'est pourquoi le décodage des entités y est fait plutôt qu'à chaque
+ * champ : l'API de YouTube rend `Greg &amp; Greg` et `L&#39;amour propre`, et un seul champ oublié
+ * aurait suffi à laisser l'échappement remonter jusqu'à l'écran. Sur un identifiant ou une durée, le
+ * décodage ne trouve rien à faire.
+ */
 function texte(valeur: unknown): string | null {
-  return typeof valeur === "string" && valeur.trim() ? valeur.trim() : null;
+  if (typeof valeur !== "string") return null;
+  const propre = decoderEntitesHtml(valeur).trim();
+  return propre ? propre : null;
 }
 
 /**

@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   appliquerLesMigrations, elargirLaContrainte, MIGRATIONS, ouvrirLesTypesDeBibliotheque, ouvrirLesTypesDeMedia,
+  reparerLesTitresEchappes,
 } from "./migrations.js";
 
 /**
@@ -165,7 +166,7 @@ describe("ouverture de library_folders au type web", () => {
   it("s'applique par le registre, et une seule fois", () => {
     const base = baseAvecMediatheque();
 
-    expect(appliquerLesMigrations(base, { registre: MIGRATIONS })).toEqual([2, 3, 4]);
+    expect(appliquerLesMigrations(base, { registre: MIGRATIONS })).toEqual([2, 3, 4, 5]);
     expect(appliquerLesMigrations(base, { registre: MIGRATIONS })).toEqual([]);
     expect(schemaDe(base, "library_folders")).toContain("'web'");
     expect(compte(base, "catalog_items")).toBe(1);
@@ -305,5 +306,79 @@ describe("accroche de la migration", () => {
     expect(source).toContain(CONTRAINTE);
     expect(source).toContain("CHECK(kind IN ('movie', 'show', 'episode'))");
     expect(source).toContain("CHECK(source IN ('local', 'tvmaze', 'wikidata', 'tmdb'))");
+  });
+});
+
+/**
+ * Rendre aux titres déjà enregistrés les caractères que l'échappement HTML masquait.
+ *
+ * Le défaut est corrigé à la lecture, mais ce qui est en base y resterait jusqu'à une réanalyse
+ * complète — c'est-à-dire, en pratique, indéfiniment. Deux garde-fous comptent autant que la
+ * réparation elle-même : elle ne doit toucher **que** les bibliothèques web, et elle ne doit pas
+ * échouer sur une base assez ancienne pour ne pas avoir toutes les colonnes.
+ */
+describe("réparation des titres échappés", () => {
+  /** Une base dotée des colonnes que `database.ts` ajoute après coup, et de deux bibliothèques. */
+  function baseAvecTitres(): DatabaseSync {
+    const racine = mkdtempSync(path.join(os.tmpdir(), "flixtunes-entites-"));
+    racines.push(racine);
+    const base = new DatabaseSync(path.join(racine, "essai.db"));
+    ouvertes.push(base);
+    base.exec(`
+      CREATE TABLE library_folders (id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE, kind TEXT NOT NULL);
+      CREATE TABLE catalog_items (id TEXT PRIMARY KEY, library_id TEXT NOT NULL, title TEXT NOT NULL,
+        overview TEXT, search_title TEXT);
+      CREATE TABLE media_items (id TEXT PRIMARY KEY, library_id TEXT, title TEXT NOT NULL,
+        search_title TEXT, show_title TEXT);
+      INSERT INTO library_folders VALUES ('web-1', 'D:/Web', 'web'), ('films-1', 'D:/Films', 'movie');
+      INSERT INTO catalog_items VALUES
+        ('v1', 'web-1', 'Greg &amp; Greg : L&#39;amour propre', 'Une &quot;parodie&quot;.', 'greg &amp; greg'),
+        ('f1', 'films-1', 'Fisher &amp; Sons', NULL, 'fisher &amp; sons');
+      INSERT INTO media_items VALUES
+        ('m1', 'web-1', 'Greg &amp; Greg : L&#39;amour propre', 'greg &amp; greg', 'Greg &amp; Guillotin');
+    `);
+    return base;
+  }
+
+  it("décode les titres web, et seulement eux", () => {
+    const base = baseAvecTitres();
+    reparerLesTitresEchappes(base);
+
+    const video = base.prepare("SELECT title, overview, search_title FROM catalog_items WHERE id = 'v1'")
+      .get() as unknown as { title: string; overview: string; search_title: string };
+    expect(video.title).toBe("Greg & Greg : L'amour propre");
+    expect(video.overview).toBe('Une "parodie".');
+    expect(video.search_title).toBe("greg & greg");
+
+    const media = base.prepare("SELECT title, show_title FROM media_items WHERE id = 'm1'")
+      .get() as unknown as { title: string; show_title: string };
+    expect(media.title).toBe("Greg & Greg : L'amour propre");
+    expect(media.show_title).toBe("Greg & Guillotin");
+
+    // Un film n'est pas touche : les autres fournisseurs rendent du texte brut, ou une esperluette
+    // est une esperluette. Y passer aurait ete un risque sans contrepartie.
+    const film = base.prepare("SELECT title FROM catalog_items WHERE id = 'f1'")
+      .get() as unknown as { title: string };
+    expect(film.title).toBe("Fisher &amp; Sons");
+  });
+
+  it("ne s'arrête pas sur une base à qui manquent des colonnes", () => {
+    // `search_title` et `show_title` sont ajoutees apres coup par `database.ts`. Le registre etant
+    // atomique, une migration qui les nommerait sans verifier bloquerait toute la mise a jour.
+    const racine = mkdtempSync(path.join(os.tmpdir(), "flixtunes-entites-vieille-"));
+    racines.push(racine);
+    const base = new DatabaseSync(path.join(racine, "essai.db"));
+    ouvertes.push(base);
+    base.exec(`
+      CREATE TABLE library_folders (id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE, kind TEXT NOT NULL);
+      CREATE TABLE catalog_items (id TEXT PRIMARY KEY, library_id TEXT NOT NULL, title TEXT NOT NULL);
+      CREATE TABLE media_items (id TEXT PRIMARY KEY, library_id TEXT, title TEXT NOT NULL);
+      INSERT INTO library_folders VALUES ('web-1', 'D:/Web', 'web');
+      INSERT INTO catalog_items VALUES ('v1', 'web-1', 'Greg &amp; Greg');
+    `);
+
+    expect(() => reparerLesTitresEchappes(base)).not.toThrow();
+    expect((base.prepare("SELECT title FROM catalog_items WHERE id = 'v1'")
+      .get() as unknown as { title: string }).title).toBe("Greg & Greg");
   });
 });
