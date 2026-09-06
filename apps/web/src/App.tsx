@@ -1141,7 +1141,7 @@ export function App() {
       * Une chaine web est stockee comme une serie : sans cet aiguillage, elle atterrissait dans
       * l'ecran du catalogue et s'y voyait proposer des candidats TMDB et TVDB. Constate a l'ecran.
       */}
-    {matchTarget && <div className="modal-backdrop">{matchTarget.library.kind === "web"
+    {matchTarget && <div className="modal-backdrop">{matchTarget.library.kind === "web" && profile
       ? <CorrespondancesWeb library={matchTarget.library} profileId={profile.id}
         onClose={() => setMatchTarget(null)} onChanged={() => void loadHome()} />
       : <MetadataManager library={matchTarget.library} focusCatalogId={matchTarget.catalogId}
