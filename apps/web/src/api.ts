@@ -151,6 +151,8 @@ export interface CorrespondanceWeb {
   genre: "chaine" | "video";
   titre: string;
   chaine: string | null;
+  /** La fiche de chaîne dont dépend la ligne — la sienne pour une chaîne. */
+  chaineId: string | null;
   posterUrl: string | null;
   publieeLe: string | null;
   identifiant: string | null;

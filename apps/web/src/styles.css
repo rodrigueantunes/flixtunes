@@ -1370,19 +1370,31 @@ html.bureau-video, body.bureau-video { background: transparent; }
  * Même partage que l'écran du catalogue, parce que le geste est le même — on parcourt, on choisit, on
  * corrige. Ce qui diffère est d'où viennent les candidats, et cela ne se voit pas dans la mise en page.
  */
-.web-corr-corps { display: grid; grid-template-columns: minmax(220px, 1fr) 2fr; gap: var(--pas-3);
-  margin-top: var(--pas-3); align-items: start; }
-.web-corr-liste { display: grid; gap: .35rem; max-height: 60vh; overflow-y: auto; }
 .web-corr-liste h2 { margin: var(--pas-2) 0 .2rem; color: var(--muted); font-size: .78rem;
   text-transform: uppercase; letter-spacing: .08em; }
-.web-corr-ligne { display: grid; gap: .1rem; padding: .5rem .65rem; border: 1px solid transparent;
-  border-radius: var(--rayon-commande); background: #ffffff08; color: inherit; text-align: left; cursor: pointer; }
-.web-corr-ligne:hover, .web-corr-ligne:focus-visible { border-color: var(--blue-light); background: #ffffff14; }
-.web-corr-ligne.active { border-color: var(--blue-light); background: #ffffff1a; }
+/*
+ * Une ligne web dans le volet du catalogue.
+ *
+ * Le volet impose `grid-template-columns: 42px 1fr auto` à ses boutons, pour la vignette, le titre et
+ * la pastille d'état. Une ligne web n'a ni vignette ni pastille — ses deux textes se seraient rangés
+ * dans la colonne de 42 px et dans celle du milieu. Une seule colonne, donc, et le reste est celui du
+ * volet : mêmes marges, même surbrillance, même sélection.
+ */
+.catalog-picker-list > .web-corr-ligne { grid-template-columns: 1fr; gap: .1rem; padding: .5rem .65rem;
+  background: #ffffff08; }
 .web-corr-ligne small { color: var(--muted); font-size: .74rem; }
-.web-corr-detail { display: grid; gap: var(--pas-1); align-content: start; }
-
-@media (max-width: 720px) { .web-corr-corps { grid-template-columns: 1fr; } }
+.web-corr-note { margin: .35rem 0 0; color: var(--muted); font-size: .8rem; }
+/*
+ * La case à cocher du volet, et le piège qu'elle traverse.
+ *
+ * `.catalog-picker input` donne 100 % de large et 44 px de haut à tout champ du volet — juste pour le
+ * filtre, ruineux pour une case, qui s'étirait en un grand rectangle vide avec son libellé à côté. La
+ * règle générale des cases ne reprend pas `min-height` et ne suffisait donc pas à la corriger. Même
+ * défaut, même remède que dans la barre du catalogue.
+ */
+.catalog-picker .genre-choice { display: inline-flex; margin: .6rem 0 0; }
+.catalog-picker .genre-choice > input { width: 16px; min-width: 0; height: 16px; min-height: 0;
+  padding: 0; margin: 0; }
 
 /* L'état connu d'une fiche web, montré avant toute dépense de quota. */
 .web-corr-etat { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));

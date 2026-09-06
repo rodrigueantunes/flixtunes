@@ -107,3 +107,35 @@ describe("correspondance par identifiant IMDb", () => {
     expect(await screen.findByText(/ne connaît aucun film/)).toBeInTheDocument();
   });
 });
+
+/**
+ * « Afficher aussi ce qui est déjà identifié », et ce qu'elle change.
+ *
+ * Décochée — l'état d'ouverture —, la liste est la file de revue : ce qui reste à apparier. C'est le
+ * cas d'usage, et c'est ce que l'écran servait déjà. Cochée, elle sert le catalogue entier, pour
+ * retrouver un titre correctement apparié et le corriger quand même : un film pris pour son remake
+ * est « identifié » et n'apparaît dans aucune file.
+ */
+describe("voir aussi ce qui est identifié", () => {
+  it("ouvre sur la file de revue, la case décochée", async () => {
+    render(<MetadataManager library={bibliotheque} onClose={() => {}} onChanged={() => {}} />);
+    const case_ = await screen.findByLabelText(/déjà identifié/);
+    expect(case_).not.toBeChecked();
+    await waitFor(() => expect(apiMock.reviewQueue).toHaveBeenCalledWith("lib-1"));
+    expect(apiMock.catalog).not.toHaveBeenCalled();
+  });
+
+  it("sert le catalogue entier une fois cochée", async () => {
+    render(<MetadataManager library={bibliotheque} onClose={() => {}} onChanged={() => {}} />);
+    fireEvent.click(await screen.findByLabelText(/déjà identifié/));
+    await waitFor(() => expect(apiMock.catalog).toHaveBeenCalledWith("lib-1", ""));
+  });
+
+  it("n'offre pas la case quand on arrive depuis une fiche précise", async () => {
+    // La liste ne contient alors que ce titre : servir le catalogue entier le ferait perdre, puisqu'il
+    // est plafonne a 250 entrees triees et qu'un film peut n'y pas figurer.
+    render(<MetadataManager library={bibliotheque} onClose={() => {}} onChanged={() => {}} focusCatalogId="cat-1" />);
+    await screen.findByLabelText("Identifiant IMDb");
+    expect(screen.queryByLabelText(/déjà identifié/)).toBeNull();
+  });
+});

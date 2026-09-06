@@ -22,9 +22,9 @@ export function CorrespondancesWeb({ library, profileId, onClose, onChanged }: {
 }) {
   const [lignes, setLignes] = useState<CorrespondanceWeb[]>([]);
   const [budget, setBudget] = useState<BudgetWeb | null>(null);
-  // Tout est affiche par defaut : on vient ici pour corriger, y compris ce que l'analyse croit
-  // avoir bien identifie. Un ecran qui annonce « tout est identifie » ne rend aucun service.
-  const [toutes, setToutes] = useState(true);
+  // Decochee par defaut, comme pour les films et les series : on vient d'abord reparer ce qui manque.
+  // La case reste a portee pour retrouver une fiche deja appariee et la corriger quand meme.
+  const [toutes, setToutes] = useState(false);
   const [choisie, setChoisie] = useState<CorrespondanceWeb | null>(null);
   const [recherche, setRecherche] = useState("");
   const [candidats, setCandidats] = useState<CandidatWeb[]>([]);
@@ -75,14 +75,30 @@ export function CorrespondancesWeb({ library, profileId, onClose, onChanged }: {
   }
 
   const chaines = lignes.filter((ligne) => ligne.genre === "chaine");
-  const videos = lignes.filter((ligne) => ligne.genre === "video");
+  /*
+   * Les vidéos montrées sont **celles de la chaîne choisie**, et rien d'autre.
+   *
+   * Toutes les vidéos de la bibliothèque défilaient ensemble, chaînes mélangées : sur une centaine de
+   * fichiers c'est déjà illisible, et corriger une vidéo suppose de savoir de quelle chaîne elle
+   * vient — c'est même la condition pour qu'on puisse la chercher. Tant qu'aucune chaîne n'est
+   * choisie, on ne montre que les chaînes.
+   */
+  const chaineRetenue = choisie?.chaineId ?? null;
+  const nomChaine = chaines.find((ligne) => ligne.id === chaineRetenue)?.titre ?? choisie?.chaine ?? null;
+  const videos = lignes.filter((ligne) => ligne.genre === "video" && ligne.chaineId === chaineRetenue);
 
-  return <section className="metadata-manager" aria-labelledby="web-corr-titre">
-    <header className="metadata-header">
+  return <section className="library-modal metadata-modal" role="dialog" aria-modal="true"
+    aria-labelledby="web-corr-titre">
+    {/*
+      * Le meme cadre que l'ecran du catalogue : bandeau, titre, bouton de retour, corps a deux
+      * colonnes. Ce qui distingue les deux ecrans est d'ou viennent les candidats, pas leur aspect —
+      * et une fenetre qui ne ressemble pas au reste de l'application se remarque immediatement.
+      */}
+    <header>
       <div>
-        <span className="eyebrow">Web</span>
-        <h1 id="web-corr-titre">Correspondances — {library.name}</h1>
-        <p>Les candidats viennent de la plateforme, jamais d’une base de films ou de séries.</p>
+        <span className="eyebrow">{library.name}</span>
+        <h2 id="web-corr-titre">Correspondances</h2>
+        <p className="web-corr-note">Les candidats viennent de la plateforme, jamais d’une base de films ou de séries.</p>
         {/*
           * Le budget, avant toute dépense.
           *
@@ -95,43 +111,47 @@ export function CorrespondancesWeb({ library, profileId, onClose, onChanged }: {
           {budget.reste < 100 && " — une recherche en coûte 100, elle ne partira pas avant 9 h."}
         </p>}
       </div>
-      <button className="details-close" onClick={onClose} aria-label="Fermer">×</button>
+      <button className="close-button" onClick={onClose} aria-label="Retour">×</button>
     </header>
 
-    <label className="genre-choice">
-      <input type="checkbox" checked={toutes} onChange={(event) => setToutes(event.target.checked)} />
-      Afficher aussi ce qui est déjà identifié
-    </label>
-
-    <div className="web-corr-corps">
-      <div className="web-corr-liste">
+    <div className="metadata-layout">
+      <aside className="catalog-picker">
+        <label className="genre-choice">
+          <input type="checkbox" checked={toutes} onChange={(event) => setToutes(event.target.checked)} />
+          Afficher aussi ce qui est déjà identifié
+        </label>
+        <div className="catalog-picker-list web-corr-liste">
         {/*
           * Les chaînes d'abord, et ce n'est pas qu'un ordre d'affichage : tant qu'une chaîne n'est pas
           * identifiée, aucune de ses vidéos ne peut l'être. La corriger débloque toute sa liste.
           */}
         {chaines.length > 0 && <h2>Chaînes</h2>}
         {chaines.map((ligne) => <button key={ligne.id} type="button"
-          className={`web-corr-ligne${choisie?.id === ligne.id ? " active" : ""}`}
+          className={`web-corr-ligne${choisie?.id === ligne.id ? " selected" : ""}`}
           onClick={() => { setChoisie(ligne); setCandidats([]); setMotif(null); setRecherche(ligne.titre); }}>
           <b>{ligne.titre}</b>
           <small>{ligne.identifiant ? "Identifiée" : "À identifier"}</small>
         </button>)}
 
-        {videos.length > 0 && <h2>Vidéos</h2>}
+        {chaineRetenue && <h2>Vidéos{nomChaine ? ` de ${nomChaine}` : ""}</h2>}
         {videos.map((ligne) => <button key={ligne.id} type="button"
-          className={`web-corr-ligne${choisie?.id === ligne.id ? " active" : ""}`}
+          className={`web-corr-ligne${choisie?.id === ligne.id ? " selected" : ""}`}
           onClick={() => { setChoisie(ligne); setCandidats([]); setMotif(null); setRecherche(ligne.titre); }}>
           <b>{ligne.titre}</b>
-          <small>{[ligne.chaine, ligne.publieeLe].filter(Boolean).join(" · ") || "Sans date"}</small>
+          <small>{ligne.publieeLe ?? "Sans date"}</small>
         </button>)}
 
-        {!lignes.length && <p className="live-vide">
-          {toutes ? "Cette bibliothèque ne contient encore aucune fiche." : "Tout est identifié."}
+        {!lignes.length && <p className="muted">
+          {toutes ? "Cette bibliothèque ne contient encore aucune fiche." : "Aucune correspondance à revoir."}
         </p>}
-      </div>
+        {/* Choisir une chaine est le premier geste : sans elle, ses videos ne peuvent pas etre cherchees. */}
+        {lignes.length > 0 && !chaineRetenue
+          && <p className="muted">Choisissez une chaîne pour voir ses vidéos.</p>}
+        </div>
+      </aside>
 
-      <div className="web-corr-detail">
-        {!choisie && <p className="live-vide">Choisissez une chaîne ou une vidéo à corriger.</p>}
+      <main className="match-workspace">
+        {!choisie && <p className="muted">Choisissez une chaîne ou une vidéo à corriger.</p>}
         {choisie && <>
           <span className="eyebrow">{choisie.genre === "chaine" ? "Chaîne" : "Vidéo"}</span>
           <h2>{choisie.titre}</h2>
@@ -174,7 +194,7 @@ export function CorrespondancesWeb({ library, profileId, onClose, onChanged }: {
           </div>
         </>}
         {motif && <p className="web-correction-motif" role="status">{motif}</p>}
-      </div>
+      </main>
     </div>
   </section>;
 }

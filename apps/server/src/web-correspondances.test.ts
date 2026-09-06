@@ -105,6 +105,22 @@ describe("liste des correspondances web", () => {
     expect(lignes.find((l) => l.id === videoId)?.genre).toBe("video");
     expect(lignes.find((l) => l.id === videoId)?.chaine).toBe(`Chaine ${marque}`);
   });
+
+  it("rattache chaque ligne à la fiche de sa chaîne", () => {
+    /*
+     * L'ecran ne montre que les videos de la chaine choisie, et c'est ce champ qui le lui permet.
+     *
+     * Rapprocher sur le **nom** aurait suffi tant que deux chaines ne portent pas le meme, ce que
+     * rien ne garantit : deux plateformes peuvent heberger « Actualites », et les deux dossiers
+     * coexistent sous la meme bibliotheque. La fiche, elle, est unique.
+     */
+    poser();
+    const lignes = listerCorrespondancesWeb({ libraryId: bibliothequeWeb, toutes: true });
+    expect(lignes.find((l) => l.id === chaineId)?.chaineId).toBe(chaineId);
+    expect(lignes.find((l) => l.id === videoId)?.chaineId).toBe(chaineId);
+    // Une video posee a la racine d'une chaine n'a pas de palier : elle doit quand meme se rattacher.
+    expect(lignes.find((l) => l.id === videoSansChaine)?.chaineId).not.toBe(chaineId);
+  });
 });
 
 describe("statut d'une fiche web", () => {

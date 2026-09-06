@@ -276,26 +276,31 @@ export function RayonWeb({ profileId, onPlay }: { profileId: string; onPlay: (it
 
     {erreur && <p className="live-vide">{erreur}</p>}
 
-    {(niveau.dossiers.length > 0 || chemin.length > 0) && <div className="web-grille web-grille-dossiers">
+    <div className="web-grille web-grille-dossiers">
       {/*
         * Remonter d'un niveau, en tête de grille et non seulement dans le fil d'Ariane.
         *
         * Le fil est en haut de page ; au bas d'une longue liste de vidéos, y revenir demande de
         * remonter tout l'écran. La carte, elle, est là où se trouve déjà le regard.
+        *
+        * Elle est là **à tous les niveaux**, y compris à la racine d'une chaîne : la marche du haut
+        * n'avait pas de carte, si bien qu'on remontait de dossier en dossier puis, arrivé à la
+        * racine, la carte disparaissait et il fallait retrouver le fil d'Ariane pour ressortir.
+        * Depuis la racine, elle ramène aux chaînes.
         */}
-      {chemin.length > 0 && <button type="button" className="web-carte web-carte-dossier web-carte-remonter"
-        onClick={() => setChemin(chemin.slice(0, -1))}>
+      <button type="button" className="web-carte web-carte-dossier web-carte-remonter"
+        onClick={() => { if (chemin.length) setChemin(chemin.slice(0, -1)); else setChaine(null); }}>
         <span className="web-dossier-icone" aria-hidden="true">↰</span>
-        <span className="web-nom">Dossier parent</span>
-        <small>{chemin.length > 1 ? chemin[chemin.length - 2] : titreChaine}</small>
-      </button>}
+        <span className="web-nom">{chemin.length ? "Dossier parent" : "Retour aux chaînes"}</span>
+        <small>{chemin.length > 1 ? chemin[chemin.length - 2] : chemin.length ? titreChaine : "Web"}</small>
+      </button>
       {niveau.dossiers.map((dossier) => <button key={dossier} type="button" className="web-carte web-carte-dossier"
         onClick={() => setChemin([...chemin, dossier])}>
         <span className="web-dossier-icone" aria-hidden="true"><Icon name="folder" /></span>
         <span className="web-nom">{dossier}</span>
         <small>{niveau.compte(dossier)} {niveau.compte(dossier) > 1 ? "vidéos" : "vidéo"}</small>
       </button>)}
-    </div>}
+    </div>
 
     {niveau.videos.length > 0 && <div className="web-grille web-grille-videos">
       {niveau.videos.map((video) => <div key={video.id} className="web-carte-enveloppe">

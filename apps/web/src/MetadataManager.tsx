@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { CatalogItem, LibraryFolder, MetadataProviderStatus, MetadataSearchCandidate } from "@flixtunes/contracts";
 import { api } from "./api";
@@ -31,26 +31,49 @@ export function MetadataManager({
   // Seuil d'année, saisi librement : « à partir de 2015 » écarte les rééditions anciennes sans
   // masquer ce qu'on cherche, contrairement à un filtre sur une année exacte.
   const [minYear, setMinYear] = useState("");
+  /*
+   * Voir aussi ce qui est déjà identifié — décoché par défaut.
+   *
+   * Décoché, l'écran sert exactement ce qu'il servait : la file de revue, c'est-à-dire les fiches
+   * `unmatched` ou `review` et celles dont la confiance reste sous 0,82. C'est le cas d'usage : on
+   * ouvre cet écran pour réparer ce qui manque.
+   *
+   * Coché, il sert le catalogue entier, pour retrouver un titre correctement apparié et le corriger
+   * quand même — un film pris pour son remake est « identifié » et n'apparaît nulle part dans la
+   * file. Les deux listes viennent de routes qui existaient déjà ; rien n'est changé côté serveur.
+   */
+  const [toutes, setToutes] = useState(false);
 
   const selected = useMemo(() => items.find((item) => item.id === selectedId) ?? null, [items, selectedId]);
 
+  // Le titre en cours, pour le retrouver quand la liste change sous lui : cocher la case recharge
+  // le catalogue, et repartir sur le premier titre ferait perdre celui qu'on était en train de
+  // corriger. La référence évite de remettre `selectedId` dans les dépendances, ce qui rechargerait
+  // à chaque sélection.
+  const choixCourant = useRef<string | null>(null);
+  useEffect(() => { choixCourant.current = selectedId; }, [selectedId]);
+
   useEffect(() => {
     let active = true;
-    const catalogue = focusCatalogId ? api.catalog(library.id, "", focusCatalogId) : api.reviewQueue(library.id);
+    setLoading(true);
+    const catalogue = focusCatalogId ? api.catalog(library.id, "", focusCatalogId)
+      : toutes ? api.catalog(library.id, "") : api.reviewQueue(library.id);
     Promise.all([catalogue, api.metadataProviders()]).then(([catalog, availableProviders]) => {
       if (!active) return;
       setProviders(availableProviders);
       setItems(catalog);
       // Arrivée depuis une fiche : on ouvre sur le titre concerné plutôt que sur le premier du
       // catalogue, sans quoi il faudrait le retrouver soi-même dans une liste de plusieurs milliers.
-      const cible = (focusCatalogId ? catalog.find((entry) => entry.id === focusCatalogId) : null) ?? catalog[0] ?? null;
+      const garde = catalog.find((entry) => entry.id === choixCourant.current) ?? null;
+      const cible = (focusCatalogId ? catalog.find((entry) => entry.id === focusCatalogId) : null)
+        ?? garde ?? catalog[0] ?? null;
       setSelectedId(cible?.id ?? null);
       setQuery(cible?.title ?? "");
       setResults(cible?.matchProposal ? [cible.matchProposal] : []);
       setLoading(false);
     }).catch((error) => { if (active) { setMessage(error instanceof Error ? error.message : "Catalogue inaccessible"); setLoading(false); } });
     return () => { active = false; };
-  }, [library.id, focusCatalogId]);
+  }, [library.id, focusCatalogId, toutes]);
 
   function select(item: CatalogItem) {
     setSelectedId(item.id);
@@ -184,8 +207,19 @@ export function MetadataManager({
       <div className="metadata-layout">
         <aside className="catalog-picker">
           <label><span>Filtrer le catalogue</span><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Titre…" /></label>
+          {/*
+            * Arrivé depuis une fiche précise, l'écran ne sert que celle-là : la case n'aurait rien à
+            * élargir, et servir le catalogue entier ferait perdre le titre — la liste est plafonnée à
+            * 250 entrées triées alphabétiquement, où un film peut ne pas figurer.
+            */}
+          {!focusCatalogId && <label className="genre-choice">
+            <input type="checkbox" checked={toutes} onChange={(event) => setToutes(event.target.checked)} />
+            Afficher aussi ce qui est déjà identifié
+          </label>}
           {loading && <p className="muted">Chargement…</p>}
-          {!loading && !visibleItems.length && <p className="muted">Aucune correspondance à revoir.</p>}
+          {!loading && !visibleItems.length && <p className="muted">
+            {toutes ? "Aucun titre dans cette bibliothèque." : "Aucune correspondance à revoir."}
+          </p>}
           <div className="catalog-picker-list">
             {visibleItems.map((item) => (
               <button className={item.id === selectedId ? "selected" : ""} key={item.id} onClick={() => select(item)}>

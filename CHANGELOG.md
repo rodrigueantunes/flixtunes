@@ -1,5 +1,38 @@
 # Journal des versions
 
+## 0.5.8.r7 — un écran qui montrait tout, et une carte qui manquait en haut
+
+<!-- release -->
+### L'écran de correction des bibliothèques web
+
+- **Toutes les vidéos de la bibliothèque y défilaient ensemble, chaînes mélangées.** Elles ne
+  montrent plus que celles de la chaîne choisie — c'est aussi la condition pour pouvoir les
+  chercher, puisqu'une vidéo ne se cherche que dans sa chaîne. Le rattachement se fait sur la fiche
+  de la chaîne et non sur son nom : deux plateformes peuvent héberger une « Actualités ».
+- **La fenêtre a repris l'habillage de celle des films et des séries** — même cadre, même bandeau,
+  même volet de gauche, même bouton de retour. Ce qui distingue les deux écrans est d'où viennent
+  les candidats, et cela n'a pas à se voir dans la mise en page.
+
+### Voir aussi ce qui est déjà identifié
+
+- **La case existe maintenant pour les films et les séries**, et elle est décochée à l'ouverture des
+  deux côtés : on ouvre cet écran pour réparer ce qui manque. Cochée, elle sert le catalogue entier,
+  pour retrouver un titre correctement apparié et le corriger quand même — un film pris pour son
+  remake est « identifié » et ne figure dans aucune file de revue. Le titre en cours de correction
+  est conservé quand la liste change sous lui.
+
+### Deux étiquettes qui disaient le contraire du reste
+
+- **Une bibliothèque web s'annonçait « Autre »** sur sa carte, alors qu'elle a son rayon, son écran
+  de correction et ses fournisseurs. Elle s'annonce « Web ».
+- **La carte de retour manquait à la racine d'une chaîne.** On remontait de dossier en dossier, puis
+  elle disparaissait sur la dernière marche et il fallait retrouver le fil d'Ariane, en haut de page,
+  pour ressortir. Elle est là à tous les niveaux, et ramène aux chaînes depuis la racine.
+<!-- /release -->
+
+Rien de ce qui sert aux films, aux séries ou au direct n'a changé de comportement : la case ajoutée à
+leur écran, décochée, sert exactement la liste qu'il servait déjà.
+
 ## 0.5.8.r6 — un message qui envoyait chercher le défaut ailleurs
 
 <!-- release -->

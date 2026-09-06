@@ -305,7 +305,13 @@ export function LibraryManager({ onClose, onChanged, profileId }: {
             const busy = library.scan.status === "queued" || library.scan.status === "running";
             return (
               <article className="library-row library-row-detailed" key={library.id}>
-                <span className={`library-kind ${library.resolvedKind}`}>{library.resolvedKind === "movie" ? "Film" : library.resolvedKind === "tv" ? "TV" : "Autre"}</span>
+                {/*
+                  * La pastille nomme le type, et « Autre » etait le repli de tout ce qui n'etait ni
+                  * film ni serie. Une bibliotheque web s'y retrouvait rangee, alors qu'elle a son
+                  * rayon, son ecran et ses fournisseurs — la nommer autrement dit le contraire.
+                  */}
+                <span className={`library-kind ${library.resolvedKind}`}>{library.resolvedKind === "movie" ? "Film"
+                  : library.resolvedKind === "tv" ? "TV" : library.resolvedKind === "web" ? "Web" : "Autre"}</span>
                 <div className="library-info">
                   <div className="library-title-line"><b>{library.name}</b><span className={`scan-badge ${library.scan.status}`}>{busy && <i />}{statusLabel(library)}</span></div>
                   <code>{library.path}</code>

@@ -236,3 +236,31 @@ describe("centre d'analyse et bibliothèques", () => {
     expect(screen.queryByRole("button", { name: /^Reprendre/ })).not.toBeInTheDocument();
   });
 });
+
+/**
+ * La pastille d'une bibliothèque nomme son type, et « Autre » était le repli de tout le reste.
+ *
+ * Une bibliothèque web s'y voyait rangée alors qu'elle a son rayon, son écran de correction et ses
+ * fournisseurs : la carte disait le contraire de ce que fait le reste de l'application.
+ */
+describe("la pastille de type", () => {
+  // Le `cleanup` du premier bloc lui est propre : sans celui-ci, les rendus s'empilent et la pastille
+  // cherchee se trouve en quatre exemplaires — ou pas du tout.
+  afterEach(cleanup);
+  beforeEach(() => {
+    vi.clearAllMocks();
+    apiMock.scans.mockResolvedValue([]);
+    apiMock.metadataProviders.mockResolvedValue([]);
+  });
+
+  it.each([
+    ["web", "Web"],
+    ["movie", "Film"],
+    ["tv", "TV"],
+    ["other", "Autre"],
+  ])("nomme une bibliothèque %s « %s »", async (resolvedKind, attendu) => {
+    apiMock.libraries.mockResolvedValue([{ ...library, resolvedKind } as unknown as LibraryFolder]);
+    render(<LibraryManager onClose={() => {}} onChanged={() => {}} />);
+    expect(await screen.findByText(attendu)).toBeInTheDocument();
+  });
+});

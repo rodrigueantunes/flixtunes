@@ -29,6 +29,15 @@ export interface CorrespondanceWeb {
   titre: string;
   /** Le nom de la chaîne dont dépend une vidéo, pour la situer. */
   chaine: string | null;
+  /**
+   * La fiche de chaîne dont dépend cette ligne — la sienne pour une chaîne.
+   *
+   * L'écran s'en sert pour ne montrer que les vidéos de la chaîne choisie. Rapprocher sur le **nom**
+   * aurait suffi tant que deux chaînes ne portent pas le même, ce qui n'est garanti par rien : deux
+   * plateformes peuvent héberger « Actualités », et les deux dossiers coexistent sous la même
+   * bibliothèque.
+   */
+  chaineId: string | null;
   posterUrl: string | null;
   publieeLe: string | null;
   /** Identifiant de plateforme déjà retenu, s'il y en a un. */
@@ -62,7 +71,13 @@ export function listerCorrespondancesWeb(options: {
 
   const lignes = db.prepare(`
     SELECT c.id, c.kind, c.title, c.poster_url, c.external_id, c.match_status, c.metadata_locked,
-      parent.title AS palier, grand.title AS chaine,
+      parent.title AS palier,
+      -- Une video est presque toujours rangee sous un palier — le scanner en cree un, « Hors
+      -- dossier », meme pour celles posees a la racine. Presque : une fiche plus ancienne ou
+      -- reprise a la main peut pendre directement de sa chaine, et elle ne doit pas pour autant
+      -- se retrouver sans chaine dans l'ecran de correction.
+      CASE WHEN parent.kind = 'show' THEN parent.title ELSE grand.title END AS chaine,
+      CASE WHEN parent.kind = 'show' THEN parent.id ELSE grand.id END AS chaine_id,
       (SELECT m.air_date FROM media_items m WHERE m.catalog_id = c.id LIMIT 1) AS air_date
     FROM catalog_items c
     LEFT JOIN catalog_items parent ON parent.id = c.parent_id
@@ -74,7 +89,8 @@ export function listerCorrespondancesWeb(options: {
     LIMIT ${limite}
   `).all(...parametres) as Array<{
     id: string; kind: "show" | "episode"; title: string; poster_url: string | null; external_id: string | null;
-    match_status: string; metadata_locked: number; palier: string | null; chaine: string | null; air_date: string | null;
+    match_status: string; metadata_locked: number; palier: string | null; chaine: string | null;
+    chaine_id: string | null; air_date: string | null;
   }>;
 
   return lignes.map((ligne) => ({
@@ -82,6 +98,7 @@ export function listerCorrespondancesWeb(options: {
     genre: ligne.kind === "show" ? "chaine" : "video",
     titre: ligne.title,
     chaine: ligne.kind === "show" ? null : ligne.chaine,
+    chaineId: ligne.kind === "show" ? ligne.id : ligne.chaine_id,
     posterUrl: ligne.poster_url,
     publieeLe: ligne.air_date,
     identifiant: ligne.external_id,
