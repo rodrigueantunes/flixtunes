@@ -1,5 +1,25 @@
 # Journal des versions
 
+## 0.5.8.r8 — la carte de retour manquait aussi sur Android
+
+<!-- release -->
+### Le rayon Web sur téléviseur et sur mobile
+
+- **La carte de retour n'existait qu'à l'intérieur d'un dossier.** À la racine d'une chaîne, elle
+  disparaissait : sur mobile il restait le fil d'Ariane, en haut de l'écran ; à la télécommande il
+  fallait en plus remonter toute la grille pour l'atteindre. Elle est là à tous les niveaux, en tête
+  de grille — donc premier élément que le D-pad rencontre —, et depuis la racine elle ressort de la
+  chaîne et ramène aux chaînes. Le client Web l'avait reçue à la révision précédente ; c'en est la
+  transcription.
+- **L'annonce d'accessibilité disait « Remonter au dossier parent » quel que soit le libellé porté
+  par la carte.** Elle reprend maintenant ce qui s'y lit.
+<!-- /release -->
+
+Les deux surfaces partagent cet écran — seul le gabarit change, des cartes de 190 points sur
+téléphone à 244 sur téléviseur —, si bien que la correction vaut pour l'une comme pour l'autre. La
+règle de navigation est sortie du composable, où le contrôle statique du dépôt ne l'aurait pas vue,
+et vit désormais dans une fonction couverte par trois cas.
+
 ## 0.5.8.r7 — un écran qui montrait tout, et une carte qui manquait en haut
 
 <!-- release -->

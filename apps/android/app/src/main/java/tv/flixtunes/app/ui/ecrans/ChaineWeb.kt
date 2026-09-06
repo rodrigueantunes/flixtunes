@@ -112,6 +112,25 @@ internal data class NiveauWeb(
     val comptes: Map<String, Int>,
 )
 
+/**
+ * Ce que porte la carte de retour, en tête de grille.
+ *
+ * Elle existe **à tous les niveaux**, y compris à la racine d'une chaîne. Elle n'y était pas : on
+ * remontait de dossier en dossier, puis elle disparaissait sur la dernière marche et il fallait
+ * revenir au fil d'Ariane, en haut de l'écran — à la télécommande, traverser toute la grille. Depuis
+ * la racine, elle ressort de la chaîne et ramène aux chaînes.
+ */
+internal data class RetourWeb(val libelle: String, val sousTitre: String, val sortDeLaChaine: Boolean)
+
+internal fun retourDeNiveau(chemin: List<String>, titreChaine: String): RetourWeb =
+    if (chemin.isEmpty()) {
+        RetourWeb("Retour aux chaînes", "Web", sortDeLaChaine = true)
+    } else {
+        // Le sous-titre nomme ce qu'on retrouve en remontant : le dossier au-dessus, ou la chaîne
+        // elle-même quand on n'est qu'à un dossier de sa racine.
+        RetourWeb("Dossier parent", chemin.getOrNull(chemin.size - 2) ?: titreChaine, sortDeLaChaine = false)
+    }
+
 internal fun niveauDe(saisons: List<Season>, chemin: List<String>, tri: TriWeb): NiveauWeb {
     val sousArbre = saisons
         .map { it to segmentsDuPalier(it) }
@@ -199,15 +218,14 @@ internal fun EcranChaineWeb(
              * Le fil est en haut de page ; au bas d'une longue liste de videos, y revenir demande de
              * remonter tout l'ecran — et a la telecommande, de traverser toutes les cartes.
              */
-            if (chemin.isNotEmpty()) {
-                item(key = "remonter") {
-                    CarteDossierWeb(
-                        nom = "Dossier parent",
-                        videos = null,
-                        sousTitre = chemin.getOrNull(chemin.size - 2) ?: details.item.displayTitle,
-                        onClick = { chemin = chemin.dropLast(1) },
-                    )
-                }
+            item(key = "remonter") {
+                val retour = retourDeNiveau(chemin, details.item.displayTitle)
+                CarteDossierWeb(
+                    nom = retour.libelle,
+                    videos = null,
+                    sousTitre = retour.sousTitre,
+                    onClick = { if (retour.sortDeLaChaine) back() else chemin = chemin.dropLast(1) },
+                )
             }
             items(niveau.dossiers, key = { "dossier-$it" }) { dossier ->
                 CarteDossierWeb(dossier, niveau.comptes[dossier] ?: 0) { chemin = chemin + dossier }
@@ -245,7 +263,9 @@ private fun CarteDossierWeb(nom: String, videos: Int?, sousTitre: String? = null
             .border(1.dp, Ligne, RoundedCornerShape(RayonPanneau))
             .cliquableAuFocus(
                 arrondi = RayonPanneau.value.toInt(),
-                onClickLabel = if (videos == null) "Remonter au dossier parent" else "Ouvrir le dossier $nom",
+                // Le libelle de la carte dit deja ou elle mene : « Dossier parent » ou « Retour aux
+                // chaines ». Le repeter autrement ferait diverger ce qui se lit de ce qui s'annonce.
+                onClickLabel = if (videos == null) nom else "Ouvrir le dossier $nom",
                 onClick = onClick,
             )
             .padding(gabarit.margeInterne.dp / 2),
