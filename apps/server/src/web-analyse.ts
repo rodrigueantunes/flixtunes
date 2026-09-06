@@ -180,16 +180,28 @@ function retenirIdentiteDeChaine(chaineId: string, identifiant: string): void {
  *
  * Un échec de fournisseur ne fait pas échouer l'analyse : le fichier entre avec ce qu'il portait.
  */
+/** L'identifiant de plateforme deja retenu pour cette fiche, s'il y en a un. */
+function identifiantRetenu(catalogId: string | null): string | null {
+  if (!catalogId) return null;
+  const ligne = db.prepare(
+    "SELECT external_id FROM catalog_items WHERE id = ? AND external_provider = 'youtube'",
+  ).get(catalogId) as { external_id: string | null } | undefined;
+  return ligne?.external_id ?? null;
+}
+
 async function completerParLaPlateforme(
   library: LibraryFolder,
   chemin: CheminWeb,
   locale: IdentiteWeb,
+  catalogId: string | null,
 ): Promise<IdentiteWeb | null> {
   if (locale.titre && locale.publieeLe && locale.vignette) return null;
 
   const plateforme = chemin.plateforme ?? locale.plateforme;
   if (!plateforme) return null;
-  const identifiant = chemin.identifiant ?? locale.identifiant;
+  // L'identifiant deja retenu sur la fiche vaut celui du nom de fichier : c'est la meme certitude, et
+  // il fait tomber le cout de cent unites a une.
+  const identifiant = chemin.identifiant ?? locale.identifiant ?? identifiantRetenu(catalogId);
 
   try {
     if (plateforme === "youtube" && identifiant) return await resoudreYoutube(identifiant);
@@ -222,13 +234,16 @@ export async function analyserVideoWeb(
   library: LibraryFolder,
   cheminFichier: string,
   payloadFfprobe: unknown,
+  /** Fiche deja rattachee a ce fichier : c'est la qu'un identifiant a pu etre retenu. */
+  catalogIdConnu: string | null = null,
 ): Promise<LectureWeb> {
   const lecture = lireCheminWeb(library.path, cheminFichier);
   if (!lecture.valide) return { valide: false, message: messageDeRefus(lecture.raison) };
 
   const locale = fusionnerIdentites(await lireAnnexeDuDisque(cheminFichier), lireBalisesWeb(payloadFfprobe));
   // Le fichier d'abord, la plateforme en rattrapage : c'est l'ordre le moins cher et le plus sûr.
-  const identite = fusionnerIdentites(locale, await completerParLaPlateforme(library, lecture.chemin, locale));
+  const identite = fusionnerIdentites(locale,
+    await completerParLaPlateforme(library, lecture.chemin, locale, catalogIdConnu));
   const cle = cleDuPalier(lecture.chemin);
   const palier = numeroDePalier(library, lecture.chemin, cle);
   const parsed = episodeDepuisLeWeb(
@@ -262,10 +277,40 @@ function dejaIllustree(catalogId: string): boolean {
  * `dejaIllustree` reste faux, donc l'avatar de la chaine est **redemande a chaque analyse**, cent
  * unites de quota a chaque passage. C'est exactement ce que « figer une fois trouve » devait eviter.
  */
-function retenirIllustration(catalogId: string, adresse: string | null): void {
+function retenirIllustration(catalogId: string, adresse: string | null, surLeMedia = false): void {
   if (!adresse) return;
   db.prepare("UPDATE catalog_items SET poster_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
     .run(adresse, catalogId);
+  /*
+   * **La vignette d'une vidéo doit aussi être posée sur le média.**
+   *
+   * Le client lit `media_items.poster_url`, pas celle de la fiche. Et pour un épisode, `syncCatalog`
+   * y recopie l'affiche de la saison — donc, pour une chaîne, l'avatar de la chaîne. Constaté sur une
+   * installation réelle : 74 vignettes correctement téléchargées et payées, et toutes les vidéos
+   * affichant le même avatar. L'image existait, personne ne la regardait.
+   */
+  if (surLeMedia) {
+    db.prepare("UPDATE media_items SET poster_url = ?, updated_at = CURRENT_TIMESTAMP WHERE catalog_id = ?")
+      .run(adresse, catalogId);
+  }
+}
+
+/**
+ * Retenir l'identité de plateforme d'une vidéo et de sa chaîne.
+ *
+ * **Écrit après l'upsert du scanner, et jamais avant.** Celui-ci remet `external_id` à la valeur de
+ * la ligne courante — nulle pour le web — à chaque fichier : une écriture faite plus tôt était donc
+ * effacée par le fichier suivant. Résultat constaté : aucune identité retenue, et chaque vidéo
+ * recherchée à cent unités de quota **à chaque analyse**. Une seule passe sur 117 vidéos a consommé
+ * 8 901 unités sur les 9 000 du jour, et l'aurait refait le lendemain.
+ *
+ * Retenue, cette identité fait tomber le coût suivant de cent unités à une : on résout au lieu de
+ * chercher. C'est toute l'économie du dispositif.
+ */
+function retenirIdentiteWeb(catalogId: string, identifiant: string | null): void {
+  if (!identifiant) return;
+  db.prepare(`UPDATE catalog_items SET external_provider = 'youtube', external_id = ?,
+    updated_at = CURRENT_TIMESTAMP WHERE id = ? AND metadata_locked = 0`).run(identifiant, catalogId);
 }
 
 /**
@@ -289,12 +334,22 @@ export async function illustrerVideoWeb(args: {
   identite: IdentiteWeb;
   langue: string;
 }): Promise<void> {
+  // Les identites se retiennent a chaque passage, sans condition : l'upsert du scanner vient de les
+  // effacer, et c'est le seul moment ou l'ecriture tient.
+  retenirIdentiteWeb(args.catalogId, args.identite.identifiant);
+
   try {
     if (args.identite.vignette && !dejaIllustree(args.catalogId)) {
       retenirIllustration(args.catalogId,
-        await cacheRemoteArtwork(args.catalogId, "poster", args.identite.vignette, args.langue, "youtube"));
+        await cacheRemoteArtwork(args.catalogId, "poster", args.identite.vignette, args.langue, "youtube"),
+        true);
     }
   } catch { /* une fiche sans vignette reste une fiche */ }
+
+  // L'identite de la chaine se retient elle aussi a chaque passage, pour la meme raison — et parce
+  // qu'elle est ce qui permet de chercher les videos de cette chaine sans repayer sa recherche.
+  const connue = await identiteDeLaChaine(args.library, args.chemin).catch(() => null);
+  if (connue) retenirIdentiteDeChaine(args.chaineId, connue.identifiant);
 
   try {
     if (args.chemin.plateforme === "youtube" && !dejaIllustree(args.chaineId)) {
@@ -302,7 +357,6 @@ export async function illustrerVideoWeb(args: {
       // l'identifiant sur la fiche évite de la refaire au prochain fichier de cette chaîne.
       const chaine = await identiteDeLaChaine(args.library, args.chemin);
       if (chaine) {
-        retenirIdentiteDeChaine(args.chaineId, chaine.identifiant);
         if (chaine.avatar) {
           retenirIllustration(args.chaineId,
             await cacheRemoteArtwork(args.chaineId, "poster", chaine.avatar, args.langue, "youtube"));

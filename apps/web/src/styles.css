@@ -1334,8 +1334,15 @@ html.bureau-video, body.bureau-video { background: transparent; }
 .web-corriger:hover, .web-corriger:focus-visible { color: var(--blue-light); }
 .web-correction { display: grid; gap: var(--pas-1); padding: var(--pas-2);
   border: 1px solid var(--line); border-radius: var(--rayon-panneau); background: #ffffff0a; }
-.web-correction-ligne { display: flex; gap: var(--pas-1); }
-.web-correction-ligne input { flex: 1; min-width: 0; }
+/*
+ * Les commandes de correction empruntent les boutons de la maison — `primary` pour ce qui applique,
+ * `secondary` pour ce qui cherche. Elles étaient laissées à l'aspect par défaut du navigateur, ce qui
+ * se voyait immédiatement à côté du reste de l'application.
+ */
+.web-correction-ligne { display: flex; gap: var(--pas-1); align-items: stretch; }
+.web-correction-ligne input { flex: 1; min-width: 0; min-height: 44px; padding: .65rem .75rem;
+  border: 1px solid var(--line); border-radius: var(--rayon-commande); background: #070b12; color: white; }
+.web-correction-ligne .primary, .web-correction-ligne .secondary { min-height: 44px; padding: .55rem 1.1rem; }
 .web-candidat { display: grid; gap: .1rem; padding: .45rem .6rem; border: 1px solid var(--line);
   border-radius: var(--rayon-commande); background: #ffffff08; color: inherit; text-align: left;
   cursor: pointer; }
@@ -1376,3 +1383,12 @@ html.bureau-video, body.bureau-video { background: transparent; }
 .web-corr-detail { display: grid; gap: var(--pas-1); align-content: start; }
 
 @media (max-width: 720px) { .web-corr-corps { grid-template-columns: 1fr; } }
+
+/* L'état connu d'une fiche web, montré avant toute dépense de quota. */
+.web-corr-etat { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--pas-1); margin: 0 0 var(--pas-1); }
+.web-corr-etat div { display: grid; gap: .1rem; padding: .45rem .6rem; border: 1px solid var(--line);
+  border-radius: var(--rayon-commande); background: #ffffff08; }
+.web-corr-etat dt { color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; }
+.web-corr-etat dd { margin: 0; font-size: .84rem; font-weight: 600; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }

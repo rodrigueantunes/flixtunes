@@ -131,7 +131,10 @@ function CorrectionWeb({ profileId, item, genre, onCorrige }: {
   }
 
   if (!ouvert) {
-    return <button type="button" className="web-corriger" onClick={() => setOuvert(true)}>
+    // Ouvrir ne cherche pas : une recherche coute cent unites de quota, et on n'ouvre pas toujours
+    // pour chercher. Le terme est pre-rempli, le geste reste explicite.
+    return <button type="button" className="web-corriger"
+      onClick={() => { setOuvert(true); setRecherche(item.showTitle ?? item.title); }}>
       Corriger la correspondance
     </button>;
   }
@@ -141,7 +144,7 @@ function CorrectionWeb({ profileId, item, genre, onCorrige }: {
       <input value={recherche} onChange={(event) => setRecherche(event.target.value)}
         placeholder={genre === "chaine" ? "Nom de la chaîne" : "Titre de la vidéo"}
         aria-label={genre === "chaine" ? "Chercher une chaîne" : "Chercher une vidéo"} />
-      <button type="button" disabled={occupe} onClick={() => void chercher()}>Chercher</button>
+      <button type="button" className="secondary" disabled={occupe} onClick={() => void chercher()}>Chercher (100 unités)</button>
     </div>
     {candidats.map((candidat) => <button key={candidat.identifiant ?? candidat.url} type="button"
       className="web-candidat" disabled={occupe || !candidat.identifiant}
@@ -153,7 +156,7 @@ function CorrectionWeb({ profileId, item, genre, onCorrige }: {
       {/* Coller l'adresse est souvent le plus rapide : on vient de la vérifier dans un navigateur. */}
       <input value={saisie} onChange={(event) => setSaisie(event.target.value)}
         placeholder="…ou coller l'adresse ou l'identifiant" aria-label="Identifiant ou adresse" />
-      <button type="button" disabled={occupe || !saisie.trim()}
+      <button type="button" className="primary" disabled={occupe || !saisie.trim()}
         onClick={() => void appliquer(saisie.trim())}>Appliquer</button>
     </div>
     {motif && <p className="web-correction-motif" role="status">{motif}</p>}

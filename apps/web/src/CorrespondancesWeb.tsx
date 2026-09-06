@@ -21,7 +21,9 @@ export function CorrespondancesWeb({ library, profileId, onClose, onChanged }: {
   onChanged: () => void;
 }) {
   const [lignes, setLignes] = useState<CorrespondanceWeb[]>([]);
-  const [toutes, setToutes] = useState(false);
+  // Tout est affiche par defaut : on vient ici pour corriger, y compris ce que l'analyse croit
+  // avoir bien identifie. Un ecran qui annonce « tout est identifie » ne rend aucun service.
+  const [toutes, setToutes] = useState(true);
   const [choisie, setChoisie] = useState<CorrespondanceWeb | null>(null);
   const [recherche, setRecherche] = useState("");
   const [candidats, setCandidats] = useState<CandidatWeb[]>([]);
@@ -119,12 +121,26 @@ export function CorrespondancesWeb({ library, profileId, onClose, onChanged }: {
         {choisie && <>
           <span className="eyebrow">{choisie.genre === "chaine" ? "Chaîne" : "Vidéo"}</span>
           <h2>{choisie.titre}</h2>
+          {/*
+            * Ce qu'on sait déjà, montré sans rien demander à personne.
+            *
+            * Chercher coûte **cent unités de quota** sur les 9 000 d'une journée. Lancer une recherche
+            * à chaque sélection viderait le budget en parcourant la liste — une seule analyse d'une
+            * centaine de vidéos en a déjà consommé 8 901. L'écran montre donc l'état, et ne dépense
+            * que sur un geste explicite.
+            */}
+          <dl className="web-corr-etat">
+            <div><dt>Identifiant</dt><dd>{choisie.identifiant ?? "aucun"}</dd></div>
+            <div><dt>Date</dt><dd>{choisie.publieeLe ?? "inconnue"}</dd></div>
+            <div><dt>Vignette</dt><dd>{choisie.posterUrl ? "enregistrée" : "aucune"}</dd></div>
+            <div><dt>État</dt><dd>{choisie.verrouillee ? "corrigée à la main" : choisie.statut}</dd></div>
+          </dl>
           <div className="web-correction-ligne">
             <input value={recherche} onChange={(event) => setRecherche(event.target.value)}
               aria-label="Terme de recherche"
               placeholder={choisie.genre === "chaine" ? "Nom de la chaîne" : "Titre de la vidéo"} />
-            <button type="button" disabled={occupe}
-              onClick={() => void chercher(choisie, recherche || undefined)}>Chercher</button>
+            <button type="button" className="secondary" disabled={occupe}
+              onClick={() => void chercher(choisie, recherche || undefined)}>Chercher (100 unités)</button>
           </div>
 
           {candidats.map((candidat) => <button key={candidat.identifiant ?? candidat.url} type="button"
@@ -139,7 +155,7 @@ export function CorrespondancesWeb({ library, profileId, onClose, onChanged }: {
             <input value={saisie} onChange={(event) => setSaisie(event.target.value)}
               aria-label="Identifiant ou adresse"
               placeholder="…ou coller l’adresse YouTube ou l’identifiant" />
-            <button type="button" disabled={occupe || !saisie.trim()}
+            <button type="button" className="primary" disabled={occupe || !saisie.trim()}
               onClick={() => void appliquer(choisie, saisie.trim())}>Appliquer</button>
           </div>
         </>}

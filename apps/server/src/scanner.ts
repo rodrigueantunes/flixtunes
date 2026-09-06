@@ -637,7 +637,8 @@ export async function scanLibraryById(libraryId: string, options: ScanOptions = 
         // rapprochement a appliquer : ces deux lectures n'auraient rien a trouver.
         embedded = await embeddedPromise;
         if (options.signal?.aborted) throw new Error("Analyse annulée");
-        const lecture = await analyserVideoWeb(library, filePath, embedded?.raw ?? null);
+        const lecture = await analyserVideoWeb(library, filePath, embedded?.raw ?? null,
+          previous?.catalog_id ?? null);
         // Un rangement fautif est signale, pas devine : le fichier rejoint le journal des
         // laisses-pour-compte avec la raison, par la voie que le bloc englobant emprunte deja.
         if (!lecture.valide) throw new Error(lecture.message);

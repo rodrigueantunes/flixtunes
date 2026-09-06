@@ -1,5 +1,41 @@
 # Journal des versions
 
+## 0.5.8.r5 — une identité qu'on retrouvait chaque jour, au prix fort
+
+<!-- release -->
+### Le rayon Web ne retenait rien de ce qu'il trouvait
+
+- **L'identifiant de plateforme d'une vidéo n'était jamais conservé.** L'analyse le résolvait, s'en
+  servait pour la vignette, puis le perdait : l'upsert du scanner remet `external_id` à la valeur de
+  la ligne courante — nulle pour le web — à chaque fichier, effaçant l'écriture faite plus tôt. Chaque
+  vidéo était donc **recherchée à cent unités de quota à chaque analyse**. Relevé sur une installation
+  réelle : une seule passe sur 117 vidéos a consommé 8 901 des 9 000 unités du jour, et se serait
+  répétée à l'identique le lendemain. Les identités sont désormais écrites après l'upsert et relues
+  au passage suivant : le coût tombe de cent unités à une.
+- **La vignette d'une vidéo n'atteignait pas l'écran.** Elle était posée sur la fiche de catalogue,
+  alors que le client lit celle du média — où l'analyse recopie l'affiche du palier, donc l'avatar de
+  la chaîne. Soixante-quatorze vignettes correctement téléchargées, et toutes les vidéos affichant le
+  même visage.
+
+### Écran des correspondances web
+
+- **La liste montre tout par défaut.** Elle écartait ce qui était déjà identifié — donc presque
+  tout —, alors qu'on vient précisément corriger ce que l'analyse croit avoir bien trouvé.
+- **L'état connu d'une fiche s'affiche sans rien dépenser** : identifiant, date, vignette, statut.
+  Chercher coûte cent unités sur les 9 000 d'une journée, et le bouton l'annonce.
+- Les commandes empruntent les boutons de l'application, au lieu de l'aspect par défaut du navigateur.
+<!-- /release -->
+
+Les trois défauts signalés étaient réels, et le premier en cachait un plus grave : c'est en cherchant
+pourquoi les vignettes n'apparaissaient pas que le relevé de quota a montré 8 901 unités consommées
+là où une centaine aurait suffi. Toute l'économie du dispositif reposait sur une écriture qu'un autre
+`UPDATE` défaisait aussitôt.
+
+Une correction a été annulée avant d'être livrée. Pour qu'un écran de correction ne soit jamais vide,
+la recherche avait été rendue automatique à la sélection d'une ligne — à cent unités le clic, et
+quatre-vingt-dix-neuf unités restantes sur l'installation observée, parcourir la liste aurait suffi à
+épuiser la journée. L'écran montre donc ce qu'il sait déjà, et ne dépense que sur un geste explicite.
+
 ## 0.5.8.r4 — une chaîne déclarée introuvable une fois l'était pour toujours
 
 <!-- release -->

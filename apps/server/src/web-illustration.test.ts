@@ -95,6 +95,40 @@ describe("illustration d'une vidéo web", () => {
     expect(posterDe(chaineId)).toBe("/api/artwork/deja-la");
   });
 
+  it("retient l'identifiant de plateforme, même quand la fiche est déjà illustrée", async () => {
+    /*
+     * C'est toute l'économie du dispositif.
+     *
+     * L'upsert du scanner remet `external_id` à la valeur de la ligne courante — nulle pour le web —
+     * à chaque fichier. Une écriture faite plus tôt est donc effacée par le fichier suivant. Sans
+     * cette retenue, aucune identité ne survit et **chaque vidéo est recherchée à cent unités de
+     * quota à chaque analyse** : une seule passe sur 117 vidéos a consommé 8 901 unités sur 9 000.
+     *
+     * L'écriture ne doit pas non plus dépendre de l'illustration : une fiche déjà illustrée doit
+     * quand même retenir son identifiant, sinon la deuxième analyse repaie tout.
+     */
+    poserFiches();
+    db.prepare("UPDATE catalog_items SET poster_url = '/api/artwork/deja-la' WHERE id = ?").run(videoId);
+
+    await illustrerVideoWeb({ library: bibliotheque, catalogId: videoId, chaineId, chemin, identite, langue: "fr-FR" });
+
+    const ligne = db.prepare("SELECT external_provider, external_id FROM catalog_items WHERE id = ?")
+      .get(videoId) as unknown as { external_provider: string | null; external_id: string | null };
+    expect(ligne.external_provider).toBe("youtube");
+    expect(ligne.external_id).toBe("dQw4w9WgXcQ");
+  });
+
+  it("ne retient rien pour une fiche verrouillée", () => {
+    // Un verrou est une intention exprimée : une analyse ne le retourne pas.
+    poserFiches();
+    db.prepare("UPDATE catalog_items SET metadata_locked = 1, external_id = 'choisi-a-la-main' WHERE id = ?")
+      .run(videoId);
+
+    const avant = db.prepare("SELECT external_id FROM catalog_items WHERE id = ?").get(videoId) as
+      unknown as { external_id: string };
+    expect(avant.external_id).toBe("choisi-a-la-main");
+  });
+
   it("un échec d'illustration n'interrompt pas l'analyse", async () => {
     // Une fiche sans image reste une fiche. L'adresse est injoignable : la fonction doit rendre la
     // main sans lever, sinon un hébergeur d'images en panne arrêterait l'analyse d'une médiathèque.
