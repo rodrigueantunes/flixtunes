@@ -20,6 +20,18 @@ import { cacheRemoteArtwork } from "./artwork.js";
  * un réordonnancement : pour une bibliothèque web, ces bases ne sont pas consultées du tout.
  */
 
+/**
+ * Une ligne de journal par décision de correspondance web.
+ *
+ * Même forme que celle du scanner — une ligne JSON, exploitable dans le journal ASUSTOR, sans jeton
+ * ni adresse d'API. Elle existe parce qu'un échec avalé en silence a coûté une journée : l'écran
+ * annonçait « rien trouvé » sans que rien nulle part ne dise pourquoi.
+ */
+function journalWeb(event: string, details: Record<string, unknown>): void {
+  if (process.env.NODE_ENV === "test") return;
+  console.info(JSON.stringify({ scope: "web", event, ...details }));
+}
+
 /** Ce qu'on dit à la personne quand un fichier n'est pas rangé comme l'arborescence l'exige. */
 const MESSAGES: Record<RefusChemin, string> = {
   "hors-bibliotheque": "Le fichier n'est pas sous la racine de la bibliothèque.",
@@ -92,7 +104,7 @@ export type LectureWeb =
  * que la fiche n'existe pas encore quand on traite le **premier** fichier d'une chaîne neuve : sans
  * ce second niveau, ce fichier-là paierait une recherche que le suivant paierait à nouveau.
  */
-const chainesConnues = new Map<string, { identifiant: string; avatar: string | null } | null>();
+const chainesConnues = new Map<string, { identifiant: string; avatar: string | null }>();
 
 async function identiteDeLaChaine(
   library: LibraryFolder,
@@ -107,10 +119,41 @@ async function identiteDeLaChaine(
   ).get(library.id, cle) as { external_id: string | null } | undefined;
   if (enregistree?.external_id) return { identifiant: enregistree.external_id, avatar: null };
 
-  if (chainesConnues.has(cle)) return chainesConnues.get(cle) ?? null;
-  const trouvee = await identifierChaineYoutube(chemin.chaine).catch(() => null);
-  chainesConnues.set(cle, trouvee);
-  return trouvee;
+  const deja = chainesConnues.get(cle);
+  if (deja) return deja;
+
+  /*
+   * **Seule une réussite est mise en cache.**
+   *
+   * La version précédente retenait aussi les échecs, pour toute la vie du processus. Conséquence
+   * constatée sur une installation réelle : une première analyse lancée avant la saisie de la clé
+   * enregistrait « chaîne introuvable » pour chaque chaîne, et **plus aucun fichier ne réessayait**
+   * ensuite — pas même après avoir saisi la clé et relancé l'actualisation des métadonnées. Le quota
+   * consommé de la journée le disait sans ambiguïté : une unité, là où une seule recherche de chaîne
+   * en coûte cent.
+   *
+   * Ne pas mettre l'échec en cache coûte une tentative par fichier dans le pire cas. C'est le prix à
+   * payer pour qu'une panne passagère — ou une clé saisie entre-temps — ne condamne pas la
+   * bibliothèque jusqu'au prochain redémarrage.
+   */
+  try {
+    const trouvee = await identifierChaineYoutube(chemin.chaine);
+    if (trouvee) chainesConnues.set(cle, trouvee);
+    else journalWeb("chaine-introuvable", { chaine: chemin.chaine, dossier: cle });
+    return trouvee;
+  } catch (erreur) {
+    // Un échec avalé sans un mot laisse devant un « ça ne trouve rien » qu'on ne peut pas expliquer.
+    journalWeb("chaine-echec", {
+      chaine: chemin.chaine,
+      erreur: erreur instanceof Error ? erreur.message : String(erreur),
+    });
+    return null;
+  }
+}
+
+/** Oublier les chaînes retenues. À appeler quand les clés changent : la précédente n'a plus cours. */
+export function oublierLesChainesConnues(): void {
+  chainesConnues.clear();
 }
 
 /** Retenir sur la fiche de la chaîne son identifiant de plateforme, pour ne plus le chercher. */

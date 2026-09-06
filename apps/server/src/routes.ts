@@ -1192,12 +1192,14 @@ export async function registerRoutes(app: FastifyInstance) {
             external_provider, external_id, match_status, metadata_locked, match_confidence
           FROM catalog_items
           WHERE id = ? AND library_id = ? AND kind IN ('movie', 'show')
+            AND NOT EXISTS (SELECT 1 FROM library_folders lib WHERE lib.id = library_id AND lib.kind = 'web')
         `).all(query.focusId, query.libraryId)
       : db.prepare(`
           SELECT id, library_id, parent_id, kind, title, overview, year, season_number, episode_number, poster_url,
             external_provider, external_id, match_status, metadata_locked, match_confidence
           FROM catalog_items
           WHERE library_id = ? AND kind IN ('movie', 'show') AND title LIKE ?
+            AND NOT EXISTS (SELECT 1 FROM library_folders lib WHERE lib.id = library_id AND lib.kind = 'web')
           ORDER BY sort_title LIMIT 250
         `).all(query.libraryId, search);
     const typedRows = rows as Array<{
@@ -1224,6 +1226,11 @@ export async function registerRoutes(app: FastifyInstance) {
       proposal.score AS proposal_score, proposal.reasons_json AS proposal_reasons
       FROM catalog_items LEFT JOIN metadata_match_proposals proposal ON proposal.catalog_id = catalog_items.id
       WHERE kind IN ('movie', 'show') AND (? IS NULL OR library_id = ?)
+        -- Une chaine web est stockee comme une serie : sans cette clause, elle entre dans le centre
+        -- de correspondances du catalogue et s'y voit proposer des candidats TMDB et TVDB. Constate
+        -- a l'ecran — une chaine YouTube presentee comme « Serie 2023 ». Le rayon Web a son propre
+        -- ecran, dont les candidats viennent de la plateforme.
+        AND NOT EXISTS (SELECT 1 FROM library_folders lib WHERE lib.id = library_id AND lib.kind = 'web')
         AND (match_status IN ('unmatched', 'review') OR COALESCE(match_confidence, 0) < 0.82)
       ORDER BY COALESCE(match_confidence, 0), sort_title LIMIT 250`).all(query.libraryId ?? null, query.libraryId ?? null) as Array<{
         id: string; library_id: string; parent_id: string | null; kind: "movie" | "show"; title: string; year: number | null;
@@ -1248,7 +1255,7 @@ export async function registerRoutes(app: FastifyInstance) {
     if (!parsed.success) return reply.code(400).send({ message: "Correspondance invalide", issues: parsed.error.issues });
     const item = db.prepare(`SELECT item.id, item.library_id, item.kind, item.title, item.year, library.language
       FROM catalog_items item JOIN library_folders library ON library.id = item.library_id
-      WHERE item.id = ? AND item.kind IN ('movie', 'show')`)
+      WHERE item.id = ? AND item.kind IN ('movie', 'show') AND library.kind <> 'web'`)
       .get(request.params.id) as { id: string; library_id: string; kind: "movie" | "show"; title: string;
         year: number | null; language: string } | undefined;
     if (!item) return reply.code(404).send({ message: "Film ou série introuvable" });

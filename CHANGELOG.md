@@ -1,5 +1,40 @@
 # Journal des versions
 
+## 0.5.8.r4 — une chaîne déclarée introuvable une fois l'était pour toujours
+
+<!-- release -->
+### Le rayon Web ne trouvait rien, et ne le disait pas
+
+- **Les échecs de résolution de chaîne n'étaient plus réessayés.** Ils étaient mis en cache pour toute
+  la vie du processus : une première analyse lancée avant la saisie de la clé enregistrait « chaîne
+  introuvable » pour chacune, et plus aucun fichier ne réessayait — pas même après avoir saisi la clé
+  et relancé l'actualisation des métadonnées. Seules les réussites sont désormais retenues.
+- **Un échec de fournisseur s'écrit dans le journal du serveur.** Il était avalé en silence, ce qui
+  laissait devant un « rien trouvé » qu'aucune trace n'expliquait. Le relevé du quota consommé — une
+  unité, là où une seule recherche de chaîne en coûte cent — était le seul indice disponible.
+
+### Les deux mondes ne se croisent plus nulle part
+
+- **Le centre de correspondances du catalogue ignore les bibliothèques web.** Une chaîne étant stockée
+  comme une série, elle y entrait et s'y voyait proposer des candidats TMDB et TVDB — une chaîne
+  YouTube présentée comme « Série · 2023 ». Quatre requêtes étaient concernées, dont celle qui
+  applique une correction manuelle.
+- **Une bibliothèque web ouvre son propre écran de correspondances**, dont les candidats viennent de
+  la plateforme. Les chaînes y sont présentées avant leurs vidéos : tant qu'une chaîne n'est pas
+  identifiée, aucune de ses vidéos ne peut l'être, et la corriger débloque toute sa liste d'un coup.
+  Aucun code n'est partagé entre les deux écrans.
+<!-- /release -->
+
+Les deux défauts se tenaient : le premier empêchait de trouver quoi que ce soit, le second offrait un
+écran qui semblait pouvoir réparer cela et proposait des séries télévisées à la place. Ensemble, ils
+donnaient l'impression que la fonction ne marchait pas du tout — alors que la clé, l'API et les
+requêtes étaient correctes, ce qu'un appel direct à Google a confirmé.
+
+Le cache d'échecs mérite une note. Il avait été écrit pour épargner du quota, une recherche de chaîne
+coûtant cent unités. Il en épargnait effectivement — au prix d'une bibliothèque condamnée jusqu'au
+prochain redémarrage dès la première panne passagère. Ne pas retenir les échecs coûte, au pire, une
+tentative par fichier ; c'est le bon prix.
+
 ## 0.5.8.r3 — deux vignettes qu'on redemandait sans fin, et une recherche qui cherchait partout
 
 <!-- release -->

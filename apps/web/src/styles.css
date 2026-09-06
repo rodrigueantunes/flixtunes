@@ -1356,3 +1356,23 @@ html.bureau-video, body.bureau-video { background: transparent; }
 .web-fil button { padding: 0; border: 0; background: none; color: var(--blue-light); font: inherit;
   cursor: pointer; }
 .web-fil button:hover, .web-fil button:focus-visible { text-decoration: underline; }
+
+/*
+ * L'écran des correspondances web : la liste à gauche, la fiche choisie à droite.
+ *
+ * Même partage que l'écran du catalogue, parce que le geste est le même — on parcourt, on choisit, on
+ * corrige. Ce qui diffère est d'où viennent les candidats, et cela ne se voit pas dans la mise en page.
+ */
+.web-corr-corps { display: grid; grid-template-columns: minmax(220px, 1fr) 2fr; gap: var(--pas-3);
+  margin-top: var(--pas-3); align-items: start; }
+.web-corr-liste { display: grid; gap: .35rem; max-height: 60vh; overflow-y: auto; }
+.web-corr-liste h2 { margin: var(--pas-2) 0 .2rem; color: var(--muted); font-size: .78rem;
+  text-transform: uppercase; letter-spacing: .08em; }
+.web-corr-ligne { display: grid; gap: .1rem; padding: .5rem .65rem; border: 1px solid transparent;
+  border-radius: var(--rayon-commande); background: #ffffff08; color: inherit; text-align: left; cursor: pointer; }
+.web-corr-ligne:hover, .web-corr-ligne:focus-visible { border-color: var(--blue-light); background: #ffffff14; }
+.web-corr-ligne.active { border-color: var(--blue-light); background: #ffffff1a; }
+.web-corr-ligne small { color: var(--muted); font-size: .74rem; }
+.web-corr-detail { display: grid; gap: var(--pas-1); align-content: start; }
+
+@media (max-width: 720px) { .web-corr-corps { grid-template-columns: 1fr; } }

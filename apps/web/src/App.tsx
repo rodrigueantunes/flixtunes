@@ -37,6 +37,7 @@ const RayonWeb = lazy(() => import("./RayonWeb").then((module) => ({ default: mo
 const LecteurDirect = lazy(() => import("./LecteurDirect").then((module) => ({ default: module.LecteurDirect })));
 import { LibraryManager } from "./LibraryManager";
 import { MetadataManager } from "./MetadataManager";
+import { CorrespondancesWeb } from "./CorrespondancesWeb";
 import { SetupWizard } from "./SetupWizard";
 
 type CardItem = MediaItem & { seasonCount?: number };
@@ -1134,7 +1135,16 @@ export function App() {
       })().catch((cause: Error) => setError(cause.message)); }}
       onWatchlist={() => { const item = quickMenu.item; setQuickMenu(null); void api.setWatchlist(item.catalogId ?? item.id, profile.id, !item.inWatchlist)
         .then(() => loadHome()).catch((cause: Error) => setError(cause.message)); }} />}
-    {matchTarget && <div className="modal-backdrop"><MetadataManager library={matchTarget.library} focusCatalogId={matchTarget.catalogId}
-      onClose={() => setMatchTarget(null)} onChanged={() => void loadHome()} /></div>}
+    {/*
+      * Deux ecrans, choisis par le type de la bibliotheque.
+      *
+      * Une chaine web est stockee comme une serie : sans cet aiguillage, elle atterrissait dans
+      * l'ecran du catalogue et s'y voyait proposer des candidats TMDB et TVDB. Constate a l'ecran.
+      */}
+    {matchTarget && <div className="modal-backdrop">{matchTarget.library.kind === "web"
+      ? <CorrespondancesWeb library={matchTarget.library} profileId={profile.id}
+        onClose={() => setMatchTarget(null)} onChanged={() => void loadHome()} />
+      : <MetadataManager library={matchTarget.library} focusCatalogId={matchTarget.catalogId}
+        onClose={() => setMatchTarget(null)} onChanged={() => void loadHome()} />}</div>}
   </div>;
 }
