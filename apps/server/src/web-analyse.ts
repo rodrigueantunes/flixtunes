@@ -4,7 +4,9 @@ import type { ParsedMedia } from "./media-parser.js";
 import { cleDuPalier, episodeDepuisLeWeb, libelleDuPalier } from "./web-catalogue.js";
 import { lireCheminWeb, type CheminWeb, type RefusChemin } from "./web-chemins.js";
 import { fusionnerIdentites, lireAnnexeDuDisque, lireBalisesWeb, type IdentiteWeb } from "./web-identite.js";
-import { chercherYoutube, identifierChaineYoutube, resoudreParOEmbed, resoudreYoutube } from "./web-fournisseurs.js";
+import {
+  chercherYoutube, empechementYoutube, identifierChaineYoutube, resoudreParOEmbed, resoudreYoutube,
+} from "./web-fournisseurs.js";
 import { cacheRemoteArtwork } from "./artwork.js";
 
 /**
@@ -158,8 +160,12 @@ export function oublierLesChainesConnues(): void {
 
 /** Retenir sur la fiche de la chaîne son identifiant de plateforme, pour ne plus le chercher. */
 function retenirIdentiteDeChaine(chaineId: string, identifiant: string): void {
+  // Le statut suit l'identifiant : une chaîne dont on connaît l'identifiant restait `unmatched`, et
+  // l'écran de correction la présentait comme « à identifier » alors qu'elle l'était.
   db.prepare(`UPDATE catalog_items SET external_provider = 'youtube', external_id = ?,
-    updated_at = CURRENT_TIMESTAMP WHERE id = ? AND metadata_locked = 0`).run(identifiant, chaineId);
+    match_status = CASE WHEN match_status = 'manual' THEN match_status ELSE 'automatic' END,
+    match_confidence = 1, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND metadata_locked = 0`).run(identifiant, chaineId);
 }
 
 /**
@@ -189,11 +195,90 @@ function identifiantRetenu(catalogId: string | null): string | null {
   return ligne?.external_id ?? null;
 }
 
+/** Délai avant de refaire, pour le même terme, une recherche restée sans réponse. */
+export const DELAI_RECHERCHE_VAINE_JOURS = 7;
+
+function rechercheRecemmentVaine(libraryId: string, cheminFichier: string, terme: string, maintenant: number): boolean {
+  const ligne = db.prepare("SELECT terme, cherchee_le FROM web_recherches_vaines WHERE library_id = ? AND file_path = ?")
+    .get(libraryId, cheminFichier) as { terme: string; cherchee_le: string } | undefined;
+  // Un autre terme est une autre recherche : un fichier renommé mérite sa chance tout de suite.
+  if (!ligne || ligne.terme !== terme) return false;
+  const quand = Date.parse(ligne.cherchee_le);
+  return Number.isFinite(quand) && maintenant - quand < DELAI_RECHERCHE_VAINE_JOURS * 86_400_000;
+}
+
+/**
+ * Chercher une vidéo, sans repayer une recherche qui vient d'échouer.
+ *
+ * Une recherche coûte cent unités, et rien ne retenait son échec : chaque actualisation la refaisait
+ * pour le même résultat. Sur une installation réelle, 22 vidéos introuvables coûtaient 2 200 unités
+ * par passe. L'échec est donc retenu une semaine **pour ce terme-là**.
+ *
+ * Seul un « rien trouvé » est retenu. Une exception — réseau coupé, réponse illisible — traverse sans
+ * rien écrire : ce n'est pas une réponse de la plateforme, et la retenir condamnerait la vidéo pour
+ * une panne passagère. L'absence de clé ou de budget est écartée avant même d'appeler, pour la même
+ * raison.
+ */
+export async function chercherSansRepayer(args: {
+  libraryId: string;
+  cheminFichier: string;
+  terme: string;
+  chercher: () => Promise<IdentiteWeb | null>;
+  maintenant?: number;
+}): Promise<IdentiteWeb | null> {
+  const maintenant = args.maintenant ?? Date.now();
+  if (rechercheRecemmentVaine(args.libraryId, args.cheminFichier, args.terme, maintenant)) {
+    journalWeb("recherche-differee", { terme: args.terme });
+    return null;
+  }
+  const trouvee = await args.chercher();
+  if (trouvee) {
+    db.prepare("DELETE FROM web_recherches_vaines WHERE library_id = ? AND file_path = ?")
+      .run(args.libraryId, args.cheminFichier);
+  } else {
+    db.prepare(`INSERT INTO web_recherches_vaines (library_id, file_path, terme, cherchee_le) VALUES (?, ?, ?, ?)
+      ON CONFLICT(library_id, file_path) DO UPDATE SET terme = excluded.terme, cherchee_le = excluded.cherchee_le`)
+      .run(args.libraryId, args.cheminFichier, args.terme, new Date(maintenant).toISOString());
+    journalWeb("video-introuvable", { terme: args.terme });
+  }
+  return trouvee;
+}
+
+/**
+ * Ce que la base sait déjà de cette vidéo, pour ne pas le perdre quand la plateforme se tait.
+ *
+ * Une actualisation redemande tout, et ce qu'elle ne reçoit pas, elle l'écrasait. Une vidéo retirée
+ * de YouTube — un retrait pour droits d'auteur suffit — ne répond plus : sa date repassait à vide, et
+ * son identifiant aussi, si bien qu'elle était **recherchée par son titre à cent unités** à la passe
+ * suivante. « Figé une fois trouvé » vaut pour la date autant que pour la vignette.
+ *
+ * Lu **avant** que le scanner ne réécrive la fiche et le média, sans quoi il n'y aurait plus rien à
+ * lire. Le titre n'est repris que d'une fiche identifiée : celui d'une fiche qui ne l'est pas n'est
+ * que l'ancien nom de fichier, et l'emporterait sur le titre qu'on vient de rétablir.
+ */
+function identiteDejaRetenue(catalogId: string | null, cheminFichier: string): IdentiteWeb | null {
+  const media = db.prepare("SELECT air_date FROM media_items WHERE file_path = ?")
+    .get(cheminFichier) as { air_date: string | null } | undefined;
+  const fiche = catalogId
+    ? db.prepare("SELECT title, external_id FROM catalog_items WHERE id = ? AND external_provider = 'youtube'")
+      .get(catalogId) as { title: string; external_id: string | null } | undefined
+    : undefined;
+  const identifiant = fiche?.external_id ?? null;
+  const publieeLe = media?.air_date ?? null;
+  if (!identifiant && !publieeLe) return null;
+  return {
+    titre: identifiant ? fiche?.title ?? null : null, chaine: null, plateforme: null, identifiant, url: null,
+    publieeLe, annee: publieeLe ? Number(publieeLe.slice(0, 4)) || null : null,
+    description: null, dureeSecondes: null, vignette: null, playlist: null,
+  };
+}
+
 async function completerParLaPlateforme(
   library: LibraryFolder,
   chemin: CheminWeb,
   locale: IdentiteWeb,
   catalogId: string | null,
+  cheminFichier: string,
 ): Promise<IdentiteWeb | null> {
   if (locale.titre && locale.publieeLe && locale.vignette) return null;
 
@@ -214,7 +299,18 @@ async function completerParLaPlateforme(
       // ne cherche pas : une recherche mondiale rendrait la vidéo d'un autre au titre voisin.
       const chaine = await identiteDeLaChaine(library, chemin);
       if (!chaine) return null;
-      return await chercherYoutube(chaine.identifiant, locale.titre ?? chemin.titre);
+      // Sans clé ni budget, on ne cherche pas — et surtout on ne retient rien : ce n'est pas la
+      // plateforme qui a répondu « introuvable », c'est la recherche qui n'est pas partie.
+      const empechement = empechementYoutube(100);
+      if (empechement) {
+        journalWeb("recherche-empechee", { terme: locale.titre ?? chemin.titre, motif: empechement });
+        return null;
+      }
+      const terme = locale.titre ?? chemin.titre;
+      return await chercherSansRepayer({
+        libraryId: library.id, cheminFichier, terme,
+        chercher: () => chercherYoutube(chaine.identifiant, terme),
+      });
     }
     // Ailleurs, sans adresse d'origine, les métadonnées locales font seules — et le dire vaut mieux
     // que d'inventer une correspondance.
@@ -241,9 +337,12 @@ export async function analyserVideoWeb(
   if (!lecture.valide) return { valide: false, message: messageDeRefus(lecture.raison) };
 
   const locale = fusionnerIdentites(await lireAnnexeDuDisque(cheminFichier), lireBalisesWeb(payloadFfprobe));
-  // Le fichier d'abord, la plateforme en rattrapage : c'est l'ordre le moins cher et le plus sûr.
+  const dejaRetenue = identiteDejaRetenue(catalogIdConnu, cheminFichier);
+  // Le fichier d'abord, la plateforme en rattrapage, et ce qu'on savait déjà en dernier recours :
+  // une réponse fraîche l'emporte toujours, mais un silence n'efface plus rien.
   const identite = fusionnerIdentites(locale,
-    await completerParLaPlateforme(library, lecture.chemin, locale, catalogIdConnu));
+    await completerParLaPlateforme(library, lecture.chemin, locale, catalogIdConnu, cheminFichier),
+    dejaRetenue);
   const cle = cleDuPalier(lecture.chemin);
   const palier = numeroDePalier(library, lecture.chemin, cle);
   const parsed = episodeDepuisLeWeb(
@@ -339,7 +438,18 @@ export async function illustrerVideoWeb(args: {
   retenirIdentiteWeb(args.catalogId, args.identite.identifiant);
 
   try {
-    if (args.identite.vignette && !dejaIllustree(args.catalogId)) {
+    if (dejaIllustree(args.catalogId)) {
+      /*
+       * Déjà téléchargée : rien à redemander, mais elle doit **se voir**.
+       *
+       * Le client lit la vignette sur le média, et l'enregistrement du média vient d'y remettre
+       * l'affiche de la saison — l'avatar de la chaîne. Sauter la vidéo parce que sa fiche est
+       * illustrée laissait donc l'avatar en place pour toujours : 95 vignettes présentes sur leur
+       * fiche, aucune à l'écran. On la reprend de la fiche, sans rien télécharger.
+       */
+      db.prepare(`UPDATE media_items SET poster_url = (SELECT poster_url FROM catalog_items WHERE id = ?),
+        updated_at = CURRENT_TIMESTAMP WHERE catalog_id = ?`).run(args.catalogId, args.catalogId);
+    } else if (args.identite.vignette) {
       retenirIllustration(args.catalogId,
         await cacheRemoteArtwork(args.catalogId, "poster", args.identite.vignette, args.langue, "youtube"),
         true);

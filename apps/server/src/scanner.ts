@@ -344,11 +344,24 @@ async function applyEntityArtwork(
  * pour les fiches dont l'affiche ne peut pas être produite — vidéo illisible, fichier tronqué, codec
  * inconnu. Ces extractions échouaient et recommençaient indéfiniment, une par fichier et par analyse.
  */
-async function backfillArtwork(catalogId: string, mediaPath: string): Promise<void> {
+async function backfillArtwork(catalogId: string, mediaPath: string, web = false): Promise<void> {
   const item = db.prepare("SELECT id, parent_id, kind, poster_url, backdrop_url FROM catalog_items WHERE id = ?").get(catalogId) as
     { id: string; parent_id: string | null; kind: "movie" | "show" | "season" | "episode";
       poster_url: string | null; backdrop_url: string | null } | undefined;
   if (!item) return;
+  /*
+   * Une vidéo web qui a sa propre vignette la garde.
+   *
+   * Ce rattrapage tourne pour chaque fichier inchangé, à chaque analyse. Pour un épisode, il recopie
+   * sur le média l'affiche de la saison ou de la série — pour une chaîne, son avatar. Une vidéo n'a
+   * pas de fond d'écran : la sortie anticipée ci-dessous ne la protégeait donc jamais, et une simple
+   * analyse des fichiers remettait l'avatar par-dessus la vignette. Réservé au web : aucun épisode de
+   * série n'a d'image propre sur sa fiche, et rien ici ne doit pouvoir changer leurs affiches.
+   */
+  if (web && item.kind === "episode" && item.poster_url?.startsWith("/api/artwork/")) {
+    db.prepare("UPDATE media_items SET poster_url = ? WHERE catalog_id = ?").run(item.poster_url, item.id);
+    return;
+  }
   if (item.poster_url?.startsWith("/api/artwork/") && item.backdrop_url?.startsWith("/api/artwork/")) return;
   if (item.kind === "movie") {
     const art = await applyEntityArtwork(item.id, null, mediaPath, 0);
@@ -613,13 +626,13 @@ export async function scanLibraryById(libraryId: string, options: ScanOptions = 
       if (unchanged && !forceMetadata && ratingBackfill) {
         if (await backfillRating(previous!.catalog_id!, filePath, library)) result.enriched += 1;
         touch.run(library.id, filePath);
-        await backfillArtwork(previous!.catalog_id!, filePath);
+        await backfillArtwork(previous!.catalog_id!, filePath, library.resolvedKind === "web");
         if (result.discovered % 20 === 0) options.onProgress?.(result);
         continue;
       }
       if (unchanged && !forceMetadata) {
         touch.run(library.id, filePath);
-        await backfillArtwork(previous.catalog_id!, filePath);
+        await backfillArtwork(previous.catalog_id!, filePath, library.resolvedKind === "web");
         if (result.discovered % 20 === 0) options.onProgress?.(result);
         continue;
       }
@@ -709,15 +722,6 @@ export async function scanLibraryById(libraryId: string, options: ScanOptions = 
       });
 
       const catalog = await syncCatalog(library, parsed, bundle, filePath, previous?.catalog_id ?? null);
-      if (lectureWeb) {
-        // Sans statut explicite, une video web herite du defaut `unmatched` et se declare douteuse
-        // meme quand la plateforme l'a parfaitement identifiee.
-        noterCorrespondanceWeb(catalog.catalogId, lectureWeb.identite);
-        await illustrerVideoWeb({
-          library, catalogId: catalog.catalogId, chaineId: rootCatalogId(catalog.catalogId),
-          chemin: lectureWeb.chemin, identite: lectureWeb.identite, langue: library.language,
-        });
-      }
       storeMatchProposal(catalog.catalogId, bundle ? null : proposal);
       // Une video web n'est pas un episode. Le raccourci qui l'enregistrait comme tel lui donnait la
       // reprise et l'enchainement sans code neuf, mais le type voyage avec la fiche : « Ajouts
@@ -736,6 +740,26 @@ export async function scanLibraryById(libraryId: string, options: ScanOptions = 
         catalog.catalogId, embedded ? JSON.stringify(embedded.raw) : "{}", JSON.stringify(embedded?.audioLanguages ?? []),
         JSON.stringify(embedded?.subtitleLanguages ?? []), parsed.contentType ?? "movie", parsed.edition ?? null, JSON.stringify(parsed.externalIds ?? {}),
       );
+      if (lectureWeb) {
+        /*
+         * **Après** l'enregistrement du média, et c'est tout le correctif.
+         *
+         * Cet appel précédait l'`upsert` ci-dessus, qui réécrit `media_items.poster_url` avec
+         * l'affiche de la saison — pour une chaîne, son avatar. La vignette de la vidéo était donc
+         * posée puis écrasée une ligne plus loin ; pour un fichier neuf, elle ne pouvait même pas
+         * l'être, la ligne du média n'existant pas encore. Relevé sur une installation réelle :
+         * 95 vignettes téléchargées et présentes sur leur fiche, et les 117 vidéos affichant
+         * l'avatar de la chaîne.
+         *
+         * Sans statut explicite, une vidéo web hérite aussi du défaut `unmatched` et se déclare
+         * douteuse même quand la plateforme l'a parfaitement identifiée.
+         */
+        noterCorrespondanceWeb(catalog.catalogId, lectureWeb.identite);
+        await illustrerVideoWeb({
+          library, catalogId: catalog.catalogId, chaineId: rootCatalogId(catalog.catalogId),
+          chemin: lectureWeb.chemin, identite: lectureWeb.identite, langue: library.language,
+        });
+      }
       result.imported += 1;
       // Le fichier est entré : il n'a plus rien à faire dans le journal des laissés-pour-compte.
       clearSkippedFile(library.id, filePath);

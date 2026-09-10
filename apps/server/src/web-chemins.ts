@@ -162,8 +162,27 @@ export function reconnaitPlateforme(libelle: string): Plateforme | null {
  *
  * Le reste est de la mise au propre : espaces multiples, tirets et blancs en bordure.
  */
+/**
+ * Les caractères qu'un téléchargeur substitue à ceux qu'un nom de fichier interdit.
+ *
+ * yt-dlp ne peut pas écrire `/` ni `:` dans un nom de fichier ; il les remplace par leurs équivalents
+ * pleine chasse — `⧸`, `：`, `＂`, `？`… Le titre sur le disque n'est donc **pas** celui de la vidéo,
+ * et la recherche partait avec lui. Mesuré sur une installation réelle : « Pranque ： The Door ⧸
+ * Hologram ghost prank » ne trouvait rien sur sa chaîne ; le même titre rétabli trouvait la vidéo, sa
+ * date et sa vignette. Le signe `⧸` figurait dans 14 des 22 vidéos jamais identifiées, et dans 3
+ * seulement des 95 qui l'étaient.
+ */
+const SUBSTITUTIONS_DE_TELECHARGEMENT: Record<string, string> = {
+  "⧸": "/", "⧹": "\\", "：": ":", "＊": "*", "？": "?", "＂": "\"", "＜": "<", "＞": ">", "｜": "|",
+};
+
+export function retablirCaracteresDeTelechargement(valeur: string): string {
+  return valeur.replace(/[⧸⧹：＊？＂＜＞｜]/g, (signe) => SUBSTITUTIONS_DE_TELECHARGEMENT[signe] ?? signe);
+}
+
 function nettoyerNom(valeur: string): string {
-  const sansTiretsBas = valeur.includes(" ") ? valeur : valeur.replace(/_+/g, " ");
+  const retabli = retablirCaracteresDeTelechargement(valeur);
+  const sansTiretsBas = retabli.includes(" ") ? retabli : retabli.replace(/_+/g, " ");
   return sansTiretsBas.replace(/\s+/g, " ").replace(/^[\s.\-–—]+|[\s.\-–—]+$/g, "").trim();
 }
 

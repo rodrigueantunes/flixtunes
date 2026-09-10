@@ -1,5 +1,49 @@
 # Journal des versions
 
+## 0.5.8.r12 — des vignettes téléchargées qu'on ne voyait pas, et des vidéos cherchées sous un faux titre
+
+<!-- release -->
+### Les vignettes
+
+- **117 vidéos affichaient l'avatar de leur chaîne, alors que 95 vraies vignettes étaient téléchargées
+  et posées sur leur fiche.** Relevé sur la base réelle. Trois écritures remettaient l'avatar sur le
+  média, que le client lit : l'enregistrement du média, qui suivait l'illustration et l'écrasait ;
+  l'illustration, qui sautait toute vidéo dont la fiche était déjà illustrée ; et le rattrapage des
+  fichiers inchangés, qui recopie sur chaque épisode l'affiche de sa saison. Aucune ne le fait plus,
+  et les 95 vignettes reviennent **sans être retéléchargées** — elles étaient déjà sur le NAS.
+- Réservé au web : aucun épisode de série n'a d'image propre sur sa fiche, et rien de ce correctif
+  ne peut changer leurs affiches.
+
+### Les dates
+
+- **22 vidéos n'avaient ni date ni identifiant.** yt-dlp écrit « ⧸ » à la place de « / » et « ： » à
+  la place de « : », faute de pouvoir les mettre dans un nom de fichier — et la recherche partait avec
+  ce titre-là. Vérifié sur l'API avant de corriger, trois recherches : la vidéo introuvable sous son
+  nom de fichier est trouvée, date et vignette comprises, sous son titre rétabli. Toute la table de
+  substitution de yt-dlp est désormais rétablie.
+- **Une actualisation effaçait ce que la plateforme ne redisait pas.** Une vidéo que YouTube ne rend
+  plus — un retrait pour droits d'auteur suffit — perdait sa date et son identifiant, puis était
+  recherchée par son titre à cent unités. Ce qui est connu reste acquis quand la plateforme se tait.
+
+### Le quota
+
+- **Une recherche restée vaine était refaite à chaque actualisation**, à cent unités : 2 200 par passe
+  pour les mêmes 22 vidéos. L'échec est retenu une semaine pour ce titre ; un titre qui change est
+  recherché aussitôt. Ni une clé absente, ni un budget épuisé, ni une panne réseau ne comptent comme
+  un échec.
+- Une chaîne identifiée ne se déclare plus « à identifier » dans l'écran de correction.
+<!-- /release -->
+
+La prochaine actualisation coûtera environ 2 300 unités **une fois** — les 22 vidéos recherchées sous
+leur titre rétabli, plus une unité par vidéo déjà identifiée —, puis une centaine par passe. Quelques
+vidéos resteront introuvables, et c'est le bon résultat : des clips d'autres artistes rangés sous la
+chaîne, qu'une recherche limitée à cette chaîne ne peut pas trouver. Ils se corrigent à la main.
+
+Chaque correctif est couvert par un test qui échoue quand on le retire — vérifié en réintroduisant
+les sept défauts un à un. Les deux cas de vignettes passent par le vrai scanner, sur un vrai dossier :
+c'est l'ordre des écritures qui était en faute, et un test qui appellerait l'illustration seule
+l'aurait cru correct.
+
 ## 0.5.8.r11 — le rayon d'une fiche voyage avec elle
 
 <!-- release -->

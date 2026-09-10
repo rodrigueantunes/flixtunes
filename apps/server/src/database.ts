@@ -302,6 +302,25 @@ ensureMediaColumn("source_ids_json", "TEXT NOT NULL DEFAULT '{}'");
  * ou deux jours des que deux publications d'un meme jour se sont decalees.
  */
 ensureMediaColumn("air_date", "TEXT");
+/*
+ * Les recherches de vidéos web restées sans réponse.
+ *
+ * Une recherche coûte cent unités de quota sur les 9 000 d'une journée. Rien ne retenait qu'elle
+ * avait échoué : chaque actualisation la refaisait, pour le même résultat. Relevé sur une
+ * installation réelle, 22 vidéos introuvables repayaient 2 200 unités à chaque passe — dont des clips
+ * d'autres artistes rangés sous une chaîne, qu'une recherche limitée à cette chaîne ne trouvera jamais.
+ *
+ * La clé est le fichier et non la fiche : au premier passage d'un fichier neuf, la fiche n'existe pas
+ * encore. Le terme cherché est retenu avec la date, pour qu'un titre qui change — fichier renommé,
+ * caractères rétablis — soit recherché de nouveau sans attendre.
+ */
+db.exec(`CREATE TABLE IF NOT EXISTS web_recherches_vaines (
+  library_id TEXT NOT NULL REFERENCES library_folders(id) ON DELETE CASCADE,
+  file_path TEXT NOT NULL,
+  terme TEXT NOT NULL,
+  cherchee_le TEXT NOT NULL,
+  PRIMARY KEY(library_id, file_path)
+)`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_media_available_library_created ON media_items(available, library_id, created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_media_catalog_available ON media_items(catalog_id, available);
   -- idx_catalog_library_kind ne sert pas aux parcours qui ne connaissent pas la bibliothèque : la
