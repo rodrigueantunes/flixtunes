@@ -8,7 +8,9 @@ import tv.flixtunes.app.data.Details
 import tv.flixtunes.app.data.Media
 import tv.flixtunes.app.data.Season
 import tv.flixtunes.app.ui.ecrans.dureeLisible
+import tv.flixtunes.app.ui.ecrans.TriWeb
 import tv.flixtunes.app.ui.ecrans.estChaineWeb
+import tv.flixtunes.app.ui.ecrans.niveauDe
 import tv.flixtunes.app.ui.ecrans.retourDeNiveau
 
 /**
@@ -158,5 +160,33 @@ class DureeWebTest {
     fun `ne rend rien pour une duree inconnue`() {
         assertEquals(null, dureeLisible(null))
         assertEquals(null, dureeLisible(0))
+    }
+}
+
+/**
+ * La vignette d'un dossier : celle de sa vidéo la plus récente qui a la sienne — même règle que le Web.
+ */
+class VignetteDeDossierTest {
+    private val avatar = "/api/artwork/avatar"
+
+    private fun video(titre: String, vignette: String, date: String) =
+        media("video", titre, airDate = date).copy(posterUrl = vignette)
+
+    @Test
+    fun `prend la video la plus recente, a toute profondeur, qui a sa propre vignette`() {
+        // « Pranks / 2024 » contient la plus récente qui a sa vignette. Une vidéo encore plus récente
+        // mais sans vignette propre porte l'avatar de la chaîne : la prendre ferait ressembler toutes
+        // les cartes à l'avatar.
+        val niveau = niveauDe(
+            listOf(
+                palier("Pranks", listOf(video("v1", "/api/artwork/v1", "2024-05-01"), video("v3", avatar, "2025-01-01"))),
+                palier("Pranks / 2024", listOf(video("v2", "/api/artwork/v2", "2024-09-01"))),
+                palier("Clips", listOf(video("v4", avatar, "2023-01-01"))),
+            ),
+            emptyList(), TriWeb.RECENTES, avatar,
+        )
+
+        assertEquals("/api/artwork/v2", niveau.vignettes["Pranks"])
+        assertEquals(null, niveau.vignettes["Clips"])
     }
 }

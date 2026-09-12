@@ -87,3 +87,39 @@ describe("la carte d'une vidéo", () => {
     expect(date?.nextElementSibling).toBe(duree);
   });
 });
+
+describe("la vignette d'un dossier", () => {
+  it("est celle de sa vidéo la plus récente, à toute profondeur, qui a sa propre vignette", async () => {
+    /*
+     * « Pranks / 2024 » contient la vidéo datée la plus récente qui a sa vignette : le dossier
+     * « Pranks » la prend. Une vidéo encore plus récente mais sans vignette propre porte l'avatar de
+     * la chaîne — la prendre ferait ressembler toutes les cartes à l'avatar.
+     */
+    apiMock.details.mockResolvedValue({
+      item: { posterUrl: "/api/artwork/avatar" },
+      seasons: [
+        { title: "Pranks", episodes: [
+          { ...video("v1", "Le Pire Stagiaire"), posterUrl: "/api/artwork/v1", airDate: "2024-05-01" },
+          { ...video("v3", "Sans vignette"), posterUrl: "/api/artwork/avatar", airDate: "2025-01-01" },
+        ] },
+        { title: "Pranks / 2024", episodes: [
+          { ...video("v2", "Le Pire Gendre"), posterUrl: "/api/artwork/v2", airDate: "2024-09-01" },
+        ] },
+        { title: "Clips", episodes: [
+          { ...video("v4", "Clip sans vignette"), posterUrl: "/api/artwork/avatar", airDate: "2023-01-01" },
+        ] },
+      ],
+    });
+    render(<RayonWeb profileId="p" onPlay={() => {}} />);
+    fireEvent.click(await screen.findByText("Greg Guillotin"));
+
+    const pranks = (await screen.findByText("Pranks")).closest("button")!;
+    expect(pranks.querySelector("img")?.getAttribute("src")).toBe("/api/artwork/v2");
+    expect(pranks.querySelector(".web-dossier-badge"), "le badge dit que c'est un dossier").not.toBeNull();
+
+    // Aucune vidéo du dossier n'a sa vignette : la carte garde l'icône, et surtout pas l'avatar.
+    const clips = screen.getByText("Clips").closest("button")!;
+    expect(clips.querySelector("img")).toBeNull();
+    expect(clips.querySelector(".web-dossier-icone")).not.toBeNull();
+  });
+});

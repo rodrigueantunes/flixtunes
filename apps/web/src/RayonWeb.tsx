@@ -220,7 +220,22 @@ export function RayonWeb({ profileId, onPlay }: { profileId: string; onPlay: (it
     const compte = (segment: string) => sousArbre
       .filter((palier) => palier.segments[chemin.length] === segment)
       .reduce((total, palier) => total + palier.saison.episodes.length, 0);
-    return { dossiers, videos: trier(videos, tri), compte };
+    /*
+     * La vignette d'un dossier : celle de sa vidéo la plus récente, à toute profondeur.
+     *
+     * « La plus récente » par date de publication, puisque c'est l'ordre du rayon — la même vidéo que
+     * celle qu'on verrait en premier en ouvrant le dossier et ses sous-dossiers.
+     *
+     * Une vidéo sans vignette propre porte l'avatar de sa chaîne : un dossier qui la prendrait
+     * afficherait l'avatar, et toutes les cartes se ressembleraient. On prend donc la plus récente qui
+     * a **sa** vignette ; s'il n'y en a aucune, la carte garde l'icône de dossier.
+     */
+    const avatar = details?.item?.posterUrl ?? null;
+    const vignette = (segment: string) => trier(sousArbre
+      .filter((palier) => palier.segments[chemin.length] === segment)
+      .flatMap((palier) => palier.saison.episodes)
+      .filter((episode) => episode.posterUrl && episode.posterUrl !== avatar), "recent")[0]?.posterUrl ?? null;
+    return { dossiers, videos: trier(videos, tri), compte, vignette };
   }, [details, chemin, tri]);
 
   if (!chaine) {
@@ -297,7 +312,16 @@ export function RayonWeb({ profileId, onPlay }: { profileId: string; onPlay: (it
       </button>
       {niveau.dossiers.map((dossier) => <button key={dossier} type="button" className="web-carte web-carte-dossier"
         onClick={() => setChemin([...chemin, dossier])}>
-        <span className="web-dossier-icone" aria-hidden="true"><Icon name="folder" /></span>
+        {/*
+          * La vignette de la vidéo la plus récente, et un badge qui dit que c'est un dossier : sans lui,
+          * une carte de dossier illustrée se confondrait avec une carte de vidéo.
+          */}
+        {niveau.vignette(dossier)
+          ? <span className="web-dossier-apercu">
+            <Vignette url={niveau.vignette(dossier)} nom={dossier} classe="web-paysage" />
+            <span className="web-dossier-badge" aria-hidden="true"><Icon name="folder" /></span>
+          </span>
+          : <span className="web-dossier-icone" aria-hidden="true"><Icon name="folder" /></span>}
         <span className="web-nom">{dossier}</span>
         <small>{niveau.compte(dossier)} {niveau.compte(dossier) > 1 ? "vidéos" : "vidéo"}</small>
       </button>)}

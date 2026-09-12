@@ -1315,6 +1315,18 @@ html.bureau-video, body.bureau-video { background: transparent; }
 .web-initiale { display: grid; place-items: center; font-size: 1.5rem; font-weight: 700; color: var(--muted); }
 .web-dossier-icone { display: grid; place-items: center; width: 100%; aspect-ratio: 16 / 9;
   border-radius: var(--rayon-commande); background: #ffffff0d; color: var(--blue-light); }
+/*
+ * Un dossier illustré par la vignette de sa vidéo la plus récente.
+ *
+ * Le badge reste : il distingue d'un coup d'œil un dossier, qu'on ouvre, d'une vidéo, qu'on lance.
+ * Posé sur un voile sombre, il se lit sur n'importe quelle vignette.
+ */
+.web-dossier-apercu { position: relative; display: block; width: 100%; }
+.web-dossier-badge { position: absolute; left: var(--pas-1); bottom: var(--pas-1); display: grid; place-items: center;
+  width: 30px; height: 30px; border-radius: var(--rayon-commande); background: #070a11c9; color: var(--blue-light);
+  backdrop-filter: blur(6px); }
+.web-dossier-badge svg { width: 62%; height: 62%; fill: none; stroke: currentColor; stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round; }
 .web-dossier-icone svg { width: 34%; height: 34%; fill: none; stroke: currentColor; stroke-width: 1.6;
   stroke-linecap: round; stroke-linejoin: round; }
 

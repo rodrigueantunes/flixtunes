@@ -1,5 +1,25 @@
 # Journal des versions
 
+## 0.5.8.r16 — des dossiers qui montrent ce qu'ils contiennent
+
+<!-- release -->
+### Rayon Web, sur le client Web, Android TV et mobile
+
+- **Une carte de dossier montre la vignette de sa vidéo la plus récente**, là où elle n'affichait
+  qu'une icône de dossier sur le Web et des initiales sur Android. « La plus récente » par date de
+  publication, puisque c'est l'ordre du rayon, et à toute profondeur : un dossier dont les vidéos
+  récentes sont rangées dans un sous-dossier prend quand même leur vignette.
+- **Un badge de dossier reste posé sur l'image**, en bas à gauche : sans lui, une carte de dossier
+  illustrée se confondrait avec une carte de vidéo, alors que l'une s'ouvre et l'autre se lance.
+  C'est le même dessin sur les deux clients — le tracé de l'icône Web, repris tel quel sur Android.
+- **Une vidéo sans vignette propre n'est pas retenue.** Elle porte l'avatar de sa chaîne, et un dossier
+  qui la prendrait ressemblerait à tous les autres. On passe à la plus récente qui a sa propre
+  vignette ; s'il n'y en a aucune, la carte garde son icône.
+<!-- /release -->
+
+Rien ne change côté serveur : la fiche d'une chaîne livrait déjà, pour chaque vidéo, sa vignette et sa
+date de publication.
+
 ## 0.5.8.r15 — la durée de chaque vidéo, à droite de sa date
 
 <!-- release -->

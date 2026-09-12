@@ -1,5 +1,6 @@
 package tv.flixtunes.app.ui.ecrans
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -27,14 +29,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import tv.flixtunes.app.R
 import tv.flixtunes.app.data.Details
 import tv.flixtunes.app.data.Media
 import tv.flixtunes.app.data.Season
+import tv.flixtunes.app.ui.BleuClair
 import tv.flixtunes.app.ui.EpisodeBas
 import tv.flixtunes.app.ui.EpisodeHaut
 import tv.flixtunes.app.ui.FormatImageTv
@@ -143,6 +149,8 @@ internal data class NiveauWeb(
     val dossiers: List<String>,
     val videos: List<Media>,
     val comptes: Map<String, Int>,
+    /** La vignette de chaque dossier, ou `null` quand aucune de ses vidéos n'a la sienne. */
+    val vignettes: Map<String, String?> = emptyMap(),
 )
 
 /**
@@ -164,7 +172,7 @@ internal fun retourDeNiveau(chemin: List<String>, titreChaine: String): RetourWe
         RetourWeb("Dossier parent", chemin.getOrNull(chemin.size - 2) ?: titreChaine, sortDeLaChaine = false)
     }
 
-internal fun niveauDe(saisons: List<Season>, chemin: List<String>, tri: TriWeb): NiveauWeb {
+internal fun niveauDe(saisons: List<Season>, chemin: List<String>, tri: TriWeb, avatar: String? = null): NiveauWeb {
     val sousArbre = saisons
         .map { it to segmentsDuPalier(it) }
         .filter { (_, segments) -> chemin.indices.all { segments.getOrNull(it) == chemin[it] } }
@@ -184,7 +192,25 @@ internal fun niveauDe(saisons: List<Season>, chemin: List<String>, tri: TriWeb):
         .filter { (_, segments) -> segments.size == chemin.size }
         .flatMap { (saison, _) -> saison.episodes }
 
-    return NiveauWeb(dossiers, trierVideos(videos, tri), comptes)
+    /*
+     * La vignette d'un dossier : celle de sa vidéo la plus récente, à toute profondeur.
+     *
+     * « La plus récente » par date de publication, puisque c'est l'ordre du rayon. Une vidéo sans
+     * vignette propre porte l'avatar de sa chaîne : un dossier qui la prendrait afficherait l'avatar, et
+     * toutes les cartes se ressembleraient. On prend donc la plus récente qui a **sa** vignette ; s'il
+     * n'y en a aucune, la carte garde son dessin de dossier. Même règle que le client Web.
+     */
+    val vignettes = dossiers.associateWith { segment ->
+        trierVideos(
+            sousArbre
+                .filter { (_, segments) -> segments.getOrNull(chemin.size) == segment }
+                .flatMap { (saison, _) -> saison.episodes }
+                .filter { !it.posterUrl.isNullOrBlank() && it.posterUrl != avatar },
+            TriWeb.RECENTES,
+        ).firstOrNull()?.posterUrl
+    }
+
+    return NiveauWeb(dossiers, trierVideos(videos, tri), comptes, vignettes)
 }
 
 @Composable
@@ -199,7 +225,7 @@ internal fun EcranChaineWeb(
     val edge = gabarit.margeBord.dp
     var chemin by remember(details.item.id) { mutableStateOf(emptyList<String>()) }
     var tri by remember(details.item.id) { mutableStateOf(TriWeb.RECENTES) }
-    val niveau = remember(details, chemin, tri) { niveauDe(details.seasons, chemin, tri) }
+    val niveau = remember(details, chemin, tri) { niveauDe(details.seasons, chemin, tri, details.item.posterUrl) }
     val grille = rememberLazyGridState()
 
     Column(Modifier.fillMaxSize().padding(horizontal = edge)) {
@@ -261,7 +287,9 @@ internal fun EcranChaineWeb(
                 )
             }
             items(niveau.dossiers, key = { "dossier-$it" }) { dossier ->
-                CarteDossierWeb(dossier, niveau.comptes[dossier] ?: 0) { chemin = chemin + dossier }
+                CarteDossierWeb(dossier, niveau.comptes[dossier] ?: 0, vignette = image(niveau.vignettes[dossier])) {
+                    chemin = chemin + dossier
+                }
             }
             items(niveau.videos, key = { it.id }) { video ->
                 CarteVideoWeb(video, image(video.posterUrl ?: video.backdropUrl), { play(video) }) { ouvrirMenu(video) }
@@ -287,7 +315,14 @@ private fun MietteDeChemin(libelle: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun CarteDossierWeb(nom: String, videos: Int?, sousTitre: String? = null, onClick: () -> Unit) {
+private fun CarteDossierWeb(
+    nom: String,
+    videos: Int?,
+    sousTitre: String? = null,
+    /** La vignette de la vidéo la plus récente du dossier, déjà résolue en adresse complète. */
+    vignette: String? = null,
+    onClick: () -> Unit,
+) {
     val gabarit = LocalGabarit.current
     Column(
         Modifier
@@ -313,17 +348,38 @@ private fun CarteDossierWeb(nom: String, videos: Int?, sousTitre: String? = null
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            // Un dossier n'a rien à montrer : ses initiales tiennent lieu de vignette, comme le fait
-            // déjà la grille du direct pour une chaîne sans logo.
-            Text(
-                // La remontee porte une fleche, pas des initiales : son geste est l'inverse de celui
-                // d'un dossier, et la confondre ferait descendre la ou l'on voulait remonter.
-                if (videos == null) "↰" else nom.take(2).uppercase(),
-                color = Color.White.copy(alpha = .22f),
-                fontSize = 34.sp,
-                fontFamily = PoliceTitre,
-                fontWeight = FontWeight.ExtraBold,
-            )
+            if (vignette != null) {
+                // La vignette de la vidéo la plus récente, et le badge du client Web qui dit que c'est
+                // un dossier : sans lui, une carte de dossier illustrée se confondrait avec une vidéo.
+                ImageOptimiseeTv(vignette, FormatImageTv.BANDEAU, Modifier.fillMaxSize())
+                Box(
+                    Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(6.dp)
+                        .size(30.dp)
+                        .background(Color(0xC9070A11), RoundedCornerShape(8.dp)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Image(
+                        painterResource(R.drawable.ic_dossier),
+                        contentDescription = null,
+                        modifier = Modifier.size(19.dp),
+                        colorFilter = ColorFilter.tint(BleuClair),
+                    )
+                }
+            } else {
+                // Sans vidéo illustrée, ses initiales tiennent lieu de vignette, comme le fait déjà la
+                // grille du direct pour une chaîne sans logo.
+                Text(
+                    // La remontee porte une fleche, pas des initiales : son geste est l'inverse de celui
+                    // d'un dossier, et la confondre ferait descendre la ou l'on voulait remonter.
+                    if (videos == null) "↰" else nom.take(2).uppercase(),
+                    color = Color.White.copy(alpha = .22f),
+                    fontSize = 34.sp,
+                    fontFamily = PoliceTitre,
+                    fontWeight = FontWeight.ExtraBold,
+                )
+            }
         }
         Text(
             nom,
