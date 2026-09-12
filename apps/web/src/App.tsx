@@ -38,6 +38,7 @@ const LecteurDirect = lazy(() => import("./LecteurDirect").then((module) => ({ d
 import { LibraryManager } from "./LibraryManager";
 import { MetadataManager } from "./MetadataManager";
 import { CorrespondancesWeb } from "./CorrespondancesWeb";
+import { dureeLisible } from "./duree";
 import { SetupWizard } from "./SetupWizard";
 
 type CardItem = MediaItem & { seasonCount?: number };
@@ -834,7 +835,7 @@ function DetailsModal({ details, demande, profile, onPlay, onOpen, onOpenPerson,
       {details.seasons.length > 0 && <section className="episodes"><header><div><span className="eyebrow">{estWeb ? (activeSeason?.title || "Dossier") : `Saison ${season}`}</span><h2>{estWeb ? "Vidéos" : "Épisodes"}</h2></div><div><span>{episodes.length} {estWeb ? "vidéo" : "épisode"}{episodes.length > 1 ? "s" : ""}</span>{activeSeason && <button className="watched-toggle" onClick={() => void toggleSeasonWatched()}>{activeSeason.episodes.length > 0 && activeSeason.episodes.every(isWatched)
           ? (estWeb ? "Marquer le dossier non vu" : "Marquer la saison non vue")
           : (estWeb ? "✓ Marquer le dossier vu" : "✓ Marquer la saison vue")}</button>}</div></header>
-        <div>{episodes.map((episode) => <article key={episode.id}><button className="episode-play" onClick={() => play(episode)}>{!estWeb && <span>{episode.episodeNumber}</span>}<Icon name="play" /></button><div><b>{episode.title}</b><small>{estWeb ? dateWebLisible(episode.airDate) : episode.runtimeSeconds ? `${Math.round(episode.runtimeSeconds / 60)} min` : "Durée inconnue"}</small><p>{episode.overview ?? "Description non disponible."}</p><span className="episode-progress"><i style={{ width: `${episode.progressPercent}%` }} /></span></div><button className="watched-toggle" onClick={() => void toggleWatched(episode)}>{isWatched(episode) ? "Vu ✓" : "Marquer vu"}</button></article>)}</div>
+        <div>{episodes.map((episode) => <article key={episode.id}><button className="episode-play" onClick={() => play(episode)}>{!estWeb && <span>{episode.episodeNumber}</span>}<Icon name="play" /></button><div><b>{episode.title}</b>{estWeb ? <span className="web-meta"><small>{dateWebLisible(episode.airDate)}</small>{dureeLisible(episode.runtimeSeconds) && <small className="web-duree">{dureeLisible(episode.runtimeSeconds)}</small>}</span> : <small>{episode.runtimeSeconds ? `${Math.round(episode.runtimeSeconds / 60)} min` : "Durée inconnue"}</small>}<p>{episode.overview ?? "Description non disponible."}</p><span className="episode-progress"><i style={{ width: `${episode.progressPercent}%` }} /></span></div><button className="watched-toggle" onClick={() => void toggleWatched(episode)}>{isWatched(episode) ? "Vu ✓" : "Marquer vu"}</button></article>)}</div>
       </section>}
       {details.related.length > 0 && <Rail title="Vous aimerez peut-être" items={details.related} onOpen={onOpen} onContext={onContext} />}
       {details.collection && <Rail title={details.collection.name} items={details.collection.items} onOpen={onOpen} onContext={onContext} />}

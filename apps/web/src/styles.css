@@ -1298,6 +1298,15 @@ html.bureau-video, body.bureau-video { background: transparent; }
   text-overflow: ellipsis; white-space: nowrap; }
 /* La date porte le tri : elle se lit, elle ne se devine pas. Une date absente ne laisse rien. */
 .web-date { font-variant-numeric: tabular-nums; }
+/*
+ * La date à gauche, la durée à droite, sur une même ligne et sans libellé.
+ *
+ * La date se tronque si la carte est étroite ; la durée, jamais — elle ne prend que sa largeur, et ses
+ * chiffres de largeur égale alignent les durées d'une même colonne.
+ */
+.web-meta { display: flex; align-items: baseline; gap: var(--pas-1); min-width: 0; }
+.web-meta > small:first-child { flex: 1 1 auto; min-width: 0; }
+.web-duree { flex: none; margin-left: auto; font-variant-numeric: tabular-nums; }
 
 .web-portrait { width: clamp(56px, 5vw, 84px); height: clamp(56px, 5vw, 84px); object-fit: cover;
   border-radius: 50%; background: #ffffff10; }

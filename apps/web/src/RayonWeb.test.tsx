@@ -9,6 +9,7 @@ const { apiMock } = vi.hoisted(() => ({ apiMock: {
 vi.mock("./api", () => ({ api: apiMock }));
 vi.mock("./App", () => ({ Icon: () => null }));
 
+import { oublierSouvenirWeb } from "./memoire-web";
 import { RayonWeb } from "./RayonWeb";
 
 const chaine = {
@@ -18,12 +19,15 @@ const chaine = {
 
 const video = (id: string, titre: string) => ({
   id, catalogId: id, title: titre, showTitle: "Greg Guillotin", posterUrl: null, backdropUrl: null,
-  airDate: "2024-05-01", progressPercent: 0, playableMediaId: id, episodeNumber: 1,
+  airDate: "2024-05-01", progressPercent: 0, playableMediaId: id, episodeNumber: 1, runtimeSeconds: 754,
 });
 
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  // Le rayon retient sa position — en mémoire, pour la retrouver après une lecture. Sans remise à
+  // zéro, un cas s'ouvrirait là où le précédent s'est arrêté : dans la chaîne, pas sur la liste.
+  oublierSouvenirWeb();
   apiMock.catalogPage.mockResolvedValue({ items: [chaine], total: 1 });
   apiMock.details.mockResolvedValue({
     seasons: [
@@ -65,5 +69,21 @@ describe("la carte de retour", () => {
 
     fireEvent.click(screen.getByText("Dossier parent"));
     expect(await screen.findByText("Retour aux chaînes")).toBeInTheDocument();
+  });
+});
+
+describe("la carte d'une vidéo", () => {
+  it("montre la date à gauche et la durée du fichier à droite, sans libellé", async () => {
+    render(<RayonWeb profileId="p" onPlay={() => {}} />);
+    fireEvent.click(await screen.findByText("Greg Guillotin"));
+    fireEvent.click(await screen.findByText("Pranks"));
+
+    const carte = (await screen.findByText("Le Pire Stagiaire")).closest("button")!;
+    const date = carte.querySelector(".web-date");
+    const duree = carte.querySelector(".web-duree");
+    expect(date).toHaveTextContent("1 mai 2024");
+    expect(duree).toHaveTextContent(/^00:12:34$/);
+    // La durée suit la date dans la même ligne : c'est ce qui la place à droite.
+    expect(date?.nextElementSibling).toBe(duree);
   });
 });

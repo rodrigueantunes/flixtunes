@@ -1,5 +1,22 @@
 # Journal des versions
 
+## 0.5.8.r15 — la durée de chaque vidéo, à droite de sa date
+
+<!-- release -->
+### Rayon Web, sur le client Web, Android TV et mobile
+
+- **La durée de chaque vidéo s'affiche à droite de sa date**, sur la même ligne et sans libellé, au
+  format `hh:mm:ss` : la date de publication à gauche, `01:23:14` à droite. Sur les cartes du rayon
+  Web et dans la fiche d'une chaîne côté client Web, sur les cartes vidéo d'Android TV et mobile.
+- **C'est la durée du fichier**, relevée à l'analyse, et non celle que YouTube annonce : c'est la seule
+  qui dise ce qu'on va réellement regarder. Vérifié sur la base réelle avant d'écrire une ligne — les
+  117 vidéos avaient déjà leur durée enregistrée, identique à celle du fichier. Rien n'a changé côté
+  serveur.
+- Les heures sont toujours écrites, même à zéro (`00:12:34`) : les durées d'une grille ont alors la même
+  largeur et s'alignent. Quand la carte est étroite, c'est la date qui se tronque, jamais la durée. Une
+  durée inconnue n'affiche rien plutôt qu'un `00:00:00` qui passerait pour une vraie mesure.
+<!-- /release -->
+
 ## 0.5.8.r14 — le code de la vidéo entre crochets
 
 <!-- release -->

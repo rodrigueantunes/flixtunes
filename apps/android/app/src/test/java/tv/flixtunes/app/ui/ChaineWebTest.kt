@@ -7,6 +7,7 @@ import org.junit.Test
 import tv.flixtunes.app.data.Details
 import tv.flixtunes.app.data.Media
 import tv.flixtunes.app.data.Season
+import tv.flixtunes.app.ui.ecrans.dureeLisible
 import tv.flixtunes.app.ui.ecrans.estChaineWeb
 import tv.flixtunes.app.ui.ecrans.retourDeNiveau
 
@@ -132,5 +133,30 @@ class ChaineWebPresentationTest {
     fun `une fiche sans palier n'est pas une chaine`() {
         val film = Details(item = media("movie", "Un film"), seasons = emptyList(), related = emptyList())
         assertFalse(film.estChaineWeb)
+    }
+}
+
+/**
+ * La durée d'une vidéo web, au format `hh:mm:ss` — les mêmes cas que le client Web.
+ *
+ * Les valeurs viennent de la médiathèque réelle, où la durée enregistrée est celle du fichier.
+ */
+class DureeWebTest {
+    @Test
+    fun `ecrit toujours les heures, pour que les durees s'alignent`() {
+        assertEquals("00:12:34", dureeLisible(754))
+        assertEquals("01:23:14", dureeLisible(4994))
+        assertEquals("04:53:04", dureeLisible(17584))
+    }
+
+    @Test
+    fun `depasse vingt-quatre heures sans repartir a zero`() {
+        assertEquals("25:00:00", dureeLisible(90_000))
+    }
+
+    @Test
+    fun `ne rend rien pour une duree inconnue`() {
+        assertEquals(null, dureeLisible(null))
+        assertEquals(null, dureeLisible(0))
     }
 }

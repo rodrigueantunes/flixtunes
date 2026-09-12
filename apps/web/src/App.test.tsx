@@ -288,7 +288,7 @@ describe("expérience Web FlixTunes", () => {
     apiMock.details.mockResolvedValueOnce({
       item: { ...chaine, libraryKind: "web" },
       seasons: [{ id: "dossier-1", number: 1, title: "Grands formats", overview: null, posterUrl: null,
-        completed: false, episodes: [{ ...episodeOne, kind: "video", title: "Les routes du sel", airDate: "2024-11-12" }] }],
+        completed: false, episodes: [{ ...episodeOne, kind: "video", title: "Les routes du sel", airDate: "2024-11-12", runtimeSeconds: 754 }] }],
       related: [],
     } as unknown as MediaDetails);
 
@@ -302,6 +302,7 @@ describe("expérience Web FlixTunes", () => {
     expect(dialog).toHaveTextContent("Dossiers");
     expect(dialog).toHaveTextContent("Vidéos");
     expect(dialog).toHaveTextContent("12 novembre 2024");
+    expect(dialog).toHaveTextContent("00:12:34");
     expect(dialog).not.toHaveTextContent("Saison");
     expect(dialog).not.toHaveTextContent("Épisodes");
   });

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { MediaDetails, MediaItem, SeasonDetails } from "@flixtunes/contracts";
 import { api, type CandidatWeb } from "./api";
 import { Icon } from "./App";
+import { dureeLisible } from "./duree";
 import { lireSouvenirWeb, retenirSouvenirWeb } from "./memoire-web";
 
 /**
@@ -315,8 +316,14 @@ export function RayonWeb({ profileId, onPlay }: { profileId: string; onPlay: (it
         onClick={() => video.playableMediaId && onPlay({ ...video, id: video.playableMediaId })}>
         <Vignette url={video.posterUrl ?? video.backdropUrl} nom={video.title} classe="web-paysage" />
         <span className="web-nom">{video.title}</span>
-        {/* La date sous le titre : c'est le critère de tri, il doit se lire sans ouvrir la fiche. */}
-        <small className="web-date">{dateLisible(video)}</small>
+        {/*
+          * La date à gauche, la durée à droite, sans libellé : les deux se reconnaissent à leur forme.
+          * La date porte le tri et doit se lire sans ouvrir la fiche ; la durée est celle du fichier.
+          */}
+        <span className="web-meta">
+          <small className="web-date">{dateLisible(video)}</small>
+          {dureeLisible(video.runtimeSeconds) && <small className="web-duree">{dureeLisible(video.runtimeSeconds)}</small>}
+        </span>
         {video.progressPercent > 0 && <i className="web-progression"><i style={{ width: `${video.progressPercent}%` }} /></i>}
       </button>
       </div>)}

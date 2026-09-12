@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -118,6 +119,23 @@ internal fun trierVideos(videos: List<Media>, tri: TriWeb): List<Media> = when (
         }
         ordre + sansDate
     }
+}
+
+/**
+ * La durée d'une vidéo, au format `hh:mm:ss`, telle qu'elle s'affiche à droite de sa date.
+ *
+ * Elle vient du **fichier** — le sondage fait à l'analyse —, jamais de la plateforme : c'est ce qui a
+ * été demandé, et c'est la seule qui dise ce qu'on va réellement regarder. Transcrite du client Web.
+ *
+ * Les heures sont toujours écrites, même à zéro : toutes les durées d'une grille ont alors la même
+ * largeur et s'alignent à droite. Une durée inconnue ne rend rien plutôt qu'un `00:00:00` qui
+ * passerait pour une vraie mesure. `padStart` plutôt qu'un format : un format suit la langue de
+ * l'appareil, qui peut écrire ses chiffres autrement.
+ */
+internal fun dureeLisible(secondes: Int?): String? {
+    if (secondes == null || secondes <= 0) return null
+    fun deux(valeur: Int) = valeur.toString().padStart(2, '0')
+    return "${deux(secondes / 3600)}:${deux((secondes % 3600) / 60)}:${deux(secondes % 60)}"
 }
 
 /** Ce qui se trouve à ce niveau de l'arborescence : des dossiers à ouvrir, des vidéos à lire. */
@@ -372,13 +390,29 @@ private fun CarteVideoWeb(video: Media, vignette: String?, onClick: () -> Unit, 
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
-        // La date porte le tri : elle doit se lire sans ouvrir quoi que ce soit. `secondaryText` la
-        // met déjà en forme, et rend « Vidéo » quand elle est inconnue — jamais une date inventée.
-        Text(
-            video.secondaryText,
-            color = Muet,
-            fontSize = 12.sp,
-            maxLines = 1,
-        )
+        // La date à gauche, la durée à droite, sans libellé : les deux se reconnaissent à leur forme.
+        // La date porte le tri, elle doit se lire sans ouvrir quoi que ce soit ; `secondaryText` la met
+        // déjà en forme, et rend « Vidéo » quand elle est inconnue — jamais une date inventée.
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                video.secondaryText,
+                Modifier.weight(1f),
+                color = Muet,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            dureeLisible(video.runtimeSeconds)?.let { duree ->
+                Text(
+                    duree,
+                    Modifier.padding(start = 8.dp),
+                    color = Muet,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    // Des chiffres de largeur égale : les durées d'une même colonne s'alignent.
+                    style = TextStyle(fontFeatureSettings = "tnum"),
+                )
+            }
+        }
     }
 }
