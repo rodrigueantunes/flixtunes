@@ -1,5 +1,39 @@
 # Journal des versions
 
+## 0.5.8.r14 — le code de la vidéo entre crochets
+
+<!-- release -->
+### Écrire le code YouTube dans le nom du fichier
+
+- **`Titre [qbmeKsooC5s].mp4` est résolu directement**, pour une unité de quota au lieu de cent, et
+  **même pour une vidéo qui n'est pas de la chaîne** : un identifiant YouTube est unique sur toute la
+  plateforme. Cette lecture existait déjà — votre exemple était résolu sur le NAS —, elle est
+  maintenant couverte par des tests.
+- **Un code qui ne rend rien fait retomber sur la méthode habituelle** : faute de frappe, vidéo
+  retirée ou privée, la vidéo est recherchée dans sa chaîne comme avant, avec le titre débarrassé du
+  code et de ses crochets. Jusqu'ici, elle restait simplement sans correspondance. Le code faux, lui,
+  n'est jamais retenu.
+- **Un code mal recopié** — dix ou douze caractères entre crochets — ne part plus dans la recherche.
+  `[Live]`, `[Teaser]` ou `[2024]` restent du titre.
+
+### Renommer une vidéo déjà analysée
+
+- **Ajouter le code au nom d'un fichier créait un doublon.** Le scanner reconnaissait un média par son
+  chemin : le fichier renommé passait pour une vidéo nouvelle, une seconde fiche naissait, et la reprise
+  de lecture restait sur l'ancienne. Reproduit par un test avant d'être corrigé — deux fiches au lieu
+  d'une, et un média neuf.
+- Un fichier renommé est désormais reconnu à sa taille et à sa date de modification, qu'un renommage
+  conserve, quand son ancien chemin a quitté le disque. Il garde **son média, sa fiche et sa reprise**,
+  et il est **analysé de nouveau** si son nouveau nom apporte un code que la fiche n'a pas : c'est ce
+  qui répare une vidéo restée sans correspondance.
+- Réservé au web : le rattachement des films et des séries n'est pas touché.
+<!-- /release -->
+
+Deux limites à connaître. Un fichier **copié** plutôt que renommé change de date de modification : il
+n'est pas reconnu, et produit encore un doublon. Et si deux vidéos renommées en même temps ont
+exactement la même taille et la même date, aucune des deux n'est rattachée d'office : un doublon
+visible vaut mieux qu'une reprise attribuée à la mauvaise vidéo.
+
 ## 0.5.8.r13 — la vignette de la vidéo qu'on vient de corriger
 
 <!-- release -->

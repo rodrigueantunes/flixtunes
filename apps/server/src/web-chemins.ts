@@ -73,6 +73,17 @@ const BRUIT_TECHNIQUE =
  */
 const GROUPE_NUMERIQUE = /^\d+$/;
 
+/**
+ * Ce qui ressemble à un code YouTube mal recopié : presque onze caractères de son alphabet.
+ *
+ * La convention retenue le 12 septembre 2026 met le code de la vidéo entre crochets en fin de nom. Un
+ * code tronqué ou allongé d'un caractère n'est plus reconnu comme identifiant — c'est voulu, un faux
+ * identifiant serait la pire erreur — mais il restait alors **dans le titre**, et la recherche partait
+ * avec « Titre [qbmeKsooC5] ». La fourchette est étroite à dessein : `[Live]`, `[Teaser]` ou `[2024]`
+ * sont du texte, et restent dans le titre.
+ */
+const CODE_MAL_RECOPIE = /^[A-Za-z0-9_-]{9,13}$/;
+
 /** Un identifiant YouTube fait onze caractères, toujours. C'est une vérification gratuite. */
 const IDENTIFIANT_YOUTUBE = /^[A-Za-z0-9_-]{11}$/;
 
@@ -210,6 +221,12 @@ function extraireIdentifiant(base: string, plateforme: Plateforme | null): { tit
   }
   const attendu = plateforme === "youtube" ? IDENTIFIANT_YOUTUBE : IDENTIFIANT_PLAUSIBLE;
   if (!attendu.test(contenu)) {
+    // Un code mal recopié, entre crochets, sort du titre sans devenir un identifiant : la recherche de
+    // repli doit partir du titre seul, comme si le code n'avait jamais été écrit.
+    const entreCrochets = groupe[0].trim().startsWith("[");
+    if (plateforme === "youtube" && entreCrochets && CODE_MAL_RECOPIE.test(contenu)) {
+      return { titre: sansGroupe || base, identifiant: null };
+    }
     // Ni bruit ni identifiant : c'est probablement du texte — « (partie 2) », « (live) ». On le garde.
     return { titre: base, identifiant: null };
   }

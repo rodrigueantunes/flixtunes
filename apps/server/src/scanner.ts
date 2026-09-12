@@ -12,7 +12,7 @@ import { normaliseForSearch } from "./search-normalise.js";
 import { artworkUrlIsGenerated, cacheGeneratedArtwork, cacheLocalArtwork, cacheRemoteArtwork, findLocalArtwork } from "./artwork.js";
 import { fetchMetadataWithProviders, searchAllMetadata } from "./metadata-providers.js";
 import {
-  analyserVideoWeb, illustrerVideoWeb, libelleDuPalierDuFichier, noterCorrespondanceWeb,
+  analyserVideoWeb, illustrerVideoWeb, libelleDuPalierDuFichier, noterCorrespondanceWeb, reprendreUnFichierRenomme,
 } from "./web-analyse.js";
 import type { EntityMetadata, MetadataBundle } from "./tmdb.js";
 import { recordEntityProvenance } from "./metadata-fields.js";
@@ -604,10 +604,23 @@ export async function scanLibraryById(libraryId: string, options: ScanOptions = 
         info = second;
       }
 
-      const previous = existing.get(filePath) as {
+      const connuParSonChemin = existing.get(filePath) as {
         id: string; catalog_id: string | null; file_modified_at: number; file_size: number; embedded_metadata_json: string | null;
       } | undefined;
-      const unchanged = previous?.file_modified_at === Math.floor(info.mtimeMs)
+      /*
+       * Un fichier web renommé garde son média, sa fiche et sa reprise.
+       *
+       * Réservé au web : c'est là que la convention du code entre crochets fait renommer des fichiers
+       * déjà analysés, et rien ici ne doit pouvoir changer le rattachement d'un film ou d'un épisode.
+       */
+      const renomme = !connuParSonChemin && library.resolvedKind === "web"
+        ? reprendreUnFichierRenomme(library, filePath, info.size, Math.floor(info.mtimeMs), seenPaths)
+        : null;
+      // Des constantes, et non une variable réaffectée : TypeScript suit alors `previous` à travers
+      // `unchanged`, et les branches qui en dépendent restent vérifiées.
+      const previous = connuParSonChemin ?? renomme?.precedent;
+      const analyserDeNouveau = renomme?.analyserDeNouveau ?? false;
+      const unchanged = !analyserDeNouveau && previous?.file_modified_at === Math.floor(info.mtimeMs)
         && previous.file_size === info.size && previous.embedded_metadata_json && previous.catalog_id;
       // R49 complète une seule fois la classification des fiches déjà présentes. Le JSON ffprobe en
       // base est réutilisé : aucun nouveau sondage vidéo, donc aucun coût sur le NAS hors métadonnées.

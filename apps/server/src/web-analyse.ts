@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
 import type { LibraryFolder } from "@flixtunes/contracts";
 import { db } from "./database.js";
 import type { ParsedMedia } from "./media-parser.js";
@@ -284,12 +286,34 @@ async function completerParLaPlateforme(
 
   const plateforme = chemin.plateforme ?? locale.plateforme;
   if (!plateforme) return null;
-  // L'identifiant deja retenu sur la fiche vaut celui du nom de fichier : c'est la meme certitude, et
-  // il fait tomber le cout de cent unites a une.
-  const identifiant = chemin.identifiant ?? locale.identifiant ?? identifiantRetenu(catalogId);
+  const duFichier = chemin.identifiant ?? locale.identifiant;
+  const retenu = identifiantRetenu(catalogId);
 
   try {
-    if (plateforme === "youtube" && identifiant) return await resoudreYoutube(identifiant);
+    if (plateforme === "youtube" && duFichier) {
+      /*
+       * **Le code écrit dans le nom l'emporte sur tout**, et vaut même hors de la chaîne.
+       *
+       * C'est la convention retenue le 12 septembre 2026 : `Titre [qbmeKsooC5s].mp4`. Un identifiant
+       * YouTube est unique sur toute la plateforme ; il désigne la vidéo au lieu de la décrire, pour une
+       * unité de quota au lieu de cent. Il vaut donc aussi pour un clip d'un autre artiste rangé sous
+       * la chaîne, qu'aucune recherche limitée à la chaîne ne trouverait.
+       *
+       * S'il ne rend rien — faute de frappe, vidéo retirée ou privée —, on fait exactement ce qu'on
+       * faisait sans lui. Le titre employé est déjà débarrassé du code et de ses crochets.
+       */
+      const parLeCode = await resoudreYoutube(duFichier);
+      if (parLeCode) return parLeCode;
+      journalWeb("code-sans-reponse", { identifiant: duFichier, terme: locale.titre ?? chemin.titre });
+    }
+    if (plateforme === "youtube" && retenu && retenu !== duFichier) {
+      // L'identifiant retenu à une analyse précédente a déjà été vérifié : il coûte une unité.
+      const parLeRetenu = await resoudreYoutube(retenu);
+      if (parLeRetenu) return parLeRetenu;
+      // Sans code dans le nom, une vidéo déjà identifiée qui ne répond plus n'est pas recherchée : ce
+      // qu'on savait d'elle est conservé plus loin. Avec un code sans réponse, on continue.
+      if (!duFichier) return null;
+    }
     if (locale.url) {
       const parOEmbed = await resoudreParOEmbed(plateforme, locale.url);
       if (parOEmbed) return parOEmbed;
@@ -352,6 +376,64 @@ export async function analyserVideoWeb(
     placeOccupee(library, lecture.chemin, cheminFichier),
   );
   return { valide: true, parsed, chemin: lecture.chemin, identite };
+}
+
+/** Un média déjà connu, dans la forme que le scanner consulte. */
+export interface MediaDejaConnu {
+  id: string;
+  catalog_id: string | null;
+  file_modified_at: number;
+  file_size: number;
+  embedded_metadata_json: string | null;
+}
+
+/**
+ * Reconnaître un fichier renommé, pour qu'il garde son média, sa fiche et sa reprise.
+ *
+ * Le scanner reconnaît un média **par son chemin**. Ajouter le code YouTube au nom d'une vidéo déjà
+ * analysée — la convention retenue le 12 septembre 2026 — la faisait donc passer pour une vidéo
+ * nouvelle : l'ancienne ligne tenait encore son rang, la nouvelle était décalée au rang suivant, et une
+ * seconde fiche naissait, la reprise de lecture restée sur l'ancienne. Reproduit par un test avant
+ * d'être corrigé.
+ *
+ * Un renommage garde la taille et la date de modification du fichier. On cherche donc, dans la même
+ * bibliothèque, un média de même taille et de même date **dont l'ancien chemin a quitté le disque**.
+ * Il en faut exactement un : à deux, on ne sait pas lequel, et l'on préfère un doublon visible à une
+ * reprise attribuée au mauvais fichier.
+ *
+ * `analyserDeNouveau` dit si le nouveau nom apporte un code que la fiche n'a pas : une vidéo jamais
+ * identifiée à laquelle on ajoute son code doit être analysée, et non sautée comme inchangée.
+ */
+export function reprendreUnFichierRenomme(
+  library: LibraryFolder,
+  cheminFichier: string,
+  taille: number,
+  modifieLe: number,
+  cheminsVus: Set<string>,
+): { precedent: MediaDejaConnu; analyserDeNouveau: boolean } | null {
+  const candidats = (db.prepare(`
+    SELECT m.id, m.catalog_id, m.file_path, m.file_modified_at, m.file_size, m.embedded_metadata_json, c.external_id
+    FROM media_items m LEFT JOIN catalog_items c ON c.id = m.catalog_id
+    WHERE m.library_id = ? AND m.file_size = ? AND m.file_modified_at = ? AND m.file_path <> ?
+  `).all(library.id, taille, modifieLe, cheminFichier) as unknown as Array<MediaDejaConnu & { file_path: string; external_id: string | null }>)
+    .filter((candidat) => !cheminsVus.has(path.normalize(candidat.file_path)) && !existsSync(candidat.file_path));
+  if (candidats.length !== 1) return null;
+
+  const [repris] = candidats as [MediaDejaConnu & { file_path: string; external_id: string | null }];
+  db.prepare("UPDATE media_items SET file_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(cheminFichier, repris.id);
+  // Une recherche vaine se rattachait à l'ancien nom ; le nouveau mérite sa chance.
+  db.prepare("DELETE FROM web_recherches_vaines WHERE library_id = ? AND file_path = ?").run(library.id, repris.file_path);
+
+  const lecture = lireCheminWeb(library.path, cheminFichier);
+  const code = lecture.valide ? lecture.chemin.identifiant : null;
+  journalWeb("fichier-renomme", { avant: path.basename(repris.file_path), apres: path.basename(cheminFichier) });
+  return {
+    precedent: {
+      id: repris.id, catalog_id: repris.catalog_id, file_modified_at: repris.file_modified_at,
+      file_size: repris.file_size, embedded_metadata_json: repris.embedded_metadata_json,
+    },
+    analyserDeNouveau: Boolean(code && code !== repris.external_id),
+  };
 }
 
 /** Le libellé du palier d'un fichier, pour la fiche de saison. */
