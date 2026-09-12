@@ -4,6 +4,7 @@ import {
   budgetYoutube, chercherYoutube, empechementYoutube, identifierChaineYoutube, resoudreYoutube,
 } from "./web-fournisseurs.js";
 import { identifiantDepuisUrl, type IdentiteWeb } from "./web-identite.js";
+import { retenirIllustration } from "./web-analyse.js";
 
 /**
  * Corriger à la main la correspondance d'une chaîne ou d'une vidéo.
@@ -171,10 +172,22 @@ export async function candidatsPourFicheWeb(catalogId: string, requete?: string)
  * on vient de la trouver dans un navigateur. Le résultat est **verrouillé** : une correction est une
  * intention exprimée, et aucune analyse ultérieure ne doit la défaire.
  */
+/** Ce que la correction emprunte au réseau — remplaçable dans les tests, qui n'en ont pas. */
+export interface OutilsDeCorrection {
+  resoudre: (identifiant: string) => Promise<IdentiteWeb | null>;
+  telecharger: (catalogId: string, adresse: string, langue: string) => Promise<string | null>;
+}
+
+const OUTILS_RESEAU: OutilsDeCorrection = {
+  resoudre: (identifiant) => resoudreYoutube(identifiant),
+  telecharger: (catalogId, adresse, langue) => cacheRemoteArtwork(catalogId, "poster", adresse, langue, "youtube"),
+};
+
 export async function appliquerCorrespondanceWeb(
   catalogId: string,
   identifiantOuAdresse: string,
   langue: string,
+  outils: OutilsDeCorrection = OUTILS_RESEAU,
 ): Promise<{ applique: boolean; message: string }> {
   const fiche = db.prepare("SELECT id, kind FROM catalog_items WHERE id = ?")
     .get(catalogId) as { id: string; kind: string } | undefined;
@@ -195,7 +208,7 @@ export async function appliquerCorrespondanceWeb(
     return { applique: true, message: "Chaîne corrigée et verrouillée." };
   }
 
-  const identite = await resoudreYoutube(identifiant).catch(() => null);
+  const identite = await outils.resoudre(identifiant).catch(() => null);
   if (!identite) return { applique: false, message: "Cette vidéo n'a pas pu être lue sur la plateforme." };
 
   db.prepare(`UPDATE catalog_items SET title = COALESCE(?, title), overview = COALESCE(?, overview),
@@ -209,12 +222,23 @@ export async function appliquerCorrespondanceWeb(
   // La vignette d'une correction remplace celle qu'on avait : c'est le seul cas où « figé » cède, et
   // il est voulu — on vient précisément de dire que l'ancienne était fausse.
   if (identite.vignette) {
-    const adresse = await cacheRemoteArtwork(catalogId, "poster", identite.vignette, langue, "youtube")
-      .catch(() => null);
-    if (adresse) {
-      db.prepare("UPDATE catalog_items SET poster_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-        .run(adresse, catalogId);
+    const adresse = await outils.telecharger(catalogId, identite.vignette, langue).catch(() => null);
+    if (!adresse) {
+      // Dit, et non avalé : la correction a pris, mais l'écran montrerait encore l'ancienne image
+      // sans que rien n'explique pourquoi. Relancer la correction retente le téléchargement.
+      return { applique: true,
+        message: "Vidéo corrigée et verrouillée, mais sa vignette n'a pas pu être téléchargée : relancez la correction pour réessayer." };
     }
+    /*
+     * **Sur la fiche et sur le média.**
+     *
+     * Cette écriture ne touchait que la fiche. Le client lit la vignette du média : après une
+     * correction, la date arrivait — elle, écrite sur le média — mais l'écran gardait l'image de la
+     * vidéo qu'on venait de déclarer fausse. Constaté sur une installation réelle, la nouvelle
+     * vignette téléchargée et posée sur la fiche, l'ancienne toujours affichée. C'était la troisième
+     * écriture de vignette à oublier le média ; elles passent toutes par la même fonction désormais.
+     */
+    retenirIllustration(catalogId, adresse, true);
   }
   return { applique: true, message: "Vidéo corrigée et verrouillée." };
 }

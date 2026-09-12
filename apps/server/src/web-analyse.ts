@@ -376,7 +376,7 @@ function dejaIllustree(catalogId: string): boolean {
  * `dejaIllustree` reste faux, donc l'avatar de la chaine est **redemande a chaque analyse**, cent
  * unites de quota a chaque passage. C'est exactement ce que « figer une fois trouve » devait eviter.
  */
-function retenirIllustration(catalogId: string, adresse: string | null, surLeMedia = false): void {
+export function retenirIllustration(catalogId: string, adresse: string | null, surLeMedia = false): void {
   if (!adresse) return;
   db.prepare("UPDATE catalog_items SET poster_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
     .run(adresse, catalogId);

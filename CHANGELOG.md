@@ -1,5 +1,26 @@
 # Journal des versions
 
+## 0.5.8.r13 — la vignette de la vidéo qu'on vient de corriger
+
+<!-- release -->
+### Corriger une correspondance web à la main
+
+- **La date arrivait, pas la vignette.** Corriger une vidéo avec son lien YouTube la retrouvait bien,
+  téléchargeait sa vignette et la posait sur la fiche — mais l'écran lit la vignette du **média**, et
+  la correction n'écrivait sur le média que la date. On voyait donc la bonne date sous l'image de la
+  vidéo qu'on venait de déclarer fausse. Relevé sur la base réelle : nouvelle vignette présente sur la
+  fiche, ancienne toujours affichée. La vignette est maintenant posée aux deux endroits.
+- **Un téléchargement de vignette raté est dit**, au lieu d'être avalé en silence : la correction
+  prend quand même, et le message invite à la relancer pour réessayer.
+<!-- /release -->
+
+C'est la troisième écriture de vignette à oublier que l'écran lit le média, après l'illustration à
+l'analyse (r5) et l'ordre des écritures du scanner (r12). Les trois passent désormais par la même
+fonction, `retenirIllustration`, plutôt que par trois copies d'une même requête.
+
+La vidéo corrigée avant cette révision se répare d'elle-même à la prochaine analyse, même une simple
+analyse des fichiers, sans quota : la r12 remet déjà sur le média la vignette que la fiche possède.
+
 ## 0.5.8.r12 — des vignettes téléchargées qu'on ne voyait pas, et des vidéos cherchées sous un faux titre
 
 <!-- release -->
