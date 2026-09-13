@@ -673,11 +673,11 @@ db.exec(`
 /**
  * Le ❌ des listes ne voulait pas dire ce qu'on croyait.
  *
- * Il était enregistré `morte` ; le script qui produit `m3u.json` le posait en réalité sur les listes
+ * Il était enregistré `morte` ; le fichier de listes le posait en réalité sur les listes
  * dont **25 à 49 %** des flux répondaient — une liste sur trois chaînes utiles, qu'on garde. La
  * valeur s'appelle donc `faible`, et l'ancienne contrainte `CHECK` refuserait la nouvelle.
  *
- * Le script a depuis été corrigé — `❌` marque maintenant les listes sous 25 %, voir `m3u.ts` — mais
+ * Le fichier a depuis été corrigé — `❌` marque maintenant les listes sous 25 %, voir `m3u.ts` — mais
  * le nom `faible` reste juste, et c'est tout ce que cette migration avait à réparer.
  *
  * Une base créée avant ce jour porte l'ancienne contrainte : on refait la table. Elle est reconstruite

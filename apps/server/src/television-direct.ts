@@ -1262,8 +1262,8 @@ export function listerPays(criteres: CriteresFacette = {}): Array<{ code: string
 /**
  * Les fiabilités présentes, avec le nombre de listes de chacune.
  *
- * C'est une mesure, pas un avis : le script qui produit `m3u.json` sonde toutes les adresses de
- * chaque liste et range le résultat en quatre bandes — 75 % de chaînes joignables et plus, 50 à 74 %,
+ * C'est une mesure, pas un avis : toutes les adresses de chaque liste sont sondées avant d'entrer
+ * dans le fichier, et le résultat est rangé en quatre bandes — 75 % de chaînes joignables et plus, 50 à 74 %,
  * 25 à 49 %, moins de 25 %. Pouvoir s'en tenir à la première, c'est écarter d'un geste les listes où
  * une chaîne sur deux ne répond pas.
  */

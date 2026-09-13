@@ -23,9 +23,9 @@ export interface EntreeM3U {
 /**
  * La fiabilité d'une liste : **la part de ses chaînes qui répondent**.
  *
- * Ce n'est pas un avis, c'est une mesure. Le script qui produit `m3u.json` —
- * `tools/tv_playlist_checker.py` — sonde chaque adresse de chaque liste, puis range le résultat dans
- * une pastille posée en tête du nom. Les seuils sont les siens, lus dans son `determine_icon` :
+ * Ce n'est pas un avis, c'est une mesure : chaque adresse de chaque liste est sondée avant que la
+ * liste n'entre dans `m3u.json`. En version 1 du fichier, le résultat voyage dans une pastille posée en
+ * tête du nom, avec ces seuils :
  *
  * | Pastille | Chaînes joignables | Ce que la liste vaut |
  * | --- | --- | --- |
@@ -39,11 +39,11 @@ export interface EntreeM3U {
  * liste ❌ garde des chaînes qui répondent, parfois celles qu'on cherchait. On la garde, on la
  * classe, et on laisse choisir.
  *
- * Les quatre pastilles descendent du meilleur au pire. Ce n'était pas le cas avant : le script posait
+ * Les quatre pastilles descendent du meilleur au pire. Ce n'était pas le cas des premiers fichiers, qui posaient
  * `⚠️` sous 25 % et `❌` de 25 à 49 %, si bien que la pire des listes portait le symbole le moins
- * alarmant et que ce filtre les rangeait à l'envers. C'est le script qui a été corrigé, pas la
- * lecture — **une liste étiquetée par l'ancienne version garde donc l'ancien sens jusqu'à la
- * prochaine passe.**
+ * alarmant et que ce filtre les rangeait à l'envers. C'est le fichier qui a été corrigé, pas la
+ * lecture — **une liste étiquetée avant la correction garde donc l'ancien sens jusqu'à ce que le
+ * fichier soit refait.**
  *
  * Le pourcentage porte sur les **chaînes fusionnées**, comme la grille : une liste qui donne deux
  * adresses par chaîne, l'une morte et l'autre vivante, est joignable à 100 % puisque le lecteur
@@ -260,15 +260,15 @@ export interface ListeCatalogue {
 }
 
 /**
- * La version 2 du fichier : ce que le script a mesuré, dit franchement.
+ * La version 2 du fichier : ce qui a été mesuré, dit franchement.
  *
  * La version 1 était un dictionnaire « nom » : « adresse », et le classement voyageait **dans le
  * nom**, sous forme d'emoji — c'était le seul canal disponible. On rétro-analysait donc une pastille
- * pour retrouver un chiffre que le script avait mesuré puis jeté, et quatre paliers pour un
+ * pour retrouver un chiffre mesuré puis jeté, et quatre paliers pour un
  * pourcentage. La version 2 le porte tel quel.
  *
  * Les deux formes restent lues, et ce n'est pas de la complaisance : le fichier posé sur le NAS reste
- * en version 1 jusqu'à la prochaine passe du script, et un serveur neuf devant un ancien fichier ne
+ * en version 1 jusqu'à ce qu'il soit refait, et un serveur neuf devant un ancien fichier ne
  * doit pas tomber en panne — pas plus qu'un ancien serveur devant un fichier neuf, qui n'y verra
  * aucune adresse plutôt que de s'arrêter.
  */

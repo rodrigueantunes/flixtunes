@@ -22,8 +22,8 @@ import { FolderBrowser } from "./FolderBrowser";
  */
 
 /**
- * Ce que mesure chaque pastille : la part des chaînes d'une liste qui répondent, relevée par le
- * script qui produit `m3u.json`. Le seuil est écrit plutôt que sous-entendu — un ❌ n'est pas une
+ * Ce que mesure chaque pastille : la part des chaînes d'une liste qui répondent, relevée en sondant
+ * chaque adresse de la liste. Le seuil est écrit plutôt que sous-entendu — un ❌ n'est pas une
  * liste morte, c'est une liste où l'on trouve encore, parfois, exactement ce qu'on cherchait.
  */
 const CLASSEMENTS: Record<ListeDirect["classement"], { libelle: string; pastille: string }> = {

@@ -1187,85 +1187,7 @@ contre 61 s de fenêtre médiane — mais je n'ai pas pu reproduire la coupure s
 expiration de jeton côté hébergeur produirait le même symptôme et serait réparée de la même façon par
 un relancement. Si la coupure persiste, c'est cette piste-là qu'il faudra instrumenter.
 
-## 0.5.7.r12 — le tri passe de la liste à la chaîne
-
-Aucun artefact n'étant sorti pour cette révision, le travail sur le filtre francophone complète
-l'entrée. Ne touche que `tools/tv_playlist_checker.py`, qui n'entre dans aucun artefact.
-
-- **Le critère TF1 + M6 + Canal+ est retiré : il se trompait dans les deux sens.** Il jugeait une
-  *liste* entière sur trois noms — il jetait donc une bonne liste de chaînes régionales françaises qui
-  n'a pas Canal+, et gardait un dépôt mondial de 12 884 chaînes qui, lui, contient les trois. Une
-  liste n'est pas francophone ou étrangère ; ce sont ses **entrées** qui le sont, et le plus souvent
-  les deux à la fois.
-- **Ce qui manquait, c'était la langue.** iptv-org publie `feeds.json`, où chaque flux déclare la
-  sienne : **2 002 chaînes de langue française**. Et le `tvg-id` des listes — `6ter.fr@SD` — est
-  exactement cet identifiant, si bien que la jointure est **exacte** et non une ressemblance de noms.
-  Trois signaux plus grossiers s'y ajoutent en union : suffixe de pays du `tvg-id`, nom dépouillé de
-  ses décorations, `group-title` et préfixe `|FR|`. Les deux derniers ne rendent rien sur iptv-org,
-  qui met des genres dans ses groupes, et 100 % sur Free-TV France.
-- **Mesuré sur quatre listes réelles**, en faisant tourner le chemin complet du script :
-
-  | liste | entrées | sondées | part | décision |
-  | --- | --- | --- | --- | --- |
-  | iptv-org monde | 12 878 | **705** | 5,5 % | réduite |
-  | iptv-org langue `fra` | 459 | 459 | 100 % | entière |
-  | iptv-org pays `fr` | 215 | 215 | 100 % | entière |
-  | Free-TV France | 32 | 32 | 100 % | entière |
-
-  Le fourre-tout mondial n'entre plus que par sa part française et coûte **705 sondes au lieu de
-  12 878** ; les trois listes françaises ne perdent rien. Free-TV France, que l'ancien critère écartait
-  faute de Canal+, revient entière.
-- **Le garde-fou contre la perte : 50 %.** Au-dessus, la liste est gardée **entière**, entrées non
-  identifiées comprises — sur une liste française, ce qui n'est pas étiqueté est français, et une
-  chaîne régionale absente d'iptv-org ne mérite pas d'être perdue pour ça. Le tri strict ne frappe que
-  les fourre-tout. Le seuil lui-même est **raisonné, pas mesuré** : aucune liste à moitié française
-  n'était disponible pour l'éprouver.
-- **Un nom que porte aussi une chaîne non francophone n'identifie rien** — 204 écritures écartées à ce
-  titre, sans quoi « Sport TV » ferait entrer le Portugal. Même prudence que la table de pays du
-  serveur.
-- **Si la table manque, le filtre se désactive franchement** et rien n'est jeté : vérifié, 12 878
-  sondes. Tout garder est un défaut visible ; tout jeter faute de savoir serait un désastre
-  silencieux.
-- **Les attributs de `#EXTINF` étaient lus puis jetés.** `tvg-id`, `group-title`, `tvg-logo` sont
-  maintenant retenus — 215/215 sur la liste française — et passent dans `m3u.json` avec
-  `part_francophone` et `entiere`, qui disent *comment* une liste a été traitée : une liste mondiale
-  rabotée à trente chaînes ne vaut pas une liste française entière de trente chaînes, et rien ne le
-  disait.
-- **La recherche s'élargit au lieu de se restreindre**, le tri ne dépendant plus d'elle : huit
-  requêtes de dépôts au lieu de six, dont deux nouvelles francophones.
-- **Six secondes entre deux recherches de code.** L'API n'accorde que dix requêtes par minute ; douze
-  étaient tirées d'affilée, les deux dernières recevaient 403 et le script les abandonnait en silence
-  — on perdait précisément ce qu'on était allé chercher.
-
-## 0.5.7.r12 — la même adresse sondée huit fois
-
-Mené pendant la construction de la r11, donc versé ici. Ne touche que `tools/tv_playlist_checker.py`,
-qui ne fait partie d'aucun artefact : la r11 livrée reste celle qui a été construite.
-
-- **Une adresse n'était pas sondée une fois mais huit.** Le cache des sondes ne retenait que des
-  *résultats*, et n'était donc écrit qu'une fois la sonde terminée. Les huit listes qui avancent de
-  front trouvaient toutes le cache vide au même instant et sondaient la même adresse ensemble ; il ne
-  servait qu'aux retardataires. Ce n'est pas un cas de bord : les listes de GitHub se recopient
-  énormément, et c'est précisément quand elles se ressemblent que la collision arrive. Ce qui est mis
-  en cache est maintenant la **sonde en cours**, que les sept autres attendent. Mesuré sur huit listes
-  distinctes partageant quarante adresses : **320 sondes avant, 40 après**, et les huit rapportent
-  toujours 40/40 chaînes.
-- **Une copie exacte n'est plus retraitée.** Une fourche de dépôt porte le même fichier sous une autre
-  adresse ; rien ne s'en apercevait, puisque l'adresse diffère et le contenu non. On la téléchargeait,
-  l'analysait et la sondait entièrement pour aboutir au même chiffre, et FlixTunes recevait deux
-  entrées de menu pour un seul bouquet. La comparaison porte sur les octets : aucune chaîne perdue,
-  par construction.
-- **Les arbres de dépôts sont lus de front**, six à la fois. Quatre-vingts dépôts interrogés en file
-  font une minute d'attente avant le premier téléchargement, réseau au repos. Six et pas davantage :
-  l'API de GitHub compte les rafales autant que le total, et répond 403 à qui la bouscule.
-- **Deux requêtes de dépôts francophones en plus** — `chaines francaises m3u`, `playlist tv
-  francaise` : plus de volume pertinent en amont, pour que le critère TF1 + M6 + Canal+ ait moins à
-  jeter en aval. La recherche par dépôts est **gardée** : l'amputer aurait divisé le volume découvert,
-  alors que le compromis voulu est de ratisser large puis de trier durement.
-- Six vérifications : partage des sondes, copies exactes, critère appliqué aux découvertes et pas aux
-  listes fixes, requêtes de code dérivées du critère.
-
-## 0.5.7.r11 — le fournisseur qui ne livrait rien, et les listes qu'on choisit
+## 0.5.7.r11 — le fournisseur qui ne livrait rien
 
 - **Les quatre adresses du bouquet gratuit répondaient 404.** Le fournisseur « Chaînes » de FlixTunes
   ne livrait donc **aucune liste**, et personne ne s'en apercevait : une source qui ne rend rien
@@ -1273,28 +1195,7 @@ qui ne fait partie d'aucun artefact : la r11 livrée reste celle qui a été con
   `i.mjh.nz` parce que l'hébergeur ne publie plus que des guides XMLTV, ses playlists ayant disparu, et
   `iptv-org.github.io/iptv/subdivisions/fr.m3u` parce qu'elle n'existe plus. Deux adresses vérifiées
   les remplacent : **215 et 459 chaînes**.
-- **La recherche vise de nouveau TF1, M6 et Canal+.** L'ancien script cherchait `TF1 in:file` : GitHub
-  ne rendait que des fichiers **contenant** TF1, et le filtre était gratuit. En passant aux dépôts —
-  deux requêtes pour des dizaines de listes — j'avais gagné du volume et perdu cette visée sans le
-  voir, si bien qu'un dépôt mondial mentionnant « france » apportait ses listes chinoises et russes.
-  Les requêtes de code sont maintenant **dérivées de la même liste** que le critère, pour qu'elles ne
-  puissent pas se décaler.
-- **Et une liste découverte n'est gardée que si elle porte les trois.** Le test lit le fichier, pas son
-  nom, et compare sur le nom compacté **ponctuation gardée** — c'est le `+` qui empêche de ramasser
-  les mille « Canal 8 » hispanophones — et sur le début du nom, si bien que « TF1 FHD [1080p] » et
-  « Canal+ Sport » répondent présents. Il s'applique **avant** de sonder : une liste écartée coûte un
-  téléchargement, pas quatre cents sondes de flux.
-- **Un filtre grossier mais gratuit sur le nom du fichier** — `china`, `arabic`, `india`, `xxx` — évite
-  de télécharger deux mégaoctets pour découvrir qu'ils sont indiens.
-- **Les listes fixes échappent au critère, délibérément.** Mesuré : « Free-TV France » porte TF1 et M6
-  mais pas Canal+, et serait écartée — 32 vraies chaînes françaises perdues. L'intention est d'arrêter
-  d'importer le monde entier, pas de jeter ce qu'on a choisi.
-- **Un remplaçant écarté avant d'être écrit.** L'index de toutes les catégories d'iptv-org semblait
-  remplacer naturellement les adresses mortes ; mesuré, il porte **13 561 chaînes du monde entier**, et
-  les listes fixes étant exemptes du critère, il aurait fait rentrer par la porte ce qu'on venait de
-  sortir par la fenêtre.
-- 892 tests serveur, 271 tests Web, le Kotlin compile, lint passe. 12 vérifications sur le critère et
-  le filtre du script.
+- 892 tests serveur, 271 tests Web, le Kotlin compile, lint passe.
 
 ## 0.5.7.r10 — un menu de sources qu'on peut lire
 
@@ -1337,35 +1238,17 @@ en corrige un. C'est exactement pour cela qu'on mesure là où ça tourne.*
   chiffre était sept fois plus élevé. La leçon vaut mieux que le correctif.
 - 888 tests serveur, 271 tests Web, le Kotlin compile, lint passe.
 
-## 0.5.7.r8 — le script refait, et les chaînes enfin identifiées
+## 0.5.7.r8 — le fichier de listes dit ce qu'il mesure, et les chaînes enfin identifiées
 
-*Le script qui produit `m3u.json` était lent et trop confiant ; le fichier qu'il écrit ne savait
-transporter qu'un nom et une adresse. Les trois ont été repris ensemble.*
+*Le fichier de listes ne savait transporter qu'un nom et une adresse ; il porte maintenant ce qui a été
+mesuré, et les chaînes sont enfin identifiées.*
 
-- **La vitesse, sans rien retirer à la mesure.** Le contrôle reste **exhaustif** — c'est ce qui a été
-  demandé, et l'échantillonnage aurait été la solution facile. La vitesse vient donc de la structure :
-  les 539 listes étaient traitées **une par une**, chacune attendant les quatre cents sondes de la
-  précédente ; elles avancent maintenant huit de front. Un hôte est **banni après trois échecs de
-  transport**, ce qui fait tomber d'un coup les centaines d'adresses d'un serveur disparu. Les noms de
-  domaine sont **résolus une seule fois**, en parallèle, et ceux qui n'existent plus condamnent leurs
-  adresses sans qu'une connexion soit tentée. Les délais passent de 7 et 8 s à **4 s** : sur un corpus
-  où la moitié des adresses sont mortes, l'attente *est* la durée du script.
-- **Un 404 n'accuse jamais la machine.** Elle a répondu, elle est vivante, et ses autres adresses le
-  sont peut-être : seuls les échecs de transport comptent pour le bannissement.
-- **La fiabilité : n'importe quelle réponse 200 comptait comme un flux vivant.** Page d'erreur, portail
-  captif, page de garde d'un hébergeur qui a récupéré le domaine — tout passait. On lit maintenant les
-  premiers octets : `#EXTM3U` pour un manifeste, l'octet `0x47` pour du MPEG-TS, un type déclaré vidéo.
-  Ce qui commence par `<` est une page web. **Certains pourcentages vont baisser, et ils seront vrais.**
-- **La découverte va chercher les dépôts, plus seulement les fichiers.** Deux requêtes sur un dépôt
-  spécialisé rendent ses dizaines de listes, là où la recherche de code en montrait une par résultat et
-  s'épuisait en quota. S'ajoutent la Belgique, la Suisse, le Canada, et les **trois bouquets FAST que
-  FlixTunes proposait sans jamais les mesurer**.
 - **`m3u.json` passe en version 2, et la pastille disparaît.** Le classement d'une liste voyageait
   **dans son libellé** — `✅ …` — faute d'autre canal : on rétro-analysait un emoji pour retrouver un
   chiffre mesuré puis jeté. Le fichier porte désormais le **pourcentage exact**, l'effectif et la date
-  du relevé. Les deux formats restent lus : le fichier posé sur le NAS reste en version 1 jusqu'à la
-  prochaine passe du script, et un serveur neuf ne doit pas tomber en panne devant.
-- **Les seuils restent au serveur.** Le script propose un classement, FlixTunes le **recalcule** depuis
+  du relevé. Les deux formats restent lus : le fichier posé sur le NAS reste en version 1 jusqu'à
+  ce qu'il soit refait, et un serveur neuf ne doit pas tomber en panne devant.
+- **Les seuils restent au serveur.** Le fichier propose un classement, FlixTunes le **recalcule** depuis
   le pourcentage : c'est ce qui empêche les deux de diverger le jour où l'un bouge.
 - **Les chaînes sont identifiées par une table de référence, et le gain est mesuré.** Les quatre
   indices déduits — `tvg-id`, drapeau, nom de pays dans le groupe, catalogue de noms français —
@@ -1380,8 +1263,7 @@ transporter qu'un nom et une adresse. Les trois ont été repris ensemble.*
   que l'aveu d'ignorance qu'on avait déjà.
 - **Et elle n'est jamais une dépendance** : les 10 Mo sont mis en cache une semaine, un échec de
   téléchargement garde la copie périmée plutôt que rien, et n'interrompt pas le rafraîchissement.
-- 888 tests serveur, 271 tests Web, le Kotlin compile, lint passe. 26 vérifications sur les fonctions
-  pures du script.
+- 888 tests serveur, 271 tests Web, le Kotlin compile, lint passe.
 
 ## 0.5.7.r7 — toutes les sources, des icônes qu'on voit, et l'image qui répond au doigt
 
@@ -1747,23 +1629,9 @@ en est écarté à la demande. La contrainte tenue de bout en bout : ne rien dé
   du pays est un entier rangé en base et non un `CASE` calculé au tri, pour la même raison. Revérifié
   ensuite sur les 79 966 chaînes réelles : 0,07 ms la première page, 0,19 ms la centième, contre
   0,06 ms pour l'ancien ordre. La grille reste ce qu'elle était.
-- **Le script qui produit `m3u.json` est entré dans le dépôt**, sous `tools/tv_playlist_checker.py`,
-  et cinq écarts avec ce que FlixTunes affiche ont été corrigés. **Les pastilles étaient dans le
-  désordre** : `⚠️` marquait les listes sous 25 % et `❌` celles de 25 à 49 %, si bien que la pire
-  portait le symbole le moins alarmant et que le filtre de fiabilité les rangeait à l'envers. Elles
-  descendent maintenant ✅ 〰️ ⚠️ ❌. **Le pourcentage comptait des flux quand la grille montre des
-  chaînes** : une liste qui donne deux adresses par chaîne, l'une morte et l'autre vivante, était
-  mesurée à 50 % alors qu'on y voit 100 % de joignables — le lecteur les essaie toutes. Il porte donc
-  sur les chaînes fusionnées, avec la même clé que le serveur. **Les transports illisibles pesaient
-  dans le total** alors que FlixTunes les écarte à l'import : 1 347 entrées `rtp`/`rtsp`/`rtmp` sur le
-  corpus mesuré, qui faisaient passer pour mauvaise une liste dont il ne garde que la partie lisible.
-  **Le nom se coupait à la première virgule**, y compris celle d'un `tvg-name="Ciné, Polar"`, et
-  **les entrées sans nom** entraient dans le compte sans jamais entrer dans la grille. Le format du
-  fichier ne bouge pas — « nom » : « adresse » —, TvPourTous continue de le lire. Une variable
-  `FLIXTUNES_M3U_DIR` dépose au passage une copie dans le dossier que FlixTunes surveille.
-- **Rien de tout cela ne coûte à FlixTunes** : le script tourne ailleurs, et ce qui a changé côté
-  application est du texte — la table des pastilles, quatre libellés, l'ordre d'affichage des bandes.
-  Aucune requête, aucun index, aucun travail supplémentaire au démarrage. La grille reste à 0,07 ms.
+- **Les bandes de fiabilité s'affichent dans l'ordre**, de la meilleure à la pire. Ce qui a changé côté
+  application est du texte — la table des pastilles, quatre libellés, l'ordre d'affichage des bandes :
+  aucune requête, aucun index, aucun travail supplémentaire au démarrage. La grille reste à 0,07 ms.
 - **Deux retouches d'écran.** « Enregistrer l'emplacement » flottait à droite du champ, centré sur sa
   hauteur et aligné sur rien, quand « Ajouter un portail » repose bien sur la ligne de ses champs :
   le champ large prend maintenant sa ligne entière et le bouton repart de la marge gauche, comme les
@@ -1900,8 +1768,8 @@ l'ont orienté vivent dans `docs/CHANTIER_LIVE_TV_0.5.7.md`.*
 - **Le choix des listes a quitté la configuration** pour devenir un filtre de l'écran, repliable et à
   puces comme les genres du catalogue. On choisit ce qu'on regarde au moment de regarder ; la
   configuration ne garde que le diagnostic, c'est-à-dire les listes qui n'ont pas répondu.
-- **Un filtre de fiabilité, parce que la pastille était une mesure qu'on ignorait.** Le script qui
-  produit `m3u.json` sonde tous les flux de chaque liste : ✅ vaut « 75 % et plus répondent », 〰️
+- **Un filtre de fiabilité, parce que la pastille était une mesure qu'on ignorait.** Chaque flux de
+  chaque liste est sondé avant d'entrer dans `m3u.json` : ✅ vaut « 75 % et plus répondent », 〰️
   « 50 à 74 % », ❌ « 25 à 49 % ». Le ❌ était enregistré comme « morte » — **c'était faux**, et c'est
   corrigé : une liste ❌ porte une chaîne utile sur trois, on la garde et on laisse choisir. Le seuil
   est maintenant écrit à l'écran, une pastille seule ne disant rien.

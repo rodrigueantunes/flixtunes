@@ -26,8 +26,8 @@ export interface ListeChoisissable { id: string; nom: string; classement: Classe
 /**
  * Ce que dit une pastille, en toutes lettres.
  *
- * Elle n'est pas décorative : c'est **la part des chaînes d'une liste qui répondent**, mesurée par le
- * script qui produit `m3u.json`. Le seuil est écrit à l'écran parce qu'une pastille seule ne dit rien
+ * Elle n'est pas décorative : c'est **la part des chaînes d'une liste qui répondent**, mesurée en
+ * sondant chaque adresse de la liste. Le seuil est écrit à l'écran parce qu'une pastille seule ne dit rien
  * — et parce qu'un ❌ ne veut pas dire « morte », mais « une liste où l'on trouve encore ».
  */
 const FIABILITES: Array<{ classement: ClassementListe; libelle: string }> = [
