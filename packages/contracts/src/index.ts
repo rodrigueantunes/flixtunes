@@ -1081,7 +1081,6 @@ export interface ParametresDirect {
   dossier: string | null;
   /** Nom du fichier dans ce dossier — `m3u.json` par défaut. */
   fichier: string;
-  cadenceHeures: number;
 }
 
 export interface EtatDirect {
@@ -1195,7 +1194,6 @@ export const parametresDirectSchema = z.object({
   actif: z.boolean().optional(),
   dossier: z.string().trim().max(4096).nullable().optional(),
   fichier: z.string().trim().min(1).max(255).optional(),
-  cadenceHeures: z.number().int().min(1).max(168).optional(),
 }).strict();
 export type ParametresDirectInput = z.infer<typeof parametresDirectSchema>;
 

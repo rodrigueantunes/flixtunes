@@ -55,7 +55,10 @@ import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.C
+import androidx.media3.exoplayer.DefaultLivePlaybackSpeedControl
 import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.hls.HlsManifest
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.common.util.UnstableApi
@@ -72,6 +75,15 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import tv.flixtunes.app.data.ChaineDirect
 import tv.flixtunes.app.data.FlixTunesApi
+import tv.flixtunes.app.playback.AVANCE_FRAGILE_MS
+import tv.flixtunes.app.playback.COURSE_MAX
+import tv.flixtunes.app.playback.MARGE_ARRIERE_AVANCE_MS
+import tv.flixtunes.app.playback.avanceViseeMs
+import tv.flixtunes.app.playback.GroupeDeSources
+import tv.flixtunes.app.playback.debutDeVague
+import tv.flixtunes.app.playback.premiereAdresse
+import tv.flixtunes.app.playback.prochaineAdresse
+import tv.flixtunes.app.playback.regrouperLesSources
 import tv.flixtunes.app.ui.BleuClair
 import tv.flixtunes.app.ui.Encre
 import tv.flixtunes.app.ui.Muet
@@ -107,25 +119,26 @@ class LecteurDirectActivity : ComponentActivity() {
     private lateinit var profileId: String
 
     /**
-     * Les adresses de la chaîne courante, dans l'ordre du serveur.
+     * Les adresses de la chaîne courante, dans l'ordre où le repli les essaie.
      *
-     * Ce n'est pas l'ordre de déclaration : le serveur les classe par échecs, puis par définition
-     * mesurée dans le manifeste, puis par débit. La première est donc la meilleure qu'on connaisse,
-     * et les autres restent accessibles à la touche verte.
+     * C'est l'ordre du serveur — échecs, puis définition mesurée dans le manifeste, puis débit —,
+     * retouché par la course : dans chaque vague de douze, celles qui répondent passent devant. Toutes
+     * se choisissent à la touche verte.
      */
     private var adresses: List<String> = emptyList()
-    /** Ce que le serveur sait de chaque adresse — définition et débit —, pour le dire dans la liste. */
-    private var qualites: List<Pair<Int?, Int?>> = emptyList()
+    /** Ce que le serveur sait de chaque adresse, retrouvé par l'adresse elle-même : définition et débit, empreinte d'affichage. */
+    private var qualites: Map<String, Pair<Int?, Int?>> = emptyMap()
+    private var empreintes: Map<String, String> = emptyMap()
     /**
-     * Le menu regroupe ce qui se ressemble, la liste garde tout.
+     * Les adresses que le serveur n'a pas pu joindre, sondées une fois qu'une autre joue.
      *
-     * Mesuré sur le corpus : 7 559 adresses de 1 976 chaînes ne diffèrent de leur voisine que par un
-     * jeton dans la requête. Le menu en listait quatre visiblement identiques, et l'on choisissait à
-     * l'aveugle. Chaque groupe garde l'index de son meilleur membre — celui que le serveur a classé en
-     * tête — et le repli automatique continue de parcourir chaque adresse : deux jetons ne se valent
-     * pas, l'un peut être périmé quand l'autre fonctionne.
+     * Elles sortent du repli automatique, pas du menu : le NAS ne passe pas forcément par le même
+     * chemin que le téléviseur, et c'est la lecture qui garde le dernier mot.
      */
-    private var groupes: List<Triple<Int, Pair<Int?, Int?>, Int>> = emptyList()
+    private var muettes by mutableStateOf<Set<String>>(emptySet())
+    /** Les vagues de course déjà lancées, et si les autres sources ont déjà été sondées pour cette chaîne. */
+    private val vaguesCourues = mutableSetOf(0)
+    private var sondee = false
     /** La chaîne quittée, pour y revenir d'une touche — le second geste d'un téléviseur. */
     private var precedente: String? = null
     private var rang = 0
@@ -151,14 +164,6 @@ class LecteurDirectActivity : ComponentActivity() {
     /** La liste des sources, ouverte à la touche verte. */
     private var choixOuvert by mutableStateOf(false)
     private var choixIndex by mutableIntStateOf(0)
-    /**
-     * Le menu s'ouvre court : huit sources, puis le reste sur demande.
-     *
-     * Le regroupement ramenait la pire chaîne de 78 lignes à 42 — toujours illisible. Le serveur les
-     * a classées par échecs, définition et débit : les huit premières sont les meilleures qu'on
-     * connaisse, et celui qui cherche la neuvième sait ce qu'il fait.
-     */
-    private var toutesLesSources by mutableStateOf(false)
 
     /**
      * Le retour ferme la liste des sources avant de quitter la chaîne.
@@ -172,16 +177,21 @@ class LecteurDirectActivity : ComponentActivity() {
         override fun handleOnBackPressed() { montrerLesSources(false) }
     }
 
-    /** Les groupes affichés : les huit meilleurs, ou tous si on l'a demandé. */
-    private fun groupesVisibles(): List<Triple<Int, Pair<Int?, Int?>, Int>> =
-        if (toutesLesSources) groupes else groupes.take(SOURCES_VISIBLES)
+    /**
+     * Les groupes du menu, tous, dans l'ordre où le repli essaie les adresses.
+     *
+     * Ils étaient calculés une fois, dans l'ordre du serveur, alors que le repli suit l'ordre de la
+     * course : choisir une ligne pouvait ouvrir une autre adresse que celle qu'elle décrivait. Ils se
+     * calculent maintenant sur les adresses telles qu'on les joue, et les muettes ferment la marche.
+     */
+    private fun groupesDuMenu(): List<GroupeDeSources> =
+        regrouperLesSources(adresses.map { empreintes[it].orEmpty() }, adresses, muettes)
 
-    /** Y a-t-il une ligne « voir les autres » au bout de la liste ? */
-    private fun ligneVoirPlus(): Boolean = !toutesLesSources && groupes.size > SOURCES_VISIBLES
+    /** La ligne du menu qui porte l'adresse en cours, pour y poser le curseur à l'ouverture. */
+    private fun ligneDuRang(): Int = groupesDuMenu().indexOfFirst { it.index == rang }.coerceAtLeast(0)
 
     private fun montrerLesSources(ouvert: Boolean) {
         choixOuvert = ouvert
-        if (!ouvert) toutesLesSources = false
         fermerLeChoix.isEnabled = ouvert
         if (ouvert) commandesVisibles = true
     }
@@ -248,6 +258,24 @@ class LecteurDirectActivity : ComponentActivity() {
     private var depuisSource = 0L
     private var surveillanceBlocage: Job? = null
 
+    /**
+     * La commande de vitesse du direct, gardée pour changer la cible en cours de lecture.
+     *
+     * Une source fragile prend jusqu'à 60 s d'avance au lieu de 40 : ExoPlayer ralentit alors
+     * imperceptiblement — 0,97× au plus — jusqu'à l'atteindre, sans jamais couper l'image.
+     */
+    private val vitesseDirect = DefaultLivePlaybackSpeedControl.Builder().build()
+    /**
+     * Les incidents de l'adresse en cours depuis qu'on la regarde — un blocage, une reprise. Un seul
+     * suffit à la dire fragile.
+     */
+    private var incidents = 0
+    private var adresseDesIncidents: String? = null
+    /** Les échecs que le serveur connaît pour chaque adresse : une source qui en traîne est fragile d'emblée. */
+    private var echecs: Map<String, Int> = emptyMap()
+    /** L'avance demandée en dernier à ExoPlayer, pour ne l'écrire qu'au changement. */
+    private var avanceDemandeeMs = C.TIME_UNSET
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val serveur = intent.getStringExtra(EXTRA_SERVER) ?: return finish()
@@ -270,6 +298,7 @@ class LecteurDirectActivity : ComponentActivity() {
          * mécanisme prévu pour exactement ce cas, et on ne le lui demandait pas.
          */
         lecteur = ExoPlayer.Builder(this)
+            .setLivePlaybackSpeedControl(vitesseDirect)
             /*
              * **Six tentatives au lieu de trois, et pour une raison arithmétique.**
              *
@@ -354,6 +383,7 @@ class LecteurDirectActivity : ComponentActivity() {
                      */
                     if (fluxDeclareStable && reprises < REPRISES_MAX) {
                         reprises += 1
+                        incidents += 1
                         dernierIncident = "réseau (${error.errorCodeName})"
                         val attente = ATTENTES_REPRISE_MS[reprises - 1]
                         if (reprises > 1) message = getString(R.string.direct_reprise, reprises, REPRISES_MAX)
@@ -389,6 +419,7 @@ class LecteurDirectActivity : ComponentActivity() {
                     surveillerLeBlocage()
                     val maintenant = System.currentTimeMillis()
                     if (maintenant < silenceJusqua) return
+                    incidents += 1
                     /*
                      * **Les deux réactions n'ont pas le même prix, elles n'ont donc pas la même
                      * patience.**
@@ -498,6 +529,10 @@ class LecteurDirectActivity : ComponentActivity() {
         relancesLentes = 0
         repriseEnCours?.cancel()
         dernierIncident = null
+        muettes = emptySet()
+        vaguesCourues.clear()
+        vaguesCourues.add(0)
+        sondee = false
         // Ce qu'on quitte devient ce vers quoi on revient. Enregistré avant de charger : si la
         // nouvelle chaîne ne répond pas, le retour reste possible.
         chaine?.id?.takeIf { it != chaineId }?.let { precedente = it }
@@ -515,15 +550,9 @@ class LecteurDirectActivity : ComponentActivity() {
                  * l'automatique ; le choix, lui, ne l'est pas.
                  */
                 val retenues = details.sources
-                qualites = retenues.map { it.hauteur to it.debit }
-                val vus = LinkedHashMap<String, Triple<Int, Pair<Int?, Int?>, Int>>()
-                retenues.forEachIndexed { index, source ->
-                    val cle = source.empreinte.ifBlank { source.url }
-                    val connu = vus[cle]
-                    if (connu == null) vus[cle] = Triple(index, source.hauteur to source.debit, 1)
-                    else vus[cle] = connu.copy(third = connu.third + 1)
-                }
-                groupes = vus.values.toList()
+                qualites = retenues.associate { it.url to (it.hauteur to it.debit) }
+                empreintes = retenues.associate { it.url to it.empreinte }
+                echecs = retenues.associate { it.url to it.echecs }
                 /*
                  * La course ne sonde que les douze premières, pas les soixante-dix.
                  *
@@ -582,6 +611,10 @@ class LecteurDirectActivity : ComponentActivity() {
     private fun jouerRang(reprendre: Boolean = true) {
         val source = adresses.getOrNull(rang) ?: run { echec = true; message = getString(R.string.direct_aucune_source); return }
         if (reprendre) essai = source
+        // Les incidents sont ceux de l'adresse : la même, relancée, garde les siens.
+        if (adresseDesIncidents != source) { adresseDesIncidents = source; incidents = 0 }
+        // Un nouveau média ramène ExoPlayer à la cible de sa configuration : la surveillance la réécrira.
+        avanceDemandeeMs = C.TIME_UNSET
         // Préparer un flux remplit le tampon : c'est un geste, pas un hoquet.
         silenceJusqua = System.currentTimeMillis() + REPIT_APRES_GESTE_MS
         depuisSource = System.currentTimeMillis()
@@ -615,7 +648,8 @@ class LecteurDirectActivity : ComponentActivity() {
                         MediaItem.LiveConfiguration.Builder()
                             .setTargetOffsetMs(cible)
                             .setMinOffsetMs(CIBLE_DIRECT_S * 1_000L)
-                            .setMaxOffsetMs((CIBLE_MAX_S + 20) * 1_000L)
+                            // Le plafond laisse la place à l'avance d'une source fragile, marge arrière comprise.
+                            .setMaxOffsetMs(AVANCE_FRAGILE_MS + MARGE_ARRIERE_AVANCE_MS)
                             .setMinPlaybackSpeed(0.97f)
                             /*
                              * 1,06× et non 1,03× pour **revenir** vers la cible.
@@ -669,10 +703,56 @@ class LecteurDirectActivity : ComponentActivity() {
         // La déclaration porte sur l'adresse : celle qu'on prend n'a encore rien prouvé.
         fluxDeclareStable = false
         depuisLecture = 0L
-        rang += 1
-        if (rang >= minOf(adresses.size, REPLIS)) { plusAucuneSource(); return }
-        message = getString(R.string.direct_source_essai, rang + 1, adresses.size)
-        jouerRang()
+        // Toutes les adresses entrent dans le repli, sauf celles que le serveur a trouvées muettes.
+        val prochain = prochaineAdresse(adresses, rang, muettes) ?: run { plusAucuneSource(); return }
+        ouvrirLeRang(prochain)
+    }
+
+    /**
+     * Ouvrir le rang choisi par le repli, en faisant d'abord courir sa vague si personne ne l'a sondée.
+     *
+     * La course d'ouverture ne sonde que les douze premières adresses. Quand elles ont toutes échoué,
+     * la suivante n'est pas essayée à l'aveugle douze secondes durant : ses voisines courent d'abord,
+     * et celles qui répondent passent devant. Une chaîne à quatre-vingts sources dont les vingt
+     * premières sont mortes démarre ainsi en quelques secondes, et non en quatre minutes.
+     */
+    private fun ouvrirLeRang(prochain: Int) {
+        val vague = debutDeVague(prochain)
+        if (!vaguesCourues.add(vague)) {
+            rang = prochain
+            message = getString(R.string.direct_source_essai, rang + 1, adresses.size)
+            jouerRang()
+            return
+        }
+        val identifiant = chaine?.id
+        val fin = minOf(adresses.size, vague + COURSE_MAX)
+        message = getString(R.string.direct_source_recherche, vague + 1, fin, adresses.size)
+        lifecycleScope.launch {
+            val ordonnee = courirLesAdresses(adresses.subList(vague, fin).toList())
+            if (chaine?.id != identifiant) return@launch
+            adresses = adresses.take(vague) + ordonnee + adresses.drop(fin)
+            rang = prochaineAdresse(adresses, vague - 1, muettes) ?: prochain
+            message = getString(R.string.direct_source_essai, rang + 1, adresses.size)
+            jouerRang()
+        }
+    }
+
+    /**
+     * Une source joue : c'est le moment de regarder les autres.
+     *
+     * Le serveur les sonde toutes, une fois par chaîne, et celles qui se taisent sortent du repli —
+     * pas du menu. La sonde part du NAS, pour que le téléviseur n'y dépense ni bande passante ni
+     * processeur.
+     */
+    private fun sonderLesAutres() {
+        val identifiant = chaine?.id ?: return
+        val enCours = adresses.getOrNull(rang) ?: return
+        if (sondee || adresses.size <= 1) return
+        sondee = true
+        lifecycleScope.launch {
+            runCatching { api.sondesChaineDirect(profileId, identifiant, enCours) }
+                .onSuccess { trouvees -> if (chaine?.id == identifiant) muettes = trouvees }
+        }
     }
 
     /**
@@ -703,7 +783,7 @@ class LecteurDirectActivity : ComponentActivity() {
         if (relancesLentes < plafond) {
             relancesLentes += 1
             message = getString(R.string.direct_relance_lente, relancesLentes, plafond)
-            rang = 0
+            rang = premiereAdresse(adresses, muettes)
             repriseEnCours?.cancel()
             repriseEnCours = lifecycleScope.launch {
                 delay(INTERVALLE_RELANCE_MS)
@@ -782,16 +862,12 @@ class LecteurDirectActivity : ComponentActivity() {
             when (code) {
                 KeyEvent.KEYCODE_DPAD_UP -> { choixIndex = (choixIndex - 1).coerceAtLeast(0); return true }
                 KeyEvent.KEYCODE_DPAD_DOWN -> {
-                    val dernier = groupesVisibles().lastIndex + if (ligneVoirPlus()) 1 else 0
-                    choixIndex = (choixIndex + 1).coerceAtMost(dernier)
+                    choixIndex = (choixIndex + 1).coerceAtMost(groupesDuMenu().lastIndex.coerceAtLeast(0))
                     return true
                 }
                 KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
-                    val visibles = groupesVisibles()
-                    // La dernière ligne déplie le reste au lieu d'ouvrir une source.
-                    if (ligneVoirPlus() && choixIndex == visibles.size) { toutesLesSources = true; return true }
-                    // Le curseur parcourt les groupes ; ce qu'on ouvre est le meilleur membre du groupe.
-                    visibles.getOrNull(choixIndex)?.let { choisirSource(it.first) }
+                    // Le curseur parcourt les lignes ; ce qu'on ouvre est le meilleur membre du groupe qui répond.
+                    groupesDuMenu().getOrNull(choixIndex)?.let { choisirSource(it.index) }
                     return true
                 }
                 // Le retour n'est pas écouté ici : il passe par `OnBackPressedDispatcher`, seul chemin
@@ -825,8 +901,8 @@ class LecteurDirectActivity : ComponentActivity() {
         if (code == KeyEvent.KEYCODE_CHANNEL_UP || code == KeyEvent.KEYCODE_PAGE_UP) { voisine(1); return true }
         if (code == KeyEvent.KEYCODE_CHANNEL_DOWN || code == KeyEvent.KEYCODE_PAGE_DOWN) { voisine(-1); return true }
         if (code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN) {
-            if (groupes.size > 1) {
-                choixIndex = groupes.indexOfFirst { it.first == rang }.coerceAtLeast(0)
+            if (adresses.size > 1) {
+                choixIndex = ligneDuRang()
                 montrerLesSources(true)
             }
             return true
@@ -840,7 +916,7 @@ class LecteurDirectActivity : ComponentActivity() {
         if (code == KeyEvent.KEYCODE_MEDIA_PAUSE) { lecteur?.pause(); return true }
         // La touche verte ouvre les sources : c'est la convention des boîtiers, et elle ne sert à rien d'autre ici.
         if (code == KeyEvent.KEYCODE_PROG_GREEN && adresses.size > 1) {
-            choixIndex = rang
+            choixIndex = ligneDuRang()
             montrerLesSources(true)
             return true
         }
@@ -893,6 +969,8 @@ class LecteurDirectActivity : ComponentActivity() {
     private fun rejoindreDirect() {
         silenceJusqua = System.currentTimeMillis() + REPIT_APRES_GESTE_MS
         lecteur?.seekToDefaultPosition()
+        // La position par défaut est l'avance de la configuration : celle d'une source fragile se réécrit.
+        avanceDemandeeMs = C.TIME_UNSET
         lecteur?.play()
         reveiller()
     }
@@ -939,6 +1017,7 @@ class LecteurDirectActivity : ComponentActivity() {
      */
     private fun reagirALInstabilite() {
         blocages.clear()
+        incidents += 1
         /*
          * **Il n'y a plus de marge à acheter : elle est prise d'emblée.**
          *
@@ -955,17 +1034,44 @@ class LecteurDirectActivity : ComponentActivity() {
             silenceJusqua = System.currentTimeMillis() + REPIT_APRES_RECUL_MS
             return
         }
-        // L'automatique s'arrête à REPLIS essais ; la main, elle, va où elle veut.
-        if (rang + 1 < minOf(adresses.size, REPLIS)) {
-            message = getString(R.string.direct_source_instable, rang + 2)
+        // Le repli passe à la suivante qui répond ; la main, elle, va où elle veut.
+        val prochain = prochaineAdresse(adresses, rang, muettes)
+        if (prochain != null) {
+            message = getString(R.string.direct_source_instable, prochain + 1)
             essai = null
             reparations = 0
-            rang += 1
+            rang = prochain
             securite = 0
             // La nouvelle adresse n'a rien fait pour mériter un plafond : elle repart entière.
             plafondDebit = Int.MAX_VALUE
             jouerRang()
         }
+    }
+
+    /**
+     * Écrire la cible d'avance d'ExoPlayer quand la fiabilité de la source la change.
+     *
+     * Une source sans incident garde la cible de sa configuration — 40 s, bornée par ExoPlayer comme
+     * avant. Une source fragile vise ce que `avanceViseeMs` permet dans sa fenêtre, jamais moins que la
+     * cible de départ. L'écriture passe par le fil de lecture d'ExoPlayer, le seul qui lise cette
+     * commande.
+     */
+    private fun ajusterLAvance(joueur: ExoPlayer) {
+        val fragile = incidents > 0 || (adresses.getOrNull(rang)?.let { echecs[it] } ?: 0) > 0
+        val fenetreMs = joueur.duration
+        val visee = if (!fragile || fenetreMs == C.TIME_UNSET || fenetreMs <= 0) C.TIME_UNSET else {
+            // La durée de segment déclarée par la playlist, sinon la médiane du corpus.
+            val segmentMs = (joueur.currentManifest as? HlsManifest)?.mediaPlaylist?.targetDurationUs
+                ?.div(1_000)?.takeIf { it > 0 } ?: 8_000L
+            maxOf(CIBLE_DIRECT_S * 1_000L, avanceViseeMs(fenetreMs, segmentMs, fragile = true))
+        }
+        if (visee == avanceDemandeeMs) return
+        if (visee != C.TIME_UNSET && avanceDemandeeMs != C.TIME_UNSET && kotlin.math.abs(visee - avanceDemandeeMs) < 1_000) return
+        avanceDemandeeMs = visee
+        val cibleUs = if (visee == C.TIME_UNSET) C.TIME_UNSET else visee * 1_000
+        joueur.createMessage { _, _ -> vitesseDirect.setTargetLiveOffsetOverrideUs(cibleUs) }
+            .setLooper(joueur.playbackLooper)
+            .send()
     }
 
     /**
@@ -1059,6 +1165,12 @@ class LecteurDirectActivity : ComponentActivity() {
                      */
                     enPause = !joueur.playWhenReady
                     /*
+                     * **L'avance suit la fiabilité.** Une source qui a déjà calé, ou que le serveur
+                     * connaît pour ses échecs, vise jusqu'à 60 s derrière le bord au lieu de 40, dans la
+                     * limite de sa fenêtre. ExoPlayer y glisse en ralentissant, sans couper l'image.
+                     */
+                    ajusterLAvance(joueur)
+                    /*
                      * L'image avance : la série d'échecs est finie.
                      *
                      * Remettre les compteurs à zéro ici plutôt qu'à l'ouverture est ce qui distingue
@@ -1094,6 +1206,7 @@ class LecteurDirectActivity : ComponentActivity() {
                         ) {
                             fluxDeclareStable = true
                             dejaVuStable = true
+                            sonderLesAutres()
                             /*
                              * Les compteurs repartent **à la déclaration**, et non au retour de
                              * l'image. Un flux qui revient deux secondes puis retombe n'a rien
@@ -1123,10 +1236,14 @@ class LecteurDirectActivity : ComponentActivity() {
                          * but est précisément qu'il ne s'en aperçoive pas. Ce qui doit se voir, c'est
                          * une source qu'on abandonne ; pas une seconde de retard qu'on reprend.
                          *
-                         * Et l'on ne rejoint plus le bord exact : `MARGE_DIRECT_MS` derrière lui,
-                         * parce que se coller au direct rend la prochaine dérive immédiate.
+                         * Et l'on ne rejoint pas le bord : on revient à la **position par défaut**,
+                         * c'est-à-dire à l'avance visée. Se placer à douze secondes du bord, comme
+                         * avant, faisait de ces douze secondes la nouvelle cible d'ExoPlayer — un saut
+                         * vaut consigne —, et la marge était perdue pour le reste de la soirée.
                          */
-                        joueur.seekTo((fenetreMs - MARGE_DIRECT_MS).coerceAtLeast(0))
+                        joueur.seekToDefaultPosition()
+                        // Le saut efface la cible écrite : la surveillance la réécrira si la source est fragile.
+                        avanceDemandeeMs = C.TIME_UNSET
                         silenceJusqua = System.currentTimeMillis() + REPIT_APRES_GESTE_MS
                     }
                 }
@@ -1199,7 +1316,7 @@ class LecteurDirectActivity : ComponentActivity() {
                         if (securite > 0) getString(R.string.direct_securite, securite) else null,
                     ).joinToString(" · "),
                     Modifier.clickable(enabled = adresses.size > 1) {
-                        choixIndex = rang
+                        choixIndex = ligneDuRang()
                         montrerLesSources(true)
                     },
                     color = Muet, fontSize = 13.sp,
@@ -1239,7 +1356,13 @@ class LecteurDirectActivity : ComponentActivity() {
                 val avance = if (fenetreUtile) {
                     ((fenetreMs - retardMs).toFloat() / fenetreMs.toFloat()).coerceIn(0f, 1f)
                 } else 0f
-                val auDirect = retardMs <= MARGE_DIRECT_MS
+                /*
+                 * « En direct », c'est à l'avance visée, à quelques secondes près. Le seuil valait douze
+                 * secondes du bord alors que le lecteur se tient à quarante : l'écran annonçait un
+                 * différé permanent pour une lecture qui était exactement où elle devait être.
+                 */
+                val avanceCibleMs = if (avanceDemandeeMs != C.TIME_UNSET) avanceDemandeeMs else CIBLE_MAX_S * 1_000L
+                val auDirect = retardMs <= avanceCibleMs + MARGE_DIRECT_MS
                 Row(
                     Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                         .background(Encre.copy(alpha = .82f)).padding(24.dp, 16.dp),
@@ -1311,23 +1434,23 @@ class LecteurDirectActivity : ComponentActivity() {
                         fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(10.dp))
                     LazyColumn(state = etatListe, modifier = Modifier.heightIn(max = 300.dp)) {
-                    itemsIndexed(groupesVisibles()) { rangAffiche, groupe ->
-                        val (index, qualite, doublons) = groupe
-                        val (hauteur, debit) = qualite
+                    itemsIndexed(groupesDuMenu()) { rangAffiche, groupe ->
+                        val (index, doublons, muette) = groupe
+                        val (hauteur, debit) = adresses.getOrNull(index)?.let { qualites[it] } ?: (null to null)
                         Column(
                             Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp))
                                 .background(
-                                    if (index == choixIndex) Color.White.copy(alpha = .12f) else Color.Transparent,
+                                    if (rangAffiche == choixIndex) Color.White.copy(alpha = .12f) else Color.Transparent,
                                 )
                                 .clickable { choisirSource(index) }
                                 .padding(horizontal = 14.dp, vertical = 9.dp),
                         ) {
                             Text(
                                 getString(
-                                    if (rangAffiche == 0) R.string.direct_source_recommandee else R.string.direct_source_rang,
+                                    if (rangAffiche == 0 && !muette) R.string.direct_source_recommandee else R.string.direct_source_rang,
                                     rangAffiche + 1,
                                 ) + if (doublons > 1) getString(R.string.direct_source_adresses, doublons) else "",
-                                color = if (index == rang) BleuClair else Color.White,
+                                color = if (index == rang) BleuClair else if (muette) Muet else Color.White,
                                 fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
                             )
                             Text(
@@ -1336,26 +1459,10 @@ class LecteurDirectActivity : ComponentActivity() {
                                         getString(R.string.direct_source_debit, hauteur, "%.1f".format(debit / 1_000_000f))
                                     hauteur != null -> getString(R.string.direct_source_definition, hauteur)
                                     else -> getString(R.string.direct_source_inconnue)
-                                },
+                                // Muette pour le serveur, pas forcément pour ce téléviseur : elle reste choisissable.
+                                } + if (muette) getString(R.string.direct_source_muette) else "",
                                 color = Muet, fontSize = 12.sp,
                             )
-                        }
-                    }
-                    if (ligneVoirPlus()) item {
-                        Column(
-                            Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp))
-                                .background(
-                                    if (choixIndex == groupesVisibles().size) Color.White.copy(alpha = .12f)
-                                    else Color.Transparent,
-                                )
-                                .clickable { toutesLesSources = true }
-                                .padding(horizontal = 14.dp, vertical = 9.dp),
-                        ) {
-                            Text(
-                                getString(R.string.direct_source_voir_plus, groupes.size - SOURCES_VISIBLES),
-                                color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-                            )
-                            Text(getString(R.string.direct_source_voir_plus_detail), color = Muet, fontSize = 12.sp)
                         }
                     }
                     }
@@ -1481,23 +1588,6 @@ class LecteurDirectActivity : ComponentActivity() {
         const val EXTRA_PROFILE_ID = "profil"
         const val EXTRA_PROFILE_TOKEN = "jeton"
         const val EXTRA_CHANNEL_ID = "chaine"
-
-        /** Au-delà, on ne s'acharne pas : quatre adresses mortes disent que la chaîne l'est. */
-        /**
-         * Le nombre d'adresses que le **repli automatique** essaie avant de renoncer.
-         *
-         * Il ne borne plus la liste : toutes les adresses restent choisissables à la main. Il borne
-         * l'acharnement, ce qui n'est pas la même chose — huit essais de douze secondes font déjà une
-         * minute et demie devant un écran noir, et la course a de toute façon mis devant celles qui
-         * répondent.
-         */
-        private const val REPLIS = 8
-
-        /** Ce que la course sonde à l'ouverture : les mieux classées, pas les soixante-dix. */
-        private const val COURSE_MAX = 12
-
-        /** Ce que le menu montre avant de proposer le reste : les huit que le serveur classe en tête. */
-        private const val SOURCES_VISIBLES = 8
 
         /** Au-delà, on n'attend plus : une adresse muette trois secondes fera perdre du temps. */
         private const val DELAI_COURSE_MS = 3_000L

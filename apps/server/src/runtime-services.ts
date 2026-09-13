@@ -8,7 +8,7 @@ import { scanCoordinator } from "./scan-coordinator.js";
 import { cleanupIdleSessions, cleanupPlaybackSessions, detectFfmpegSupport } from "./playback.js";
 import { calibrateHardware, refreshTemperature } from "./capacity.js";
 import { createBackup, listBackups } from "./maintenance.js";
-import { rafraichirDirect, rafraichissementDuAuDemarrage, renumeroterSiNecessaire } from "./television-direct.js";
+import { regrouperSiNecessaire, renumeroterSiNecessaire } from "./television-direct.js";
 
 /**
  * Génération de l'agent de métadonnées.
@@ -56,15 +56,11 @@ export function startRuntimeServices(log: FastifyBaseLogger): RuntimeServices {
   }
 
   /**
-   * La télévision en direct se relit au démarrage — si elle est activée, et si la cadence est échue.
+   * La télévision en direct **ne se relit plus au démarrage**, ni à heure fixe.
    *
-   * Le départ est différé de trente secondes : au démarrage, le serveur calibre le matériel, répare
-   * ce qu'il faut et met en file les analyses de bibliothèque. Cinq cents téléchargements lancés
-   * dans la même seconde disputeraient le réseau et le processeur à tout cela, et c'est la
-   * médiathèque qu'on veut voir d'abord.
-   *
-   * Un échec n'arrête rien : c'est un travail de fond, et une liste injoignable au démarrage le sera
-   * peut-être encore à la prochaine occasion. On le journalise, et le serveur continue de servir.
+   * Décidé le 13 septembre 2026 : la relecture part quand celui qui écrit le fichier de listes la
+   * demande (`POST /api/live/rafraichissement`), ou quand on la lance à l'écran. Redémarrer le serveur
+   * ne retélécharge donc rien, et la grille garde sa dernière passe.
    */
   /*
    * Les rangs des pays, si la table a changé de forme depuis la dernière version.
@@ -84,16 +80,26 @@ export function startRuntimeServices(log: FastifyBaseLogger): RuntimeServices {
   if (renumerotees) {
     log.info({ chaines: renumerotees }, "Télévision en direct : chaînes renumérotées dans l'ordre d'affichage");
   }
-
-  if (rafraichissementDuAuDemarrage()) {
-    timers.push(setTimeout(() => {
-      log.info("Télévision en direct : relecture des listes au démarrage");
-      void rafraichirDirect()
-        .then((etat) => log.info({ chaines: etat.chaines, listes: etat.listesRetenues, secondes: etat.dureeSecondes },
-          "Télévision en direct : listes relues"))
-        .catch((cause) => log.warn({ err: cause }, "Télévision en direct : relecture impossible"));
-    }, 30_000));
-  }
+  /*
+   * Les chaînes connues, réunies sous la clé de fusion du jour — une fois, après la mise à jour qui la
+   * change.
+   *
+   * Différé, et mené par lots entre lesquels le serveur continue de répondre : l'ouverture n'a pas à
+   * l'attendre. Une relecture demandée entre-temps attend la même passe avant d'écrire la moindre liste.
+   */
+  const regroupement = setTimeout(() => {
+    const debut = Date.now();
+    void regrouperSiNecessaire()
+      .then((bilan) => {
+        // La durée va au journal : mesurée sur un poste de développement, elle reste à relever sur le NAS.
+        if (bilan?.reunies) {
+          log.info({ ...bilan, secondes: Math.round((Date.now() - debut) / 100) / 10 }, "Télévision en direct : chaînes regroupées sous la nouvelle clé de fusion");
+        }
+      })
+      .catch((error) => log.warn({ err: error }, "Regroupement des chaînes impossible"));
+  }, 20_000);
+  regroupement.unref?.();
+  timers.push(regroupement);
 
   // Réparation unique des progressions faussées par la durée du flux transcodé, jusqu'à 0.5.2 incluse.
   if (getSetting("progress_duration_repaired") !== "1") {

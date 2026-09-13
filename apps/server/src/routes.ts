@@ -49,7 +49,7 @@ import {
 } from "./live-relais.js";
 import { fetchWithTimeout } from "./resilience.js";
 import { enregistrerXtream, listerSources, reglerFast, retirerSource } from "./live-fournisseurs.js";
-import { sonderLesSources } from "./live-qualite.js";
+import { sonderLesAutres, sonderLesSources } from "./live-qualite.js";
 import {
   arreterRafraichissement,
   chaineDetaillee,
@@ -70,7 +70,9 @@ import {
   parametresDirect,
   retenirDerniereChaine,
   rafraichirDirect,
+  demanderRafraichissement,
 } from "./television-direct.js";
+import { genererJetonDemande, jetonDemandeConfigure, jetonDemandeValide, revoquerJetonDemande } from "./live-demande.js";
 import { listMetadataProvenance, recordMetadataField } from "./metadata-fields.js";
 import {
   cleanupIdleSessions,
@@ -608,7 +610,7 @@ export async function registerRoutes(app: FastifyInstance) {
    * autorisées quand l'écran existera et aura été éprouvé — un geste délibéré, comme le veut
    * `wan-exposition.ts`, et non un effet de bord de cette étape.
    */
-  app.get("/api/system/live", async () => ({ parametres: parametresDirect(), etat: etatDirect() }));
+  app.get("/api/system/live", async () => ({ parametres: parametresDirect(), etat: etatDirect(), jetonDemande: jetonDemandeConfigure() }));
 
   app.put("/api/system/live", async (request, reply) => {
     const parsed = parametresDirectSchema.safeParse(request.body ?? {});
@@ -646,6 +648,31 @@ export async function registerRoutes(app: FastifyInstance) {
 
   /** Arrêter la passe en cours sans éteindre la fonction : « pas maintenant », pas « jamais ». */
   app.post("/api/system/live/arret", async () => { arreterRafraichissement(); return etatDirect(); });
+
+  /** Le jeton de la demande de relecture : créé ici, montré une seule fois, révocable. */
+  app.post("/api/system/live/jeton", async () => ({ jeton: genererJetonDemande() }));
+  app.delete("/api/system/live/jeton", async (_request, reply) => {
+    revoquerJetonDemande();
+    return reply.code(204).send();
+  });
+
+  /**
+   * La demande de relecture, envoyée par l'outil qui réécrit le fichier de listes quand il a fini.
+   *
+   * Hors de `/api/system`, parce qu'elle ne vient pas d'une session d'administration mais d'un
+   * programme, authentifié par son propre jeton : `Authorization: Bearer …`. Elle répond tout de suite,
+   * la passe durant des minutes, et reste fermée à l'accès distant comme tout ce qui touche au direct.
+   */
+  app.post("/api/live/rafraichissement", async (request, reply) => {
+    const entete = request.headers.authorization;
+    const jeton = entete?.startsWith("Bearer ") ? entete.slice(7).trim() : null;
+    if (!jetonDemandeValide(jeton)) return reply.code(401).send({ message: "Jeton de demande invalide." });
+    if (!parametresDirect().actif) return reply.code(409).send({ message: "La télévision en direct est désactivée." });
+    if (!etatDirect().configure) return reply.code(409).send({ message: "Aucune source n'est réglée." });
+    const demande = demanderRafraichissement();
+    request.log.info({ demande }, "Télévision en direct : relecture demandée");
+    return reply.code(202).send({ demande });
+  });
 
   app.get("/api/system/live/listes", async () => listerListes());
 
@@ -917,6 +944,22 @@ export async function registerRoutes(app: FastifyInstance) {
     // retenir la chaîne, plutôt qu'à l'ouverture d'un flux dont on ignore encore s'il répondra.
     if (corps.ok) retenirDerniereChaine(profile.id, request.params.id);
     return reply.code(204).send();
+  });
+
+  /**
+   * Les sources qui ne répondent pas, sondées depuis le NAS **une fois qu'une autre joue**.
+   *
+   * On cherche d'abord une source qui joue ; ensuite seulement, on regarde toutes les autres. Celles
+   * qui se taisent sortent du repli automatique, pas du menu : le NAS ne passe pas forcément par le même
+   * chemin que le client, et c'est la lecture qui garde le dernier mot. La sonde part d'ici pour que le
+   * téléviseur n'y dépense rien, et sous les gardes du relais.
+   */
+  app.post<{ Params: IdParams }>("/api/live/channels/:id/sondes", async (request, reply) => {
+    const profile = profileFromRequest(request);
+    if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
+    if (!chaineDetaillee(request.params.id)) return reply.code(404).send({ message: "Chaîne introuvable" });
+    const corps = request.body as { enCours?: unknown } | null;
+    return { muettes: await sonderLesAutres(request.params.id, typeof corps?.enCours === "string" ? corps.enCours : null) };
   });
 
   /**

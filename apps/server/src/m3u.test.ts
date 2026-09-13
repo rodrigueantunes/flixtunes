@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyserM3U, cleDeChaine, decouperClassement, decouperNumeroDuNom, lireCatalogueM3U, lisibleParNosLecteurs } from "./m3u.js";
+import { analyserM3U, cleDeChaine, decouperClassement, decouperNumeroDuNom, lireCatalogueM3U, lisibleParNosLecteurs, paysDeLIdentifiant } from "./m3u.js";
 
 /**
  * Les cas éprouvés ici viennent tous du corpus réel — 527 listes, 181 126 entrées, relevées le
@@ -141,6 +141,57 @@ describe("cleDeChaine", () => {
 
   it("ne réunit pas deux chaînes différentes", () => {
     expect(cleDeChaine("TF1")).not.toBe(cleDeChaine("TF1 Séries Films"));
+    // Un décalage horaire est une autre chaîne, pas une autre qualité.
+    expect(cleDeChaine("TF1 +1")).not.toBe(cleDeChaine("TF1"));
+  });
+
+  it("retire la définition, le codage et les balises techniques", () => {
+    const tf1 = cleDeChaine("TF1");
+    for (const nom of [
+      "TF1 (1080p)", "TF1 FHD", "TF1 ᵁᴴᴰ", "TF1 HEVC", "TF1 4K HDR", "TF1 (720p) [Geo-blocked]",
+      "TF1 [Not 24/7]", "TF1 (OPT-2)", "TF1 (Opc. 1)", "TF1 FHD [1080p-canalplus.com]", "TF1 Backup", "TF1 ◉",
+    ]) expect(cleDeChaine(nom), nom).toBe(tf1);
+  });
+
+  it("garde les balises qui désignent une déclinaison", () => {
+    expect(cleDeChaine("NHK World TV (FR)")).not.toBe(cleDeChaine("NHK World TV (ESP)"));
+    expect(cleDeChaine("NHK World TV (FR)")).not.toBe(cleDeChaine("NHK World TV"));
+    expect(cleDeChaine("Canal 24 Horas [Madrid]")).not.toBe(cleDeChaine("Canal 24 Horas"));
+  });
+
+  it("ne retire un mot de tête que s'il reste un nom derrière lui", () => {
+    expect(cleDeChaine("VIP FR: TF1 FHD")).toBe(cleDeChaine("FR: TF1"));
+    expect(cleDeChaine("VIP TV")).toBe("vip tv");
+    expect(cleDeChaine("HD")).toBe("hd");
+  });
+
+  it("ne s'emballe pas sur une balise écrite pour la faire échouer", () => {
+    // Les listes viennent d'Internet : un nom peut être écrit pour épuiser l'expression.
+    for (const contenu of [`${"a.a-".repeat(11)}a!`, `${"a.a-".repeat(4000)}!`]) {
+      const debut = performance.now();
+      cleDeChaine(`Chaîne (${contenu})`);
+      expect(performance.now() - debut).toBeLessThan(200);
+    }
+  });
+});
+
+describe("paysDeLIdentifiant", () => {
+  it("lit le pays d'un identifiant qui désigne la chaîne nommée", () => {
+    expect(paysDeLIdentifiant("CANAL+ FAMILY", "CanalplusFamily.pl")).toBe("pl");
+    expect(paysDeLIdentifiant("Canal+ Family (720p)", "CanalPlusFamily.fr@SD")).toBe("fr");
+    expect(paysDeLIdentifiant("TF1 HD", "TF1.fr")).toBe("fr");
+  });
+
+  it("prend le flux français d'une chaîne étrangère pour ce qu'il est", () => {
+    expect(paysDeLIdentifiant("Pluto TV Comédie", "PlutoTVComedie.de@FR")).toBe("fr");
+  });
+
+  it("ignore un identifiant recopié d'une autre chaîne, ou d'une autre forme", () => {
+    expect(paysDeLIdentifiant("France 5", "TF1.fr")).toBeNull();
+    expect(paysDeLIdentifiant("MTV", "MTV.-.Music.Television.HD.us2")).toBeNull();
+    expect(paysDeLIdentifiant("Central TV", "CENTRAL TV")).toBeNull();
+    expect(paysDeLIdentifiant("TF1", "58335")).toBeNull();
+    expect(paysDeLIdentifiant("TF1", null)).toBeNull();
   });
 });
 

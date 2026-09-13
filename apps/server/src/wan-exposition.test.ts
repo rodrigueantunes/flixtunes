@@ -35,11 +35,17 @@ const REFUS_ASSUMES = new Set([
   // décider, ce que ce registre existe précisément pour empêcher.
   "GET /api/system/live", "PUT /api/system/live",
   "POST /api/system/live/rafraichir", "POST /api/system/live/arret",
+  "POST /api/system/live/jeton", "DELETE /api/system/live/jeton",
+  // La demande de relecture vient de l'outil qui écrit le fichier de listes, sur la machine ou le
+  // réseau local : rien ne justifie qu'elle arrive d'Internet.
+  "POST /api/live/rafraichissement",
   "GET /api/system/live/listes",
   "GET /api/system/live/sources", "POST /api/system/live/sources", "DELETE /api/system/live/sources/:id",
   "GET /api/live", "GET /api/live/listes", "GET /api/live/pays", "GET /api/live/fiabilites",
   "GET /api/live/channels",
   "GET /api/live/channels/:id", "POST /api/live/channels/:id/resultat", "GET /api/live/numero",
+  // La sonde des autres sources suit la lecture : elle part du NAS vers des hébergeurs d'Internet.
+  "POST /api/live/channels/:id/sondes",
   // L'étoile et la dernière chaîne suivront la grille : elles n'ont de sens que devant une grille
   // qu'on affiche, et la grille elle-même attend encore d'être éprouvée à distance.
   "PUT /api/live/channels/:id/favori", "DELETE /api/live/channels/:id/favori", "GET /api/live/derniere",

@@ -370,6 +370,19 @@ class FlixTunesApi(
     }
 
     /**
+     * Les sources que le serveur n'a pas pu joindre, sondées une fois qu'une autre joue.
+     *
+     * Elles sortent du repli automatique, pas du menu : le NAS ne passe pas forcément par le même
+     * chemin que le téléviseur, et c'est la lecture qui garde le dernier mot.
+     */
+    suspend fun sondesChaineDirect(profileId: String, id: String, enCours: String): Set<String> {
+        val reponse = request("/live/channels/${encode(id)}/sondes?profileId=${encode(profileId)}", "POST",
+            JSONObject().put("enCours", enCours))
+        val muettes = reponse.optJSONArray("muettes") ?: return emptySet()
+        return (0 until muettes.length()).mapTo(mutableSetOf()) { muettes.getString(it) }
+    }
+
+    /**
      * Les facettes comptent **sous les autres filtres cochés**, jamais sur le corpus entier.
      *
      * Sans cela l'écran promettait « France 1 355 » alors qu'une playlist déjà cochée n'en contenait

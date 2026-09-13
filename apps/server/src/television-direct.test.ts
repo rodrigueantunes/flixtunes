@@ -1,8 +1,9 @@
+import { createHash } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { db } from "./database.js";
 import {
   chaineDetaillee,
@@ -20,9 +21,11 @@ import {
   retenirDerniereChaine,
   parametresDirect,
   rafraichirDirect,
-  rafraichissementDuAuDemarrage,
+  arreterRafraichissement,
+  demanderRafraichissement,
   rangerLesPays,
   numeroterLesNouvelles,
+  regrouperLesChaines,
   renumeroterDansLOrdreDAffichage,
 } from "./television-direct.js";
 
@@ -39,9 +42,12 @@ import {
 let serveur: Server;
 let base = "";
 let dossier = "";
+/** Combien de fois chaque liste a été téléchargée : c'est ce qui prouve qu'une passe a eu lieu. */
+const telechargements: Record<string, number> = {};
 
 function servir(reponses: Record<string, string>): Promise<void> {
   serveur = createServer((requete, reponse) => {
+    telechargements[requete.url ?? ""] = (telechargements[requete.url ?? ""] ?? 0) + 1;
     const corps = reponses[requete.url ?? ""];
     if (corps === undefined) { reponse.writeHead(404).end("absent"); return; }
     reponse.writeHead(200, { "Content-Type": "audio/x-mpegurl" }).end(corps);
@@ -381,21 +387,43 @@ describe("les favorites et la dernière chaîne", () => {
   });
 });
 
-describe("le rafraîchissement au démarrage", () => {
-  it("ne part que si la fonction est activée, réglée, et la cadence échue", async () => {
-    // Une source vient d'être relue par les tests précédents : la cadence de douze heures n'est pas
-    // échue, donc rien ne doit repartir. Redémarrer trois fois de suite ne retélécharge pas trois fois.
-    expect(rafraichissementDuAuDemarrage()).toBe(false);
+describe("la relecture sur demande", () => {
+  const passes = () => telechargements["/a.m3u"] ?? 0;
+  const auRepos = () => vi.waitFor(() => expect(etatDirect().enCours).toBe(false), { timeout: 20_000 });
 
-    // Cadence d'une heure et dernière lecture reculée de deux : elle est échue.
-    enregistrerParametres({ cadenceHeures: 1 });
-    db.prepare("UPDATE live_sources SET rafraichie_le = datetime('now', '-2 hours')").run();
-    expect(rafraichissementDuAuDemarrage()).toBe(true);
+  it("part tout de suite quand rien ne tourne", async () => {
+    await auRepos();
+    const avant = passes();
+    expect(demanderRafraichissement()).toBe("lancee");
+    await vi.waitFor(() => expect(passes()).toBe(avant + 1), { timeout: 20_000 });
+    await auRepos();
+  });
 
-    // Éteinte, rien ne part — quelle que soit la cadence.
-    enregistrerParametres({ actif: false });
-    expect(rafraichissementDuAuDemarrage()).toBe(false);
-    enregistrerParametres({ actif: true, cadenceHeures: 12 });
+  it("rejoue une seule fois ce qu'on lui demande pendant une passe", async () => {
+    // L'outil qui écrit le fichier a fini pendant qu'une passe lisait encore l'ancien : ignorer sa
+    // demande laisserait la grille un jour en retard. Une rafale, elle, ne vaut qu'une relecture.
+    const avant = passes();
+    const passe = rafraichirDirect();
+    expect(demanderRafraichissement()).toBe("en-attente");
+    expect(demanderRafraichissement()).toBe("en-attente");
+    await passe;
+    await vi.waitFor(() => expect(passes()).toBe(avant + 2), { timeout: 20_000 });
+    await auRepos();
+    await new Promise((resoudre) => setTimeout(resoudre, 300));
+    expect(passes()).toBe(avant + 2);
+  });
+
+  it("oublie la demande retenue quand on arrête la passe", async () => {
+    // Arrêter veut dire « je veux ma machine », pas « recommence tout de suite ».
+    const passe = rafraichirDirect();
+    expect(demanderRafraichissement()).toBe("en-attente");
+    arreterRafraichissement();
+    await passe;
+    const apres = passes();
+    await new Promise((resoudre) => setTimeout(resoudre, 300));
+    expect(etatDirect().enCours).toBe(false);
+    expect(passes()).toBe(apres);
+    // La suite a besoin d'une grille complète : une passe entière la reconstruit.
     await rafraichirDirect();
   });
 });
@@ -681,5 +709,164 @@ describe("les listes changent chaque jour", () => {
       .get() as unknown as { numero: number };
     expect(tardive.numero).toBeGreaterThanOrEqual(27);
     expect(tardive.numero).toBeLessThanOrEqual(199);
+  });
+});
+
+describe("le regroupement des chaînes déjà connues", () => {
+  /*
+   * La clé de fusion a changé : une base remplie par la version précédente range « RG Zeta » et
+   * « RG Zeta (1080p) » en deux chaînes, chacune avec son numéro. Les lignes sont posées à la main,
+   * telles que cette version les écrivait.
+   */
+  const profil = "profil-direct-test";
+  const idDe = (cle: string) => createHash("sha1").update(`chaine:${cle}`).digest("hex").slice(0, 16);
+  const poser = (cle: string, nom: string, valeurs: { tvgId?: string; pays?: string; numero?: number; adresses?: string[] } = {}) => {
+    db.prepare(`INSERT INTO live_channels (id, cle, nom, nom_recherche, nom_compact, tvg_id, pays, numero)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(idDe(cle), cle, nom, cle, cle.replace(/\s+/g, ""),
+      valeurs.tvgId ?? null, valeurs.pays ?? "fr", valeurs.numero ?? null);
+    const liste = (db.prepare("SELECT id FROM live_playlists LIMIT 1").get() as unknown as { id: string }).id;
+    for (const url of valeurs.adresses ?? []) {
+      db.prepare("INSERT INTO live_channel_urls (channel_id, url, playlist_id) VALUES (?, ?, ?)").run(idDe(cle), url, liste);
+    }
+    // Comme après un rafraîchissement : le compte des adresses est tenu sur la ligne.
+    db.prepare("UPDATE live_channels SET adresses = ? WHERE id = ?").run(valeurs.adresses?.length ?? 0, idDe(cle));
+  };
+
+  it("réunit les écritures d'une même chaîne, et ce qui s'y rattache la suit", async () => {
+    db.prepare("INSERT OR IGNORE INTO profiles (id, name, avatar_color) VALUES (?, 'Essai', '#2e6bff')").run(profil);
+    poser("rg zeta", "RG Zeta", { numero: 9103, adresses: ["http://exemple.test/zeta-1.m3u8"] });
+    // La même adresse sous deux écritures : elle ne doit compter qu'une fois.
+    poser("rg zeta 1080p", "RG Zeta (1080p)", { numero: 9102, adresses: ["http://exemple.test/zeta-1.m3u8", "http://exemple.test/zeta-2.m3u8"] });
+    // Sans adresse aujourd'hui, mais c'est elle qui porte le plus petit numéro.
+    poser("rg zeta fhd", "RG Zeta FHD", { numero: 9101 });
+    marquerFavorite(profil, idDe("rg zeta 1080p"), true);
+    retenirDerniereChaine(profil, idDe("rg zeta fhd"));
+
+    await regrouperLesChaines();
+
+    expect(db.prepare("SELECT id, cle, nom, numero, adresses, disparue_le FROM live_channels WHERE cle LIKE 'rg zeta%'").all())
+      .toEqual([{ id: idDe("rg zeta"), cle: "rg zeta", nom: "RG Zeta", numero: 9101, adresses: 2, disparue_le: null }]);
+    expect(listerChaines({ profileId: profil, favoris: true }).items.map((chaine) => chaine.id)).toEqual([idDe("rg zeta")]);
+    expect(derniereChaine(profil)?.id).toBe(idDe("rg zeta"));
+  });
+
+  it("garde à part la même enseigne d'un autre pays, quand son identifiant le dit", async () => {
+    poser("rg family", "RG Family", { tvgId: "RGFamily.fr", numero: 9111, adresses: ["http://exemple.test/family-fr.m3u8"] });
+    poser("rg family 720p", "RG FAMILY (720p)", { tvgId: "RGFamily.pl", pays: "pl", numero: 9112, adresses: ["http://exemple.test/family-pl.m3u8"] });
+    // Sans identifiant, rien ne la dit polonaise : elle rejoint la chaîne qui porte le nom.
+    poser("rg family hd", "RG Family HD", { numero: 9113, adresses: ["http://exemple.test/family-hd.m3u8"] });
+
+    await regrouperLesChaines({ parLot: 1 });
+
+    expect(db.prepare("SELECT cle, pays, pays_cle, numero, adresses FROM live_channels WHERE cle LIKE 'rg family%' ORDER BY cle").all())
+      .toEqual([
+        { cle: "rg family", pays: "fr", pays_cle: "fr", numero: 9111, adresses: 2 },
+        { cle: "rg family@pl", pays: "pl", pays_cle: "pl", numero: 9112, adresses: 1 },
+      ]);
+  });
+
+  it("ne sort pas une chaîne de la France en la réunissant", async () => {
+    // Rangée en France sans identifiant, elle garde sa clé : la version polonaise part à côté.
+    poser("rg nouvelles", "RG Nouvelles", { numero: 9131, adresses: ["http://exemple.test/nouvelles-fr.m3u8"] });
+    poser("rg nouvelles 720p", "RG Nouvelles (720p)", { tvgId: "RGNouvelles.pl", pays: "pl", numero: 9132, adresses: ["http://exemple.test/nouvelles-pl.m3u8"] });
+    // Rangée ailleurs sous son nom nu, mais en France sous une autre écriture : réunie, elle reste en France.
+    poser("rg sport", "RG SPORT", { pays: "ro", numero: 9133, adresses: ["http://exemple.test/sport-ro.m3u8"] });
+    poser("rg sport hd", "RG Sport HD", { numero: 9134, adresses: ["http://exemple.test/sport-fr.m3u8"] });
+
+    await regrouperLesChaines();
+
+    expect(db.prepare("SELECT cle, pays, numero FROM live_channels WHERE cle LIKE 'rg nouvelles%' OR cle LIKE 'rg sport%' ORDER BY cle").all())
+      .toEqual([
+        { cle: "rg nouvelles", pays: "fr", numero: 9131 },
+        { cle: "rg nouvelles@pl", pays: "pl", numero: 9132 },
+        { cle: "rg sport", pays: "fr", numero: 9133 },
+      ]);
+  });
+
+  it("réunit par petits lots sans heurter une ligne dont l'ancienne clé est la nouvelle d'une autre", async () => {
+    // L'exposant devient « 1080p » et reste dans le nom : « RG Omega ¹⁰⁸⁰p FR » prend la clé que porte
+    // encore « RG Omega (1080p) [FR] », laquelle part de son côté vers « rg omega fr ».
+    poser("rg omega ¹⁰⁸⁰p fr", "RG Omega ¹⁰⁸⁰p FR", { numero: 9121, adresses: ["http://exemple.test/omega-1.m3u8"] });
+    poser("rg omega 1080p fr", "RG Omega (1080p) [FR]", { numero: 9122, adresses: ["http://exemple.test/omega-2.m3u8"] });
+
+    await regrouperLesChaines({ parLot: 1 });
+
+    expect(db.prepare("SELECT id, cle, numero FROM live_channels WHERE cle LIKE 'rg omega%' ORDER BY cle").all()).toEqual([
+      { id: idDe("rg omega 1080p fr"), cle: "rg omega 1080p fr", numero: 9121 },
+      { id: idDe("rg omega fr"), cle: "rg omega fr", numero: 9122 },
+    ]);
+  });
+
+  it("se rejoue sans rien déplacer", async () => {
+    const photo = () => db.prepare("SELECT id, cle, numero, adresses, pays_cle FROM live_channels ORDER BY id").all();
+    const avant = photo();
+    expect((await regrouperLesChaines()).reunies).toBe(0);
+    expect(photo()).toEqual(avant);
+  });
+
+  it("et une liste lue ensuite suit la même règle", async () => {
+    const liste = [
+      "#EXTM3U",
+      '#EXTINF:-1 tvg-id="RGSigma.fr",RG Sigma',
+      "http://exemple.test/sigma-fr.m3u8",
+      "#EXTINF:-1,RG Sigma (1080p) [Geo-blocked]",
+      "http://exemple.test/sigma-hd.m3u8",
+      '#EXTINF:-1 tvg-id="RGSigma.pl",RG SIGMA',
+      "http://exemple.test/sigma-pl.m3u8",
+      // Rangée en France par son seul groupe : elle réclame la clé, et la polonaise part à côté.
+      '#EXTINF:-1 group-title="France",RG Nova',
+      "http://exemple.test/nova-fr.m3u8",
+      '#EXTINF:-1 tvg-id="RGNova.pl",RG Nova (720p)',
+      "http://exemple.test/nova-pl.m3u8",
+      "",
+    ].join("\n");
+    const annexe = createServer((_requete, reponse) => { reponse.writeHead(200, { "Content-Type": "audio/x-mpegurl" }).end(liste); });
+    await new Promise<void>((resoudre) => annexe.listen(0, "127.0.0.1", () => resoudre()));
+    const autre = mkdtempSync(path.join(tmpdir(), "flixtunes-direct-3-"));
+    writeFileSync(path.join(autre, "m3u.json"), JSON.stringify({
+      "✅ Sigma": `http://127.0.0.1:${(annexe.address() as { port: number }).port}/sigma.m3u`,
+    }), "utf8");
+    enregistrerParametres({ dossier: autre });
+    try {
+      await rafraichirDirect();
+      expect(db.prepare("SELECT cle, pays_cle, adresses FROM live_channels WHERE cle LIKE 'rg sigma%' OR cle LIKE 'rg nova%' ORDER BY cle").all())
+        .toEqual([
+          { cle: "rg nova", pays_cle: "fr", adresses: 1 },
+          { cle: "rg nova@pl", pays_cle: "pl", adresses: 1 },
+          { cle: "rg sigma", pays_cle: "fr", adresses: 2 },
+          { cle: "rg sigma@pl", pays_cle: "pl", adresses: 1 },
+        ]);
+    } finally {
+      enregistrerParametres({ dossier });
+      rmSync(autre, { recursive: true, force: true });
+      await new Promise<void>((resoudre) => annexe.close(() => resoudre()));
+    }
+  });
+});
+
+describe("le relevé des sondes posé à côté du fichier de listes", () => {
+  /*
+   * TF1 porte deux adresses, une par liste. Sans relevé, rien ne les départage et l'ordre retombe sur
+   * l'adresse elle-même : `tf1-a` d'abord. Le relevé dit que c'est l'autre qui répond.
+   */
+  const tf1a = "http://exemple.test/tf1-a.m3u8";
+  const tf1b = "http://exemple.test/tf1-b.m3u8";
+  const ecrireLeReleve = (genereLe: Date) => writeFileSync(path.join(dossier, "sondes.json"), JSON.stringify({
+    version: 1, genere_le: genereLe.toISOString(), joignables: [tf1b], muettes: [tf1a],
+  }), "utf8");
+  const ordreDeTf1 = () => chaineDetaillee(listerChaines({ q: "tf1" }).items[0]!.id)!.sources.map((source) => source.url);
+
+  afterAll(() => rmSync(path.join(dossier, "sondes.json"), { force: true }));
+
+  it("met devant les adresses joignables, et garde les muettes en fin de liste", async () => {
+    ecrireLeReleve(new Date());
+    await rafraichirDirect();
+    expect(ordreDeTf1()).toEqual([tf1b, tf1a]);
+  });
+
+  it("ignore un relevé de plus d'un jour", async () => {
+    ecrireLeReleve(new Date(Date.now() - 2 * 24 * 60 * 60 * 1000));
+    await rafraichirDirect();
+    expect(ordreDeTf1()).toEqual([tf1a, tf1b]);
   });
 });

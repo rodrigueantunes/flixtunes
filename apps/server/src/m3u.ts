@@ -95,18 +95,94 @@ export function decouperClassement(libelle: string): { nom: string; classement: 
 }
 
 /**
- * La clé de fusion d'une chaîne : son nom, normalisé.
+ * Ce qui décore le nom d'une chaîne sans rien changer à ce qu'elle diffuse : la définition, le
+ * codage, la cadence, et les quelques mots par lesquels une liste signale une adresse de secours.
+ */
+const DECORATION = String.raw`(?:u?hd|fhd|qhd|sd|4k|8k|hevc|h\.?26[45]|x26[45]|hdr|sdr|\d{3,4}[pi]|\d{2,3}\s?fps|fps\s?\d{2,3}|backup|raw|vip|multi)`;
+
+/** Ce qu'une balise entre parenthèses ou crochets peut contenir sans rien dire de la chaîne. */
+const MOT_TECHNIQUE = String.raw`(?:${DECORATION}|not\s*24\s*/\s*7|geo[\s-]*blocked|opt[.\s-]*\d+|opc[.\s-]*\d+|option\s*\d+|source\s*\d+|[\w-]+(?:\.[\w-]+)+)`;
+
+const BALISE = /[([{]([^)\]}]*)[)\]}]/g;
+const BALISE_TECHNIQUE = new RegExp(String.raw`^\s*(?:${MOT_TECHNIQUE}[\s,;:/|-]*)+$`, "i");
+const JETON_DECORATION = new RegExp(`^${DECORATION}$`, "i");
+
+/**
+ * Au-delà, une balise n'est plus une mention technique.
  *
- * C'est elle qui réunit les 44,7 % de doublons du corpus en une entrée unique portant plusieurs
- * adresses — la réserve qui sert de repli quand la première refuse.
+ * C'est aussi une garde : les listes viennent d'Internet, et une expression à alternatives répétées
+ * ne doit jamais pouvoir s'emballer sur un nom écrit pour la faire échouer.
+ */
+const BALISE_MAX = 48;
+
+/**
+ * Le nom sans ses symboles ni ses balises techniques. Les autres balises restent : « (FR) »,
+ * « [Montréal] » ou « (2024) » disent de quelle chaîne il s'agit.
+ */
+function nomSansDecoration(nom: string): string {
+  return nom.normalize("NFKC")
+    .replace(/(?!\+)\p{S}/gu, "")
+    .replace(BALISE, (balise, contenu: string) =>
+      contenu.length <= BALISE_MAX && BALISE_TECHNIQUE.test(contenu) ? " " : balise);
+}
+
+/**
+ * La clé de fusion d'une chaîne : son nom, normalisé, sans ce qui ne fait que le décorer.
  *
- * **Le compromis est assumé et vaut d'être écrit** : deux chaînes réellement différentes qui
- * porteraient exactement le même nom seraient fusionnées, et leurs adresses se retrouveraient dans le
- * même repli. Le cas existe (« Cinema », « News »), il est rare, et il coûte moins cher que
- * l'inverse — quatre-vingts entrées « TF1 » dans la grille, dont soixante mortes.
+ * C'est elle qui réunit les doublons du corpus en une entrée unique portant plusieurs adresses — la
+ * réserve qui sert de repli quand la première refuse. Le nom normalisé seul laissait « TF1 »,
+ * « TF1 (1080p) », « TF1 FHD » et « TF1 ᵁᴴᴰ » en quatre chaînes, chacune avec son petit repli.
+ *
+ * **Seules les décorations reconnues partent.** La définition, le codage et la cadence, où qu'ils
+ * soient ; une balise qui ne contient que cela, `[Not 24/7]`, `[Geo-blocked]`, `(Opt-3)` ou un nom de
+ * domaine ; les symboles et les exposants, que NFKC ramène à des lettres. Une balise qui dit autre
+ * chose reste, et avec elle la déclinaison : « NHK World TV (FR) » n'est pas « NHK World TV (ESP) ».
+ *
+ * Un mot de décoration en **tête** ne part que s'il reste au moins deux mots derrière lui :
+ * « VIP FR: TF1 » rejoint « FR: TF1 », mais « VIP TV » ne devient pas « TV ».
+ *
+ * **Le compromis reste assumé** : deux chaînes différentes qui porteraient le même nom seraient
+ * fusionnées. Le cas des homonymes de pays différents est traité à l'écriture, par l'identifiant de
+ * la liste — voir `paysDeLIdentifiant`.
  */
 export function cleDeChaine(nom: string): string {
-  return normaliseForSearch(nom);
+  const mots = normaliseForSearch(nomSansDecoration(nom)).split(" ").filter(Boolean);
+  while (mots.length > 1 && JETON_DECORATION.test(mots[mots.length - 1]!)) mots.pop();
+  while (mots.length > 2 && JETON_DECORATION.test(mots[0]!)) mots.shift();
+  return mots.join(" ") || normaliseForSearch(nom);
+}
+
+/** Un identifiant de la forme publiée par iptv-org : `CanalPlusFamily.fr`, `TF1.fr@SD`. */
+const IDENTIFIANT_PUBLIE = /^([A-Za-z0-9][A-Za-z0-9-]*)\.([a-z]{2})(?:@([A-Za-z0-9]+))?$/;
+
+/** Le flux qu'un identifiant désigne après son `@` : `PlutoTVComedie.de@FR` est la version française. */
+const FLUX_FRANCAIS = new Set(["fr", "france", "french", "francais"]);
+
+function empreinteDeMarque(texte: string): string {
+  return texte.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase()
+    .replace(/\+/g, "plus").replace(/&/g, "and").replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * Le pays qu'un identifiant attache à une chaîne, **quand il désigne bien la même chaîne que le nom**.
+ *
+ * « Canal+ Family » existe en France et en Pologne, « Arte » en France et en Allemagne : la clé les
+ * réunit, et le repli de l'une jouerait l'autre sans prévenir. L'identifiant tranche, mais seulement
+ * s'il ressemble au nom — `CanalplusFamily.pl` pour « CANAL+ FAMILY ». Le corpus porte aussi des
+ * identifiants recopiés d'une autre chaîne ou d'un autre bouquet, et un arbitre qui se trompe ferait
+ * plus de dégâts que pas d'arbitre du tout.
+ */
+export function paysDeLIdentifiant(nom: string, tvgId: string | null | undefined): string | null {
+  const trouve = IDENTIFIANT_PUBLIE.exec(tvgId?.trim() ?? "");
+  if (!trouve) return null;
+  const base = empreinteDeMarque(trouve[1]!);
+  const libelle = empreinteDeMarque(nomSansDecoration(nom).replace(BALISE, " ").split(/\s+/)
+    .filter((mot) => !JETON_DECORATION.test(mot)).join(" "));
+  if (base.length < 2 || libelle.length < 2) return null;
+  const [court, long] = base.length <= libelle.length ? [base, libelle] : [libelle, base];
+  if (base !== libelle && !(court.length >= 4 && long.startsWith(court))) return null;
+  const flux = trouve[3]?.toLowerCase();
+  return flux && FLUX_FRANCAIS.has(flux) ? "fr" : trouve[2]!;
 }
 
 /**

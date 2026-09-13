@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { EtatDirect, ListeDirect, ParametresDirect } from "@flixtunes/contracts";
 
-const parametresEteints: ParametresDirect = { actif: false, dossier: null, fichier: "m3u.json", cadenceHeures: 12 };
+const parametresEteints: ParametresDirect = { actif: false, dossier: null, fichier: "m3u.json" };
 const etatVierge: EtatDirect = {
   actif: false, configure: false, enCours: false, listes: 0, listesRetenues: 0, chaines: 0, adresses: 0,
   fusionnees: 0, ecartees: 0, rafraichieLe: null, dernierMessage: null, progression: null, dureeSecondes: null,
@@ -19,7 +19,7 @@ const listes: ListeDirect[] = [
 
 const { apiMock } = vi.hoisted(() => ({ apiMock: {
   live: vi.fn(), listesLive: vi.fn(), sourcesLive: vi.fn(), ajouterXtream: vi.fn(), activerFast: vi.fn(), retirerSourceLive: vi.fn(), enregistrerLive: vi.fn(), rafraichirLive: vi.fn(),
-  arreterLive: vi.fn(), browseDirectories: vi.fn(),
+  arreterLive: vi.fn(), browseDirectories: vi.fn(), creerJetonLive: vi.fn(), revoquerJetonLive: vi.fn(),
 } }));
 vi.mock("./api", () => ({ api: apiMock }));
 
@@ -34,6 +34,8 @@ beforeEach(() => {
   apiMock.activerFast.mockResolvedValue({ source: null });
   apiMock.enregistrerLive.mockResolvedValue({ parametres: parametresEteints, etat: etatVierge });
   apiMock.rafraichirLive.mockResolvedValue(etatVierge);
+  apiMock.creerJetonLive.mockResolvedValue({ jeton: "jeton-de-test" });
+  apiMock.revoquerJetonLive.mockResolvedValue(undefined);
 });
 afterEach(cleanup);
 
@@ -57,6 +59,14 @@ describe("le réglage de la télévision en direct", () => {
     render(<TelevisionDirect />);
     fireEvent.click(await screen.findByRole("button", { name: /Direct : désactivé/ }));
     await waitFor(() => expect(apiMock.enregistrerLive).toHaveBeenCalledWith({ actif: true }));
+  });
+
+  it("crée un jeton de demande et le montre, une fois", async () => {
+    // Le serveur n'en garde que l'empreinte : c'est le seul moment où l'on peut le recopier.
+    render(<TelevisionDirect />);
+    fireEvent.click(await screen.findByRole("button", { name: "Créer un jeton" }));
+    expect(await screen.findByText("jeton-de-test")).toBeInTheDocument();
+    expect(apiMock.creerJetonLive).toHaveBeenCalledTimes(1);
   });
 
   it("enregistre un chemin de fichier, découpé pour le serveur", async () => {

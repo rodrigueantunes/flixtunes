@@ -312,12 +312,15 @@ export const api = {
    * et la liste blanche de `wan-exposition.ts` les refuse d'office. La grille, elle, rejoindra les
    * lectures autorisées quand son écran existera.
    */
-  live: () => request<{ parametres: ParametresDirect; etat: EtatDirect }>("/system/live"),
+  live: () => request<{ parametres: ParametresDirect; etat: EtatDirect; jetonDemande?: boolean }>("/system/live"),
   enregistrerLive: (parametres: Partial<ParametresDirect>) => request<{ parametres: ParametresDirect; etat: EtatDirect }>(
     "/system/live", { method: "PUT", body: JSON.stringify(parametres) },
   ),
   rafraichirLive: () => request<EtatDirect>("/system/live/rafraichir", { method: "POST" }),
   arreterLive: () => request<EtatDirect>("/system/live/arret", { method: "POST" }),
+  /** Le jeton de la demande de relecture : montré une seule fois, à sa création, jamais relu ensuite. */
+  creerJetonLive: () => request<{ jeton: string }>("/system/live/jeton", { method: "POST" }),
+  revoquerJetonLive: () => request<void>("/system/live/jeton", { method: "DELETE" }),
   listesLive: () => request<ListeDirect[]>("/system/live/listes"),
   sourcesLive: () => request<SourceDirect[]>("/system/live/sources"),
   ajouterXtream: (hote: string, utilisateur: string, motDePasse: string, libelle?: string) =>
@@ -391,6 +394,9 @@ export const api = {
   ),
   resultatChaineLive: (id: string, url: string, ok: boolean) => request<void>(
     `/live/channels/${encodeURIComponent(id)}/resultat`, { method: "POST", body: JSON.stringify({ url, ok }) },
+  ),
+  sondesChaineLive: (id: string, enCours: string) => request<{ muettes: string[] }>(
+    `/live/channels/${encodeURIComponent(id)}/sondes`, { method: "POST", body: JSON.stringify({ enCours }) },
   ),
   startScan: (input: ScanRequest) => request<{ jobs: ScanJob[] }>("/scans", { method: "POST", body: JSON.stringify(input) }),
   cancelScan: (id: string) => request<ScanJob>(`/scans/${encodeURIComponent(id)}/cancel`, { method: "POST" }),

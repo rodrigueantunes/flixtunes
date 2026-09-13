@@ -79,8 +79,16 @@ const BUDGETS = {
    *
    * Deux kilooctets et demi de marge, comme pour la feuille de style. Le prochain qui les dépassera
    * devra à son tour s'expliquer.
+   *
+   * **Relevé de 204 à 207 Kio le 13 septembre 2026, pour le lecteur du direct.** Le poste mesurait
+   * 204,2 Kio, soit 0,2 au-dessus. Le lecteur du direct y a gagné trois choses : la relève silencieuse,
+   * qui prépare une seconde lecture cachée et prend la place de la première quand la session expire ;
+   * le repli sur toutes les sources d'une chaîne regroupée ; et l'avance qui suit la fiabilité. C'est ce
+   * qu'on télécharge en ouvrant une chaîne, et rien du tout pour qui n'en ouvre aucune.
+   *
+   * Trois kilooctets de marge. Le prochain qui les dépassera devra, lui aussi, dire pourquoi.
    */
-  jsDiffere: { limite: 204 * Kio, libelle: "Lecteur chargé à la demande (gzip)" },
+  jsDiffere: { limite: 207 * Kio, libelle: "Lecteur chargé à la demande (gzip)" },
   imageUnitaire: { limite: 96 * Kio, libelle: "Image la plus lourde (brute)" },
   mediaDemarrage: { limite: 128 * Kio, libelle: "Son de démarrage (brut)" },
   totalDemarrage: { limite: 320 * Kio, libelle: "Tout ce qui part au premier affichage (gzip + images)" },

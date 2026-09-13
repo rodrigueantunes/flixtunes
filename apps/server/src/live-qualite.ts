@@ -1,3 +1,5 @@
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import { adressePrivee, hoteAutorise, recupererSansSortirDuPublic } from "./live-relais.js";
 import { db } from "./database.js";
 
@@ -140,4 +142,156 @@ export async function sonderLesSources(channelId: string): Promise<number> {
     ecrire.run(mesure.qualite?.hauteur ?? null, mesure.qualite?.debit ?? null, maintenant, channelId, mesure.url);
   }
   return mesures.filter((mesure) => mesure.qualite?.hauteur != null).length;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Les sources qui répondent encore, une fois qu'une autre joue              */
+/* ------------------------------------------------------------------------ */
+
+/** Un résultat vaut cinq minutes : zapper d'une chaîne à l'autre ne relance pas tout. */
+const JOIGNABILITE_MS = 5 * 60 * 1000;
+/** Quatre secondes : au-delà, une adresse ne vaut pas mieux qu'une muette pour servir de secours. */
+const DELAI_JOIGNABLE_MS = 4_000;
+/** Douze à la fois : les 81 sources de la chaîne la mieux fournie tiennent en une demi-minute. */
+const SONDES_SIMULTANEES = 12;
+/** Au-delà, on répond avec ce qu'on sait, et les sondes restantes finissent en arrière-plan. */
+const ATTENTE_MAX_MS = 20_000;
+/** La mémoire des sondes oublie les plus anciennes au-delà. */
+const MEMOIRE_MAX = 5_000;
+
+export type VerdictHote = "public" | "prive" | "introuvable";
+
+/** Ce qu'une sonde peut se faire prêter, pour qu'une suite de tests n'aille pas sur Internet. */
+export interface OutilsDeSonde {
+  recuperer?: (url: string, init: RequestInit) => Promise<Response>;
+  juger?: (hote: string) => Promise<VerdictHote>;
+  maintenant?: () => number;
+  attenteMaxMs?: number;
+}
+
+const joignabilites = new Map<string, { repond: boolean; le: number }>();
+const sondesEnCours = new Map<string, Promise<string[]>>();
+
+function retenir(url: string, repond: boolean, le: number): void {
+  joignabilites.delete(url);
+  joignabilites.set(url, { repond, le });
+  if (joignabilites.size > MEMOIRE_MAX) joignabilites.delete(joignabilites.keys().next().value!);
+}
+
+/** Pour les tests : oublier ce qui a été sondé. */
+export function oublierLesJoignabilites(): void {
+  joignabilites.clear();
+  sondesEnCours.clear();
+}
+
+/**
+ * L'hôte d'une adresse, jugé en trois issues plutôt qu'en deux.
+ *
+ * `hoteAutorise` répond « non » aussi bien pour une adresse du réseau local que pour un nom qui ne se
+ * résout plus : pour le relais, c'est la même chose, on n'y va pas. Pour la sonde, c'est l'inverse.
+ * Un nom introuvable est la panne la plus courante du corpus — la source est morte —, tandis qu'une
+ * adresse locale peut très bien jouer dans le salon sans que le NAS ait le droit d'aller la voir.
+ */
+export async function jugerLHote(hote: string): Promise<VerdictHote> {
+  const nu = hote.replace(/^\[|\]$/g, "");
+  if (isIP(nu)) return adressePrivee(nu) ? "prive" : "public";
+  try {
+    const resolus = await lookup(nu, { all: true });
+    if (!resolus.length) return "introuvable";
+    return resolus.some((entree) => adressePrivee(entree.address)) ? "prive" : "public";
+  } catch {
+    return "introuvable";
+  }
+}
+
+/**
+ * Cette adresse répond-elle, vue du NAS ? `null` quand on ne peut pas le savoir d'ici.
+ *
+ * Le corps n'est pas lu : la réponse suffit, et un flux en direct n'a pas de fin. Les gardes du relais
+ * s'appliquent à chaque saut — une redirection vers le réseau local ne se suit pas, et ne condamne pas
+ * la source pour autant.
+ */
+export async function adresseRepond(url: string, outils: OutilsDeSonde = {}): Promise<boolean | null> {
+  let analysee: URL;
+  try { analysee = new URL(url); } catch { return null; }
+  if (analysee.protocol !== "http:" && analysee.protocol !== "https:") return null;
+  const juger = outils.juger ?? jugerLHote;
+  const verdict = await juger(analysee.hostname);
+  if (verdict === "introuvable") return false;
+  if (verdict === "prive") return null;
+  try {
+    const suivie = await recupererSansSortirDuPublic(
+      url,
+      { signal: AbortSignal.timeout(DELAI_JOIGNABLE_MS), headers: { "User-Agent": "FlixTunes", Accept: "*/*" } },
+      outils.recuperer ?? ((cible, init) => fetch(cible, init)),
+      async (hote) => (await juger(hote)) === "public",
+    );
+    if (!suivie) return null;
+    void suivie.reponse.body?.cancel().catch(() => undefined);
+    return suivie.reponse.status < 400;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Sonder toutes les adresses sauf celle qui joue, et rendre celles qui se taisent.
+ *
+ * Décidé le 13 septembre 2026 : on cherche d'abord **une** source qui joue ; ensuite seulement, on
+ * regarde toutes les autres. Pour que ce soit léger : douze sondes à la fois, quatre secondes chacune,
+ * un résultat retenu cinq minutes, une seule passe par chaîne à la fois, et une réponse au plus tard
+ * après vingt secondes — les sondes restantes finissent derrière et servent à la fois suivante.
+ */
+export async function sonderCesAdresses(
+  cle: string, adresses: readonly string[], enCours: string | null, outils: OutilsDeSonde = {},
+): Promise<string[]> {
+  const enAttente = sondesEnCours.get(cle);
+  if (enAttente) return enAttente;
+  const maintenant = outils.maintenant ?? Date.now;
+  // La source qui joue répond, par définition : elle ne se sonde pas, et une muette d'hier est absoute.
+  if (enCours) retenir(enCours, true, maintenant());
+  const autres = [...new Set(adresses)].filter((url) => url !== enCours);
+  const aSonder = autres.filter((url) => {
+    const connue = joignabilites.get(url);
+    return !connue || maintenant() - connue.le > JOIGNABILITE_MS;
+  });
+
+  // Quatre-vingts adresses tiennent souvent sur trois hébergeurs : chaque nom n'est résolu qu'une fois.
+  const hotes = new Map<string, Promise<VerdictHote>>();
+  const juger = (hote: string): Promise<VerdictHote> => {
+    const connu = hotes.get(hote);
+    if (connu) return connu;
+    const verdict = (outils.juger ?? jugerLHote)(hote);
+    hotes.set(hote, verdict);
+    return verdict;
+  };
+  let prochaine = 0;
+  const travail = Promise.all(Array.from({ length: Math.min(SONDES_SIMULTANEES, aSonder.length) }, async () => {
+    while (prochaine < aSonder.length) {
+      const url = aSonder[prochaine]!;
+      prochaine += 1;
+      const repond = await adresseRepond(url, { ...outils, juger });
+      if (repond !== null) retenir(url, repond, maintenant());
+    }
+  }));
+
+  const promesse = (async () => {
+    let minuteur: NodeJS.Timeout | undefined;
+    const delai = new Promise<void>((resoudre) => { minuteur = setTimeout(resoudre, outils.attenteMaxMs ?? ATTENTE_MAX_MS); });
+    await Promise.race([travail, delai]);
+    clearTimeout(minuteur);
+    return autres.filter((url) => joignabilites.get(url)?.repond === false);
+  })();
+  sondesEnCours.set(cle, promesse);
+  const liberer = () => { if (sondesEnCours.get(cle) === promesse) sondesEnCours.delete(cle); };
+  void travail.then(liberer, liberer);
+  return promesse;
+}
+
+/** Les sources muettes d'une chaîne, vues du NAS, pendant que `enCours` joue. */
+export function sonderLesAutres(channelId: string, enCours: string | null): Promise<string[]> {
+  const adresses = (db.prepare("SELECT url FROM live_channel_urls WHERE channel_id = ?")
+    .all(channelId) as unknown as Array<{ url: string }>).map((ligne) => ligne.url);
+  // Une adresse étrangère à la chaîne ne s'absout pas : elle n'a rien à faire dans la mémoire des sondes.
+  return sonderCesAdresses(channelId, adresses, enCours && adresses.includes(enCours) ? enCours : null);
 }

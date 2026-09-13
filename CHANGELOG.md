@@ -1,5 +1,123 @@
 # Journal des versions
 
+## 0.5.8.r17 — des chaînes regroupées, toutes leurs sources, et un direct qui tient
+
+<!-- release -->
+### Lecteur, sur le client Web
+
+- **Les boutons « précédent » et « suivant » tiennent dans leur rond.** Leur flèche, écrite en texte
+  — `|◀`, `▶|` —, passait sur deux lignes, la barre au-dessus du triangle. Elle est maintenant
+  dessinée : même taille partout, quelle que soit la police, et centrée au pixel près.
+- **La cause touchait tous les boutons ronds du lecteur.** La règle qui leur retire le rembourrage et
+  leur donne leur taille d'icône était écrasée par celle, plus précise, qui habille les boutons de la
+  barre : le retour, la lecture et le plein écran sortaient en 12,5 px dans un rond qui ne laissait que
+  dix pixels à son contenu. Ils retrouvent leur taille — 17,6 px, 20 px pour la lecture —, sur grand
+  écran comme sur téléphone.
+
+### Télévision en direct, sur le serveur et le client Web
+
+- **Les listes ne se relisent plus à heure fixe ni au démarrage : elles se relisent quand on le
+  demande.** L'outil qui réécrit le fichier de listes sait quand il a fini ; il le dit par
+  `POST /api/live/rafraichissement`, avec un jeton créé dans les réglages du direct. Relire toutes les
+  douze heures relisait trop tôt l'ancien fichier ou faisait attendre le nouveau pour rien, et un
+  redémarrage du serveur retéléchargeait tout. Le bouton « Relire les listes » reste.
+- **Le jeton n'est montré qu'une fois**, à sa création : le serveur n'en garde que l'empreinte, et une
+  copie de la base ne le donne pas. Le recréer remplace l'ancien, le révoquer ferme la porte.
+- **Une demande reçue pendant une passe n'est pas perdue** : elle est rejouée une fois, à la fin — une
+  rafale ne vaut qu'une relecture —, et « Arrêter » l'efface.
+- La demande reste fermée à l'accès distant, comme tout ce qui touche au direct, et ne dépend pas du
+  jeton d'API des clients.
+
+### Chaînes regroupées, sur le serveur
+
+- **Une chaîne, quelle que soit la façon dont les listes l'écrivent.** « TF1 », « TF1 (1080p) »,
+  « TF1 FHD » et « TF1 ᵁᴴᴰ » faisaient quatre chaînes, chacune avec son petit repli. La clé de fusion
+  retire maintenant ce qui ne fait que décorer un nom : définition, codage, cadence, `[Geo-blocked]`,
+  `[Not 24/7]`, `(Opt-2)`, noms de domaine, symboles et exposants. Mesuré sur la base du NAS :
+  99 902 chaînes présentes deviennent 88 027, la France passe de 4 049 à 2 519, et TF1 réunit
+  41 adresses.
+- **Une déclinaison reste une chaîne à part.** Une balise qui dit autre chose qu'une qualité —
+  « (FR) », « [Montréal] » — garde sa chaîne, un décalage horaire aussi. Et quand l'identifiant d'une
+  liste désigne la même enseigne dans un autre pays — `CanalplusFamily.pl` pour « CANAL+ FAMILY » —,
+  elle est rangée à côté : l'Arte allemande, l'Euronews polonaise ou les Nicktoons américains ne se
+  glissent plus dans le repli de la chaîne française. Un identifiant qui ne ressemble pas au nom
+  n'arbitre rien.
+- **Rien ne sort de la France.** Une chaîne rangée en France garde sa clé à la France, même sans
+  identifiant, et une chaîne réunie qui comptait une écriture visible en France y reste. Sans cela,
+  Eurosport 1, Euronews ou Canal+ Premier League quittaient le bloc où on les cherche : 59 chaînes,
+  mesurées.
+- **Les chaînes déjà connues sont réunies une fois**, au démarrage qui suit la mise à jour, ou à la
+  première relecture si elle vient avant. Chacune garde le numéro posé à la main, sinon le plus petit ;
+  ses adresses, sans doublon et avec leur historique ; les favorites et la dernière chaîne de chaque
+  profil. Sur une copie de la base du NAS : 51 167 lignes réunies en 28 903 chaînes, 5 575 adresses en
+  double retirées, numéros 1 à 30 et dernière chaîne inchangés, index de recherche intègre, et une
+  seconde passe qui ne déplace rien.
+- **Le serveur répond pendant ce temps.** D'un seul tenant, la passe le bloquait 9 s sur un poste de
+  développement. Elle va maintenant par lots de trois cents chaînes, avec un cache plus large le temps
+  de la passe : 11,6 s en tout, jamais plus de 0,4 s sans répondre. Le NAS est plus lent ; la durée
+  réelle est écrite au journal.
+
+### Sources d'une chaîne, sur le serveur, le client Web, Android TV et mobile
+
+- **Toutes les sources se choisissent.** Le menu en montrait huit, puis « Voir les autres » ; une chaîne
+  regroupée en porte maintenant jusqu'à 81, et la liste défile.
+- **Le repli automatique les essaie toutes.** Il s'arrêtait à la huitième. Quand les douze premières
+  ont échoué, les douze suivantes sont sondées ensemble avant qu'on en ouvre une, plutôt qu'un essai de
+  douze secondes après l'autre : une chaîne dont les vingt premières sources sont mortes démarre en
+  quelques secondes, et non en quatre minutes.
+- **Dès qu'une source joue, le serveur sonde les autres.** Douze à la fois, quatre secondes chacune,
+  sans rien télécharger ; un résultat vaut cinq minutes, et la réponse arrive au plus tard en vingt
+  secondes. Celles qui ne répondent pas sortent du repli automatique et passent en fin de menu, marquées
+  « ne répond pas » — toujours choisissables, puisque le NAS ne passe pas forcément par le même chemin
+  que le téléviseur. Une adresse du réseau local, que le serveur n'a pas le droit d'aller voir, n'est
+  jamais déclarée muette.
+- **Les meilleures d'abord, d'après un relevé.** Un relevé des sondes posé à côté du fichier de listes
+  dit, pour chaque adresse, si elle répondait. Il est lu à chaque relecture : les adresses joignables
+  passent devant, les muettes ferment la liste. Absent, illisible ou vieux de plus d'un jour, il est
+  ignoré et le classement d'avant s'applique.
+- **Sur Android, choisir une source ouvre bien celle-là.** Le menu était calculé dans l'ordre du
+  serveur, le repli dans l'ordre de la course : une ligne pouvait ouvrir une autre adresse que celle
+  qu'elle décrivait.
+
+### Lecteur du direct, sur le client Web, Android TV et mobile
+
+- **Le lecteur Web a pu jouer collé au bord du direct.** Relevé à l'écran : 1,7 s de tampon sur une
+  fenêtre de cinq minutes, là où le moindre hoquet du réseau fige l'image. Le seuil « en direct » se
+  comptait à douze secondes du bord alors que le lecteur se tient bien plus loin : l'écran annonçait un
+  différé permanent, et « Revenir au direct » envoyait au bord. « En direct » se mesure maintenant à
+  l'avance visée, y revenir la garde, et le retour automatique n'agit plus pendant l'ouverture, quand la
+  vidéo est encore à zéro. Vérifié ensuite sur CNews : 18 à 28 s de tampon, « EN DIRECT » affiché.
+- **Sur Android, revenir du fond de la fenêtre faisait perdre la marge.** Le lecteur se replaçait à
+  douze secondes du bord, et ExoPlayer prenait ce saut pour sa nouvelle cible. Il revient maintenant à
+  la position par défaut, c'est-à-dire à l'avance visée, et « EN DIRECT » s'y mesure aussi.
+- **L'avance suit la fiabilité de la source.** Quarante secondes pour une source qui n'a jamais calé,
+  jusqu'à soixante pour une source qui a calé depuis qu'on la regarde ou que le serveur connaît pour ses
+  échecs, dans la limite de ce que la chaîne publie — 41 s sur la fenêtre médiane. Mesuré sur un banc,
+  pour une coupure réseau de 60 s : 37 s d'image figée avec 26 s d'avance, 19 s avec 48 s. Sur Android,
+  ExoPlayer ralentit imperceptiblement pour la prendre.
+- **Une session qui expire ne fige plus l'image, sur le Web.** L'hébergeur refuse alors la suite du flux,
+  et la reprise en place réessayait les mêmes adresses jusqu'à abandonner la source, 39 s plus tard,
+  image figée — le « relancer la chaîne répare » constaté. Le lecteur prépare désormais une seconde
+  lecture cachée de la même adresse, calée sur l'image affichée, et prend sa place. Mesuré sur le banc :
+  0,1 s d'image figée, raccord à 0,05 s près. Une coupure réseau ne la déclenche pas : hls.js y repart
+  seul, mesuré jusqu'à 60 s.
+- **Sur Android, la relance reste en place.** Un second lecteur est écarté sur Android TV, dont la
+  plupart des boîtiers n'offrent qu'un décodeur matériel ; la reprise y recharge déjà le manifeste, au
+  prix de quelques secondes de chargement.
+<!-- /release -->
+
+Vérifié : `tsc` du serveur et du Web sans erreur ; la suite complète du serveur, 1 073 tests sur 104 fichiers,
+dont 125 sur les sept suites du direct —
+rejeu des demandes, jeton et sa route, clé de fusion, pays des identifiants, regroupement (lots qui se
+croisent et passe rejouée compris), sonde des sources, relevé ; la suite complète du Web, 307 tests sur 36 fichiers, dont 56 sur les suites du direct,
+dont treize nouveaux sur le repli, le menu, l'avance et le raccord de la relève ; les mêmes règles
+éprouvées sur Android, et le Kotlin compilé par Gradle ; les boutons du lecteur mesurés dans le
+navigateur avant et après, sur grand écran et en largeur de téléphone ; le regroupement joué sur une
+copie de la base du NAS, et trente groupes tirés au hasard relus un à un ; la relance mesurée sur un
+banc hls.js — neuf coupures réseau, une session expirée —, puis le lecteur Web vérifié dans le
+navigateur sur CNews : lecture, relève prête et cachée, sonde des autres sources, avance tenue et
+« EN DIRECT » affiché.
+
 ## 0.5.8.r16 — des dossiers qui montrent ce qu'ils contiennent
 
 <!-- release -->

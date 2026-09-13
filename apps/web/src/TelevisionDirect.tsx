@@ -72,6 +72,9 @@ export function TelevisionDirect() {
   const [occupe, setOccupe] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [erreur, setErreur] = useState<string | null>(null);
+  const [jetonDemande, setJetonDemande] = useState(false);
+  /** Le jeton tout juste créé. Il n'est montré qu'ici, une fois : le serveur n'en garde que l'empreinte. */
+  const [jetonNeuf, setJetonNeuf] = useState<string | null>(null);
   /**
    * Les champs ne sont repris du serveur qu'une fois.
    *
@@ -86,6 +89,7 @@ export function TelevisionDirect() {
     ]);
     setParametres(reponse.parametres);
     setEtat(reponse.etat);
+    setJetonDemande(reponse.jetonDemande === true);
     setListes(prochaines);
     setSources(prochainesSources);
     if (!champsRemplis.current) {
@@ -155,7 +159,7 @@ export function TelevisionDirect() {
         <button className={`scan-toggle-launcher${parametres.actif ? " actif" : ""}`}
           disabled={occupe} aria-pressed={parametres.actif}
           title={parametres.actif
-            ? "Les listes sont relues au démarrage et sur demande. La désactiver arrête la passe en cours."
+            ? "Les listes sont relues quand on le demande : ici, ou par l’outil qui écrit le fichier. La désactiver arrête la passe en cours."
             : "Éteinte, elle ne télécharge rien et n'apparaît pas dans les clients."}
           onClick={() => void agir(() => api.enregistrerLive({ actif: !parametres.actif }))}>
           {parametres.actif ? "📡 Direct : activé" : "📡 Direct : désactivé"}
@@ -201,6 +205,37 @@ export function TelevisionDirect() {
         Un objet JSON « nom de liste » : « adresse », comme celui de TvPourTous. FlixTunes le lit sans
         jamais le modifier.
       </p>
+
+      {/*
+        * La relecture sur demande, et le jeton qui l'autorise.
+        *
+        * C'est la seule relecture automatique : ni au démarrage, ni à heure fixe. Celui qui écrit le
+        * fichier sait quand il a fini, et le dit. Le jeton n'est montré qu'à sa création, parce que le
+        * serveur n'en garde que l'empreinte : l'écran ne pourrait pas le réafficher, et c'est voulu.
+        */}
+      <div className="scan-center-heading">
+        <div><h4>Relecture sur demande</h4></div>
+        <small>{jetonDemande ? "Jeton actif" : "Aucun jeton"}</small>
+      </div>
+      <p className="safe-note">
+        Quand le fichier de listes est réécrit, l’outil qui l’écrit peut demander la relecture :
+        <code> POST /api/live/rafraichissement</code>, avec l’en-tête <code>Authorization: Bearer</code> suivi
+        du jeton. Sans jeton, seul le bouton « Relire les listes » relit.
+      </p>
+      {jetonNeuf && <p className="form-success">
+        Jeton à recopier maintenant, il ne sera plus affiché : <code className="live-jeton">{jetonNeuf}</code>
+      </p>}
+      <div className="expert-actions">
+        <button className="secondary" disabled={occupe}
+          onClick={() => void agir(async () => setJetonNeuf((await api.creerJetonLive()).jeton),
+            jetonDemande ? "Nouveau jeton créé : l’ancien ne fonctionne plus." : "Jeton créé.")}>
+          {jetonDemande ? "Remplacer le jeton" : "Créer un jeton"}
+        </button>
+        {jetonDemande && <button className="secondary" disabled={occupe}
+          onClick={() => void agir(async () => { await api.revoquerJetonLive(); setJetonNeuf(null); }, "Jeton révoqué.")}>
+          Révoquer le jeton
+        </button>}
+      </div>
 
       {/*
         * Les fournisseurs, et pourquoi ils tiennent en si peu de place.

@@ -89,6 +89,9 @@ export async function buildApp(options: OptionsApp = {}) {
     if (start) recordRequest(Number(process.hrtime.bigint() - start) / 1_000_000, reply.statusCode); });
   app.addHook("onRequest", async (request, reply) => {
     if (!config.apiToken || request.method === "GET" || request.method === "HEAD" || request.method === "OPTIONS") return;
+    // La demande de relecture du direct porte son propre jeton, vérifié par sa route : elle vient de
+    // l'outil qui écrit le fichier de listes, pas d'un client qui connaîtrait le jeton d'API.
+    if (request.routeOptions?.url === "/api/live/rafraichissement") return;
     const bearer = request.headers.authorization?.startsWith("Bearer ") ? request.headers.authorization.slice(7) : null;
     const token = request.headers["x-flixtunes-token"];
     if (!secureSecretEqual(bearer, config.apiToken) && !secureSecretEqual(token, config.apiToken)) return reply.code(401).send({ message: "Jeton FlixTunes requis" });

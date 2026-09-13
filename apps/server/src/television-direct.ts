@@ -3,10 +3,11 @@ import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import type { ChaineDirect, ChaineDirectDetaillee, ClassementListe, EtatDirect, ListeDirect, PageChaines, ParametresDirect, SourceChaine } from "@flixtunes/contracts";
 import { db, getSetting, setSetting } from "./database.js";
-import { MASQUES_CLASSEMENT, analyserM3U, cleDeChaine, lireCatalogueM3U, lisibleParNosLecteurs, masqueDesClassements } from "./m3u.js";
+import { MASQUES_CLASSEMENT, analyserM3U, cleDeChaine, lireCatalogueM3U, lisibleParNosLecteurs, masqueDesClassements, paysDeLIdentifiant } from "./m3u.js";
 import { appellationsPossibles, chargerLaReference } from "./reference-chaines.js";
-import { RANG_INCONNU, RANG_SANS_PAYS, empreinteDesRangs, nomDuPays, numerosTnt, paysDeLaChaine, rangsDesPays } from "./pays.js";
+import { RANG_INCONNU, RANG_SANS_PAYS, empreinteDesRangs, nomDuPays, numerosTnt, paysDeLaChaine, rangDuPays, rangsDesPays } from "./pays.js";
 import { listerSources, listesDeLaSource, type SourceDirect } from "./live-fournisseurs.js";
+import { FICHIER_RELEVE, RELEVE_MAX_OCTETS, lireLeReleve, type Releve } from "./live-releve.js";
 import { fetchWithTimeout } from "./resilience.js";
 import { normaliseForSearch } from "./search-normalise.js";
 
@@ -28,7 +29,7 @@ import { normaliseForSearch } from "./search-normalise.js";
  */
 
 const CLE_PARAMETRES = "live.parametres";
-const DEFAUTS: ParametresDirect = { actif: false, dossier: null, fichier: "m3u.json", cadenceHeures: 12 };
+const DEFAUTS: ParametresDirect = { actif: false, dossier: null, fichier: "m3u.json" };
 
 /**
  * Combien de listes on télécharge en même temps.
@@ -52,7 +53,6 @@ export function parametresDirect(): ParametresDirect {
       actif: lu.actif === true,
       dossier: typeof lu.dossier === "string" && lu.dossier.trim() ? lu.dossier.trim() : null,
       fichier: typeof lu.fichier === "string" && lu.fichier.trim() ? lu.fichier.trim() : DEFAUTS.fichier,
-      cadenceHeures: Number.isFinite(lu.cadenceHeures) ? Math.min(168, Math.max(1, Number(lu.cadenceHeures))) : DEFAUTS.cadenceHeures,
     };
   } catch {
     return { ...DEFAUTS };
@@ -76,9 +76,6 @@ export function enregistrerParametres(entree: Partial<ParametresDirect>): Parame
     actif: entree.actif ?? actuels.actif,
     dossier: entree.dossier === undefined ? actuels.dossier : (entree.dossier?.trim() || null),
     fichier,
-    cadenceHeures: entree.cadenceHeures === undefined
-      ? actuels.cadenceHeures
-      : Math.min(168, Math.max(1, Math.round(Number(entree.cadenceHeures) || DEFAUTS.cadenceHeures))),
   };
   setSetting(CLE_PARAMETRES, JSON.stringify(suivants));
   // Arrêt net : éteindre veut dire « je veux ma machine », pas « finis les cinq cents listes en cours ».
@@ -98,8 +95,35 @@ let listeCourante: string | null = null;
 let entreesLues = 0;
 let ecarteesDeLaPasse = 0;
 
+/**
+ * Une demande reçue pendant une passe n'est pas perdue : elle est rejouée **une fois**, à la fin.
+ *
+ * L'outil qui réécrit le fichier de listes demande la relecture quand il a fini. Si une passe tourne
+ * déjà — lancée à la main, ou par une demande précédente —, elle lit peut-être encore l'ancien
+ * fichier : ignorer la demande laisserait la grille un jour en retard. On la retient, une seule fois
+ * quelle que soit la rafale, et « Arrêter » l'efface : arrêter ne veut pas dire « recommence ».
+ */
+let demandeEnAttente = false;
+
 export function arreterRafraichissement(): void {
+  demandeEnAttente = false;
   interruption?.abort();
+}
+
+/**
+ * La relecture demandée de l'extérieur — la seule relecture automatique qui reste.
+ *
+ * Il n'y en a plus d'autre, ni au démarrage ni à heure fixe : décidé le 13 septembre 2026. Celui qui
+ * écrit le fichier sait quand il a fini, et le dit. La réponse n'attend pas la passe, qui dure des
+ * minutes ; un échec, lui, est consigné dans le bilan que montre l'écran du direct.
+ */
+export function demanderRafraichissement(): "lancee" | "en-attente" {
+  if (enCours) {
+    demandeEnAttente = true;
+    return "en-attente";
+  }
+  void rafraichirDirect().catch(() => undefined);
+  return "lancee";
 }
 
 /* ------------------------------------------------------------------------ */
@@ -260,6 +284,12 @@ export async function rafraichirDirect(): Promise<EtatDirect> {
 
   try {
     /*
+     * La clé de fusion a changé depuis la dernière passe : les chaînes connues sont réunies d'abord,
+     * pour que les listes du jour retombent sur les lignes qui portent déjà numéros et favorites.
+     */
+    await regrouperSiNecessaire();
+
+    /*
      * Toutes les sources réglées, pas seulement le fichier local.
      *
      * Chacune apporte ses listes à sa façon — un fichier les énumère, un portail Xtream n'en rend
@@ -278,6 +308,9 @@ export async function rafraichirDirect(): Promise<EtatDirect> {
       }
     }
 
+    // Le relevé des sondes, s'il est posé à côté du fichier de listes et qu'il est frais.
+    const releve = await releveDuDossier(parametres);
+
     const retenues = db.prepare(`SELECT p.id, p.nom, p.url FROM live_playlists p
       JOIN live_sources s ON s.id = p.source_id
       WHERE p.cochee = 1 AND s.activee = 1 ORDER BY p.nom COLLATE NOCASE`)
@@ -293,7 +326,7 @@ export async function rafraichirDirect(): Promise<EtatDirect> {
         db.prepare("UPDATE live_playlists SET rafraichie_le = CURRENT_TIMESTAMP, dernier_message = ? WHERE id = ?")
           .run(resultat.message, liste.id);
       } else {
-        const bilan = ecrireLaListe(liste.id, resultat.texte);
+        const bilan = ecrireLaListe(liste.id, resultat.texte, releve);
         entreesLues += bilan.retenues;
         ecarteesDeLaPasse += bilan.ecartees;
       }
@@ -347,6 +380,10 @@ export async function rafraichirDirect(): Promise<EtatDirect> {
     enCours = false;
     listeCourante = null;
     interruption = null;
+    if (demandeEnAttente) {
+      demandeEnAttente = false;
+      setImmediate(() => void rafraichirDirect().catch(() => undefined));
+    }
   }
 }
 
@@ -407,11 +444,28 @@ async function telecharger(liste: { id: string; nom: string; url: string }, sign
  * retirée de la liste y resterait rattachée pour toujours. Les chaînes, elles, ne sont jamais
  * supprimées : c'est ce qui rend leur numéro stable.
  */
-function ecrireLaListe(playlistId: string, texte: string): { retenues: number; ecartees: number } {
+/**
+ * Le relevé des sondes posé à côté du fichier de listes, s'il y en a un et qu'il est frais.
+ *
+ * Une erreur de lecture ne fait rien échouer : sans relevé, le classement d'avant s'applique.
+ */
+async function releveDuDossier(parametres: ParametresDirect): Promise<Releve | null> {
+  if (!parametres.dossier) return null;
+  const chemin = path.join(parametres.dossier, FICHIER_RELEVE);
+  try {
+    const infos = await stat(chemin);
+    if (!infos.isFile() || infos.size > RELEVE_MAX_OCTETS) return null;
+    return lireLeReleve(await readFile(chemin, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function ecrireLaListe(playlistId: string, texte: string, releve: Releve | null = null): { retenues: number; ecartees: number } {
   const entrees = analyserM3U(texte);
   let ecartees = 0;
-  const chaine = db.prepare(`INSERT INTO live_channels (id, cle, nom, nom_recherche, nom_compact, logo, groupe, tvg_id, pays, numero_souhaite, vue_le, disparue_le)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, NULL)
+  const chaine = db.prepare(`INSERT INTO live_channels (id, cle, nom, nom_recherche, nom_compact, logo, groupe, tvg_id, pays, numero_souhaite, pays_cle, vue_le, disparue_le)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, NULL)
     ON CONFLICT(cle) DO UPDATE SET
       logo = COALESCE(live_channels.logo, excluded.logo),
       groupe = COALESCE(live_channels.groupe, excluded.groupe),
@@ -431,26 +485,54 @@ function ecrireLaListe(playlistId: string, texte: string): { retenues: number; e
       -- et dans dix qui n'en disent rien, et les secondes ne doivent pas effacer la premiere.
       pays = COALESCE(live_channels.pays, excluded.pays),
       numero_souhaite = COALESCE(live_channels.numero_souhaite, excluded.numero_souhaite),
+      pays_cle = COALESCE(live_channels.pays_cle, excluded.pays_cle),
       vue_le = CURRENT_TIMESTAMP,
       disparue_le = NULL`);
-  const adresse = db.prepare("INSERT OR IGNORE INTO live_channel_urls (channel_id, url, playlist_id) VALUES (?, ?, ?)");
+  const adresse = db.prepare("INSERT OR IGNORE INTO live_channel_urls (channel_id, url, playlist_id, releve) VALUES (?, ?, ?, ?)");
+  const paysDeLaCle = db.prepare("SELECT pays_cle FROM live_channels WHERE cle = ?");
+  const lierLaCle = db.prepare("UPDATE live_channels SET pays_cle = ? WHERE cle = ? AND pays_cle IS NULL");
 
   db.exec("BEGIN IMMEDIATE");
   try {
     db.prepare("DELETE FROM live_channel_urls WHERE playlist_id = ?").run(playlistId);
     const vues = new Set<string>();
+    /*
+     * Le pays attaché à chaque clé déjà rencontrée.
+     *
+     * Une clé qui réunit des homonymes de pays différents appartient au premier pays qui s'y présente,
+     * et elle le garde : les suivants écrivent leur déclinaison à part. Le choix ne se refait pas d'un
+     * rafraîchissement à l'autre, sinon « Canal+ Family » changerait de pays — et ses favorites avec —
+     * selon l'ordre dans lequel les listes répondent.
+     */
+    const liens = new Map<string, string | null>();
     for (const entree of entrees) {
       if (!lisibleParNosLecteurs(entree.url)) { ecartees += 1; continue; }
-      const cle = cleDeChaine(entree.nom);
-      if (!cle) { ecartees += 1; continue; }
+      const nue = cleDeChaine(entree.nom);
+      if (!nue) { ecartees += 1; continue; }
+      const pays = paysDeLIdentifiant(entree.nom, entree.tvgId);
+      const paysAffiche = paysDeLaChaine({ tvgId: entree.tvgId, groupe: entree.groupe, nom: entree.nom });
+      // Une chaîne rangée en France réclame aussi sa clé, mais n'en écarte aucune autre : son pays n'est
+      // qu'une déduction, là où un identifiant est une déclaration.
+      const reclame = pays ?? (paysAffiche === "fr" ? "fr" : null);
+      let cle = nue;
+      if (reclame) {
+        if (!liens.has(nue)) {
+          const connue = paysDeLaCle.get(nue) as unknown as { pays_cle: string | null } | undefined;
+          if (connue) liens.set(nue, connue.pays_cle);
+        }
+        const lie = liens.get(nue);
+        if (lie === null) { lierLaCle.run(reclame, nue); liens.set(nue, reclame); }
+        else if (pays && lie !== undefined && lie !== pays) cle = cleDeDeclinaison(nue, pays);
+      }
       const id = identifiant(`chaine:${cle}`);
       // Une même liste répète parfois la même chaîne : on ne réécrit pas la fiche à chaque fois.
       if (!vues.has(cle)) {
         chaine.run(id, cle, entree.nom, normaliseForSearch(entree.nom), compacterNom(entree.nom), entree.logo, entree.groupe, entree.tvgId,
-          paysDeLaChaine({ tvgId: entree.tvgId, groupe: entree.groupe, nom: entree.nom }), entree.numero);
+          paysAffiche, entree.numero, cle === nue ? reclame : pays);
         vues.add(cle);
+        if (reclame && cle === nue && !liens.has(nue)) liens.set(nue, reclame);
       }
-      adresse.run(id, entree.url, playlistId);
+      adresse.run(id, entree.url, playlistId, releve?.get(entree.url) ?? null);
     }
     db.prepare("UPDATE live_playlists SET entrees = ?, ecartees = ?, rafraichie_le = CURRENT_TIMESTAMP, dernier_message = NULL WHERE id = ?")
       .run(entrees.length - ecartees, ecartees, playlistId);
@@ -549,14 +631,19 @@ export async function identifierParLaReference(): Promise<number> {
  * un `EXISTS` corrélé sur 118 335 adresses — 190 ms mesurées pour compter les pays sous une fiabilité.
  */
 export function reunirLesFiabilites(): number {
+  const calcul = expressionDesFiabilites();
+  return Number(db.prepare(`UPDATE live_channels SET classements = ${calcul}
+    WHERE adresses > 0 AND classements <> ${calcul}`).run().changes ?? 0);
+}
+
+/** Les fiabilités d'une ligne de `live_channels`, en SQL : le regroupement les calcule aussi, lot par lot. */
+function expressionDesFiabilites(): string {
   const branches = Object.entries(MASQUES_CLASSEMENT)
     .map(([nom, masque]) => `WHEN '${nom}' THEN ${masque}`).join(" ");
-  const calcul = `(SELECT COALESCE(SUM(masque), 0) FROM
+  return `(SELECT COALESCE(SUM(masque), 0) FROM
     (SELECT DISTINCT CASE p.classement ${branches} ELSE 0 END AS masque
      FROM live_channel_urls u JOIN live_playlists p ON p.id = u.playlist_id
      WHERE u.channel_id = live_channels.id))`;
-  return Number(db.prepare(`UPDATE live_channels SET classements = ${calcul}
-    WHERE adresses > 0 AND classements <> ${calcul}`).run().changes ?? 0);
 }
 
 /**
@@ -741,6 +828,341 @@ export function renumeroterSiNecessaire(): number {
   // Les rangs d'abord : renuméroter dans un ordre qui n'est pas encore calculé donnerait l'ancien.
   rattraperLesRangs();
   return renumeroterDansLOrdreDAffichage();
+}
+
+/** La forme du regroupement en vigueur. La changer réunit une fois les chaînes déjà connues. */
+const REGROUPEMENT = "decorations-et-pays-v1";
+
+/**
+ * La clé d'une déclinaison que son identifiant sépare de la chaîne qui porte déjà le nom.
+ *
+ * L'arobase n'apparaît jamais dans une clé normalisée, qui ne garde que des lettres, des chiffres et
+ * des espaces : aucune chaîne nommée ne peut tomber dessus par hasard.
+ */
+function cleDeDeclinaison(cle: string, pays: string): string {
+  return `${cle}@${pays}`;
+}
+
+/** Ce que le regroupement garde d'une ligne : de quoi la ranger, rien de plus. */
+interface LigneARegrouper {
+  id: string;
+  cle: string;
+  pays_cle: string | null;
+  /** Le pays que son identifiant lui attache, quand il désigne bien la chaîne nommée. */
+  pays: string | null;
+  /** Le pays de la grille, quelle que soit la façon dont il a été déduit. */
+  paysAffiche: string | null;
+}
+
+interface GroupeARegrouper { id: string; cle: string; pays: string | null; membres: LigneARegrouper[] }
+
+type LigneComplete = Record<string, unknown>;
+
+/** Combien de chaînes réunies par transaction — voir `regrouperLesChaines`. */
+const CHAINES_PAR_LOT = 300;
+/** Combien de lignes lues d'un coup pour calculer les clés. */
+const LIGNES_PAR_PAGE = 5000;
+
+/** Rendre la main au serveur entre deux tranches de travail. */
+function pause(): Promise<void> {
+  return new Promise((resoudre) => setImmediate(resoudre));
+}
+
+/**
+ * La ligne dont une chaîne réunie garde le numéro : celui posé à la main, sinon le plus petit, sinon
+ * la mieux fournie. La suite ne sert qu'à rendre l'ordre total, donc le même à chaque passe.
+ */
+function ordreDeSurvie(a: LigneComplete, b: LigneComplete): number {
+  const rang = (ligne: LigneComplete) => ligne.numero == null ? Number.POSITIVE_INFINITY : Number(ligne.numero);
+  return Number(b.numero_manuel != null) - Number(a.numero_manuel != null)
+    || rang(a) - rang(b)
+    || Number(b.adresses) - Number(a.adresses)
+    || String(a.nom).length - String(b.nom).length
+    || String(a.id).localeCompare(String(b.id));
+}
+
+/**
+ * Réunir sous la clé du jour les chaînes qu'une version précédente rangeait à part.
+ *
+ * La clé de fusion a changé : « TF1 (1080p) » et « TF1 FHD » rejoignent « TF1 ». Sans cette passe, le
+ * rafraîchissement suivant écrirait les adresses sous les nouvelles clés, et les anciennes lignes
+ * resteraient en base, sans adresse, avec tout ce qui s'y rattache — numéro, favorites, dernière
+ * chaîne regardée. On perdrait exactement ce qui fait qu'une grille est la sienne.
+ *
+ * **Ce qui suit la chaîne réunie** : le numéro de la ligne posée à la main, sinon le plus petit ; les
+ * adresses de toutes, sans doublon, avec leur historique ; les favorites et la dernière chaîne de
+ * chaque profil. L'identifiant est celui que donne la clé, si bien que la liste suivante retombe
+ * exactement sur la même ligne.
+ *
+ * **Par lots, et le serveur sert entre deux.** D'un seul tenant, la passe prenait 9 s sur un poste de
+ * développement pour la base du NAS — 51 170 lignes réunies en 28 898 chaînes —, soit plusieurs fois
+ * cela sur le NAS, pendant lesquelles plus rien ne répondait. Chaque lot est une transaction complète :
+ * une passe interrompue ne laisse aucune chaîne à moitié réunie, et elle se rejoue sans rien déplacer
+ * — une ligne déjà sous sa clé, et seule, n'est pas touchée.
+ */
+export async function regrouperLesChaines(options: { parLot?: number } = {}): Promise<{ reunies: number; chaines: number }> {
+  const parLot = Math.max(1, options.parLot ?? CHAINES_PAR_LOT);
+  const parCle = new Map<string, LigneARegrouper[]>();
+  const page = db.prepare(`SELECT rowid AS rang, id, cle, nom, tvg_id, pays, pays_cle FROM live_channels
+    WHERE rowid > ? ORDER BY rowid LIMIT ${LIGNES_PAR_PAGE}`);
+  for (let dernier = 0; ;) {
+    const lignes = page.all(dernier) as unknown as Array<{
+      rang: number; id: string; cle: string; nom: string; tvg_id: string | null; pays: string | null; pays_cle: string | null;
+    }>;
+    if (!lignes.length) break;
+    for (const ligne of lignes) {
+      const nue = cleDeChaine(ligne.nom) || ligne.cle;
+      const membre: LigneARegrouper = {
+        id: ligne.id, cle: ligne.cle, pays_cle: ligne.pays_cle,
+        pays: paysDeLIdentifiant(ligne.nom, ligne.tvg_id), paysAffiche: ligne.pays,
+      };
+      const membres = parCle.get(nue);
+      if (membres) membres.push(membre); else parCle.set(nue, [membre]);
+    }
+    dernier = lignes[lignes.length - 1]!.rang;
+    await pause();
+  }
+
+  /*
+   * La déclinaison d'un autre pays reste à part : c'est la règle de l'écriture des listes, appliquée
+   * d'un coup. La ligne qui porte déjà la clé nue la garde, pour que son numéro et ses favorites ne
+   * changent pas d'identifiant, et son pays départage les autres. Sans elle, la France passe d'abord,
+   * puis l'ordre de la grille.
+   */
+  const finales = new Map<string, { pays: string | null; membres: LigneARegrouper[] }>();
+  for (const [nue, membres] of parCle) {
+    const ancre = membres.find((membre) => membre.cle === nue);
+    const presents = [...new Set(membres.map((membre) => membre.pays).filter((pays): pays is string => Boolean(pays)))]
+      .sort((a, b) => rangDuPays(a) - rangDuPays(b) || a.localeCompare(b));
+    // Une chaîne déjà rangée en France garde sa clé à la France, même sans identifiant pour le dire.
+    const principal = ancre?.pays_cle ?? ancre?.pays ?? (ancre?.paysAffiche === "fr" ? "fr" : null) ?? presents[0] ?? null;
+    for (const membre of membres) {
+      const aPart = membre !== ancre && membre.pays != null && principal != null && membre.pays !== principal;
+      const finale = aPart ? cleDeDeclinaison(nue, membre.pays!) : nue;
+      const groupe = finales.get(finale);
+      if (groupe) groupe.membres.push(membre);
+      else finales.set(finale, { pays: aPart ? membre.pays! : principal, membres: [membre] });
+    }
+  }
+
+  const intactes = new Set<string>();
+  const liens: Array<{ id: string; pays: string | null }> = [];
+  const aEcrire: GroupeARegrouper[] = [];
+  for (const [cle, groupe] of finales) {
+    const seule = groupe.membres.length === 1 ? groupe.membres[0]! : null;
+    if (seule?.cle === cle) {
+      intactes.add(seule.id);
+      if (seule.pays_cle !== groupe.pays) liens.push({ id: seule.id, pays: groupe.pays });
+    } else {
+      aEcrire.push({ id: identifiant(`chaine:${cle}`), cle, pays: groupe.pays, membres: groupe.membres });
+    }
+  }
+  // Un identifiant qui ne viendrait pas de sa clé ne doit jamais être écrasé : ce groupe-là attend.
+  const groupes = aEcrire.filter((groupe) => !intactes.has(groupe.id));
+  if (!groupes.length && !liens.length) return { reunies: 0, chaines: 0 };
+
+  /*
+   * Des lots qui ne se marchent pas dessus.
+   *
+   * Une chaîne réunie prend l'identifiant de sa clé. Si une ligne d'un **autre** groupe le porte
+   * encore — son ancienne clé est la nouvelle de celui-ci —, elle doit partir dans le même lot : sinon
+   * l'écriture heurterait une ligne qui n'est pas encore retirée.
+   */
+  const proprietaire = new Map<string, number>();
+  groupes.forEach((groupe, index) => { for (const membre of groupe.membres) proprietaire.set(membre.id, index); });
+  const lots: GroupeARegrouper[][] = [];
+  const places = new Uint8Array(groupes.length);
+  let lot: GroupeARegrouper[] = [];
+  for (let index = 0; index < groupes.length; index += 1) {
+    for (let suivant: number | undefined = index; suivant !== undefined && !places[suivant]; suivant = proprietaire.get(groupes[suivant]!.id)) {
+      places[suivant] = 1;
+      lot.push(groupes[suivant]!);
+    }
+    if (lot.length >= parLot) { lots.push(lot); lot = []; }
+  }
+  if (lot.length) lots.push(lot);
+
+  const colonnes = (db.prepare("PRAGMA table_info(live_channels)").all() as unknown as Array<{ name: string }>)
+    .map((colonne) => colonne.name);
+  const historique = (db.prepare("PRAGMA table_info(live_channel_urls)").all() as unknown as Array<{ name: string }>)
+    .map((colonne) => colonne.name).filter((nom) => nom !== "channel_id" && nom !== "url");
+  const fiabilites = expressionDesFiabilites();
+
+  /*
+   * Un cache plus large et des points de contrôle plus espacés, le temps de la passe.
+   *
+   * Avec les 2 Mio de cache par défaut, chaque lot relisait les pages d'index que le précédent venait
+   * d'écrire, et le journal était recopié dans la base tous les quatre mégaoctets. Mesuré sur un poste
+   * de développement avec la base du NAS : 20,5 s → 11,7 s pour la passe entière, dont 3,9 s → 0,7 s
+   * pour les suppressions. Les deux réglages reprennent leur valeur dès la fin, et le journal est
+   * recopié d'un coup plutôt qu'au premier enregistrement venu.
+   */
+  const reglage = (nom: string) => Number(Object.values(db.prepare(`PRAGMA ${nom}`).get() as Record<string, unknown>)[0]);
+  const cache = reglage("cache_size");
+  const pointDeControle = reglage("wal_autocheckpoint");
+  db.exec("PRAGMA cache_size = -65536; PRAGMA wal_autocheckpoint = 10000;");
+  let reunies = 0;
+  try {
+    for (const groupesDuLot of lots) {
+      reunies += regrouperUnLot(groupesDuLot, colonnes, historique, fiabilites);
+      await pause();
+    }
+    for (let debut = 0; debut < liens.length; debut += LIGNES_PAR_PAGE) {
+      lierLesPays(liens.slice(debut, debut + LIGNES_PAR_PAGE));
+      await pause();
+    }
+  } finally {
+    db.exec(`PRAGMA cache_size = ${cache}; PRAGMA wal_autocheckpoint = ${pointDeControle};`);
+  }
+  db.exec("PRAGMA wal_checkpoint(PASSIVE)");
+  await pause();
+
+  if (groupes.length) {
+    rangerLesPays();
+    await pause();
+    numeroterLesNouvelles();
+    await pause();
+    reconstruireIndexRecherche();
+  }
+  return { reunies, chaines: groupes.length };
+}
+
+/** Poser sur les lignes restées en place le pays attaché à leur clé. */
+function lierLesPays(liens: Array<{ id: string; pays: string | null }>): void {
+  const lier = db.prepare("UPDATE live_channels SET pays_cle = ? WHERE id = ?");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (const lien of liens) lier.run(lien.pays, lien.id);
+    db.exec("COMMIT");
+  } catch (cause) {
+    db.exec("ROLLBACK");
+    throw cause;
+  }
+}
+
+/** Un lot de chaînes réunies, dans sa transaction. Rend le nombre de lignes réunies. */
+function regrouperUnLot(groupes: GroupeARegrouper[], colonnes: string[], historique: string[], fiabilites: string): number {
+  let reunies = 0;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`DROP TABLE IF EXISTS temp.regroupement_lien;
+      CREATE TEMP TABLE regroupement_lien (ancien TEXT PRIMARY KEY, nouveau TEXT NOT NULL);`);
+    const lier = db.prepare("INSERT INTO temp.regroupement_lien (ancien, nouveau) VALUES (?, ?)");
+    const existe = db.prepare("SELECT 1 AS present FROM live_channels WHERE id = ?");
+    const membresDuLot = new Set(groupes.flatMap((groupe) => groupe.membres.map((membre) => membre.id)));
+    for (const groupe of groupes) {
+      // Une ligne apparue depuis la lecture, et qui porte déjà l'identifiant de la clé, rejoint le groupe.
+      if (!membresDuLot.has(groupe.id) && existe.get(groupe.id) !== undefined) {
+        groupe.membres.push({ id: groupe.id, cle: groupe.cle, pays_cle: groupe.pays, pays: null, paysAffiche: null });
+      }
+      for (const membre of groupe.membres) { lier.run(membre.id, groupe.id); reunies += 1; }
+    }
+
+    /*
+     * Ce qui se rattache aux lignes réunies est mis de côté **avant** de les retirer. La suppression
+     * l'emporte en cascade, et c'est voulu : le remettre ensuite sous le nouvel identifiant évite tout
+     * conflit entre une ligne qui part et une ligne qui arrive sous le même identifiant.
+     */
+    db.exec(`DROP TABLE IF EXISTS temp.regroupement_adresses;
+      CREATE TEMP TABLE regroupement_adresses AS
+        SELECT l.nouveau AS channel_id, u.url AS url, ${historique.map((nom) => `u.${nom} AS ${nom}`).join(", ")}
+        FROM temp.regroupement_lien l CROSS JOIN live_channel_urls u ON u.channel_id = l.ancien;
+      DROP TABLE IF EXISTS temp.regroupement_favoris;
+      CREATE TEMP TABLE regroupement_favoris AS
+        SELECT f.profile_id AS profile_id, l.nouveau AS channel_id, f.ajoute_le AS ajoute_le
+        FROM temp.regroupement_lien l CROSS JOIN live_favoris f ON f.channel_id = l.ancien;
+      DROP TABLE IF EXISTS temp.regroupement_derniere;
+      CREATE TEMP TABLE regroupement_derniere AS
+        SELECT d.profile_id AS profile_id, l.nouveau AS channel_id, d.vue_le AS vue_le
+        FROM temp.regroupement_lien l CROSS JOIN live_derniere_chaine d ON d.channel_id = l.ancien;`);
+
+    const completes = new Map<string, LigneComplete>();
+    for (const ligne of db.prepare("SELECT * FROM live_channels WHERE id IN (SELECT ancien FROM temp.regroupement_lien)")
+      .all() as unknown as LigneComplete[]) completes.set(String(ligne.id), ligne);
+    db.exec("DELETE FROM live_channels WHERE id IN (SELECT ancien FROM temp.regroupement_lien)");
+
+    const inserer = db.prepare(`INSERT INTO live_channels (${colonnes.join(", ")}) VALUES (${colonnes.map(() => "?").join(", ")})`);
+    const etats = ["bonne", "inconnue", "morte"];
+    for (const groupe of groupes) {
+      const membres = groupe.membres.map((membre) => completes.get(membre.id))
+        .filter((ligne): ligne is LigneComplete => ligne !== undefined).sort(ordreDeSurvie);
+      const garde = membres[0];
+      if (!garde) continue;
+      const nommee = [...membres].sort((a, b) => String(a.nom).length - String(b.nom).length)[0]!;
+      const premier = (colonne: string) => membres.map((membre) => membre[colonne]).find((valeur) => valeur != null) ?? null;
+      const dates = (colonne: string) => membres.map((membre) => membre[colonne])
+        .filter((valeur): valeur is string => typeof valeur === "string").sort();
+      const vues = dates("vue_le");
+      /*
+       * Une chaîne qui s'affichait en France y reste. Réunir « Eurosport 1 HD », rangée en France, à
+       * « EUROSPORT 1 », rangée ailleurs, ne doit pas la sortir du bloc où on la cherchait : mesuré sur
+       * la base du NAS, 59 chaînes présentes en France en seraient sorties. Seule compte une écriture
+       * qui avait des adresses, donc qu'on voyait : une ligne disparue n'y fait entrer personne.
+       */
+      const affichee = membres.some((membre) => membre.pays === "fr" && Number(membre.adresses) > 0) ? "fr"
+        : groupe.pays != null && membres.some((membre) => membre.pays === groupe.pays) ? groupe.pays : premier("pays");
+      const fusion: LigneComplete = {
+        ...garde,
+        id: groupe.id,
+        cle: groupe.cle,
+        // Le nom le plus court, comme à l'écriture d'une liste, et les deux formes dérivées avec lui.
+        nom: nommee.nom, nom_recherche: nommee.nom_recherche, nom_compact: nommee.nom_compact,
+        logo: premier("logo"), groupe: premier("groupe"), tvg_id: premier("tvg_id"), numero_souhaite: premier("numero_souhaite"),
+        pays: affichee,
+        // Sans pays attaché mais affichée en France, la clé revient à la France : la passe suivante le
+        // lirait sur la chaîne réunie, et ne se rejouerait plus à l'identique.
+        pays_cle: groupe.pays ?? (affichee === "fr" ? "fr" : null),
+        etat: etats.find((etat) => membres.some((membre) => membre.etat === etat)) ?? garde.etat,
+        vue_le: vues[vues.length - 1] ?? null,
+        cree_le: dates("cree_le")[0] ?? garde.cree_le,
+      };
+      inserer.run(...(colonnes.map((colonne) => fusion[colonne] ?? null) as never[]));
+    }
+
+    // Une adresse portée par deux lignes réunies n'en fait plus qu'une, avec le meilleur historique.
+    db.exec(`INSERT INTO live_channel_urls (channel_id, url, ${historique.join(", ")})
+        SELECT channel_id, url, ${historique.map((nom) => nom === "echecs" ? `MIN(${nom})` : `MAX(${nom})`).join(", ")}
+        FROM temp.regroupement_adresses GROUP BY channel_id, url;
+      INSERT INTO live_favoris (profile_id, channel_id, ajoute_le)
+        SELECT profile_id, channel_id, MIN(ajoute_le) FROM temp.regroupement_favoris GROUP BY profile_id, channel_id;
+      INSERT INTO live_derniere_chaine (profile_id, channel_id, vue_le)
+        SELECT profile_id, channel_id, vue_le FROM temp.regroupement_derniere;
+      UPDATE live_channels SET adresses = (SELECT COUNT(*) FROM live_channel_urls u WHERE u.channel_id = live_channels.id)
+        WHERE id IN (SELECT nouveau FROM temp.regroupement_lien);
+      UPDATE live_channels SET disparue_le = CASE WHEN adresses > 0 THEN NULL ELSE COALESCE(disparue_le, CURRENT_TIMESTAMP) END
+        WHERE id IN (SELECT nouveau FROM temp.regroupement_lien);
+      UPDATE live_channels SET classements = ${fiabilites}
+        WHERE adresses > 0 AND id IN (SELECT nouveau FROM temp.regroupement_lien);
+      DROP TABLE temp.regroupement_lien;
+      DROP TABLE temp.regroupement_adresses;
+      DROP TABLE temp.regroupement_favoris;
+      DROP TABLE temp.regroupement_derniere;`);
+
+    db.exec("COMMIT");
+  } catch (cause) {
+    db.exec("ROLLBACK");
+    throw cause;
+  }
+  return reunies;
+}
+
+let regroupementEnCours: Promise<{ reunies: number; chaines: number } | null> | null = null;
+
+/**
+ * Regrouper si la clé de fusion a changé depuis la dernière fois — et sinon, ne rien faire.
+ *
+ * Même règle que la numérotation : la lecture d'un réglage suffit à répondre « rien à faire ». La
+ * passe tourne au premier démarrage qui suit la mise à jour, ou au premier rafraîchissement s'il la
+ * devance ; les deux, s'ils se croisent, attendent la même.
+ */
+export function regrouperSiNecessaire(): Promise<{ reunies: number; chaines: number } | null> {
+  if (getSetting("live.regroupement") === REGROUPEMENT) return Promise.resolve(null);
+  if (!regroupementEnCours) {
+    regroupementEnCours = regrouperLesChaines()
+      .then((bilan) => { setSetting("live.regroupement", REGROUPEMENT); return bilan; })
+      .finally(() => { regroupementEnCours = null; });
+  }
+  return regroupementEnCours;
 }
 
 /**
@@ -1032,27 +1454,6 @@ export function listerChaines(requete: RequeteChaines = {}): PageChaines {
 }
 
 /**
- * Le rafraîchissement dû au démarrage, ou rien.
- *
- * Trois conditions, et les trois comptent. **La fonction doit être activée** — sinon rien ne tourne,
- * c'est la règle de toute fonction qui coûte. **Une source doit être réglée.** Et **la cadence doit
- * être échue** : redémarrer le serveur trois fois de suite ne doit pas retélécharger quarante
- * mégaoctets trois fois. Le délai par défaut est de douze heures.
- *
- * Il part **après** la médiathèque, jamais avant : c'est l'accueil qu'on veut voir en premier, et
- * une analyse de bibliothèque a plus de valeur qu'une grille de chaînes.
- */
-export function rafraichissementDuAuDemarrage(): boolean {
-  const parametres = parametresDirect();
-  if (!parametres.actif || !cheminDuCatalogue(parametres)) return false;
-  const source = sourceLocale(false);
-  if (!source?.rafraichie_le) return true;
-  const derniere = Date.parse(`${source.rafraichie_le.replace(" ", "T")}Z`);
-  if (!Number.isFinite(derniere)) return true;
-  return Date.now() - derniere >= parametres.cadenceHeures * 3_600_000;
-}
-
-/**
  * Une chaîne et ses adresses, dans l'ordre où il faut les essayer.
  *
  * L'ordre est la seule chose qui rende le repli utile plutôt qu'aléatoire : ce qui a déjà marché
@@ -1067,19 +1468,23 @@ export function chaineDetaillee(id: string): ChaineDirectDetaillee | null {
   /*
    * L'ordre des sources, du meilleur au pire, et dans cet ordre de priorité :
    *
-   * 1. **les échecs**, parce qu'une source qui ne marche pas n'a pas de qualité ;
-   * 2. **la définition**, mesurée dans le manifeste — c'est elle qui distingue deux sources vivantes,
+   * 1. **le dernier relevé des sondes** : joignables d'abord, puis celles qu'il ne mentionne pas, puis
+   *    les muettes — en fin de liste, mais toujours là. C'est la seule mesure qui porte sur toutes les
+   *    adresses, et non sur celles qu'un lecteur a déjà essayées ;
+   * 2. **les échecs**, parce qu'une source qui ne marche pas n'a pas de qualité ;
+   * 3. **la définition**, mesurée dans le manifeste — c'est elle qui distingue deux sources vivantes,
    *    et le client n'a aucun moyen de la connaître lui-même : sans en-tête CORS, un navigateur ne
    *    peut pas lire un manifeste ;
-   * 3. **le débit**, qui départage deux variantes de même hauteur ;
-   * 4. **les succès**, ce qui a effectivement marché quand on regardait.
+   * 4. **le débit**, qui départage deux variantes de même hauteur ;
+   * 5. **les succès**, ce qui a effectivement marché quand on regardait.
    *
    * `DESC` range les inconnues en dernier sous SQLite : une adresse jamais sondée passe donc derrière
    * une adresse mesurée, ce qui est exactement le comportement voulu — on préfère ce qu'on sait.
    */
   const sources = db.prepare(`SELECT url, succes, echecs, hauteur, debit FROM live_channel_urls
     WHERE channel_id = ?
-    ORDER BY echecs ASC, hauteur DESC, debit DESC, succes DESC, url`).all(id) as unknown as SourceChaine[];
+    ORDER BY CASE releve WHEN 1 THEN 0 WHEN 0 THEN 2 ELSE 1 END, echecs ASC, hauteur DESC, debit DESC, succes DESC, url`)
+    .all(id) as unknown as SourceChaine[];
   return { ...chaine, sources };
 }
 

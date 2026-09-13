@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type Hls from "hls.js";
+import type { ErrorData, LevelDetails } from "hls.js";
 import type { ChaineDirect } from "@flixtunes/contracts";
 import { api } from "./api";
 import { courirLesAdresses } from "./course-adresses";
+import { COURSE_MAX, debutDeVague, premiereAdresse, prochaineAdresse, regrouperLesSources } from "./sources-direct";
+import { AVANCE_FRAGILE_S, segmentsDAvance } from "./avance-direct";
+import { ecartEntre, repereDansLaPlaylist, tempsPourRepere, type SegmentRepere } from "./releve-direct";
 
 /**
  * Le lecteur d'une chaîne en direct.
@@ -20,62 +24,13 @@ import { courirLesAdresses } from "./course-adresses";
  * devant l'écran n'a rien demandé d'autre que de regarder la chaîne.
  */
 
-/**
- * Le nombre d'adresses que le **repli automatique** essaie avant de renoncer.
- *
- * Il ne borne pas la liste : toutes les adresses restent choisissables à la main. Il borne
- * l'acharnement, ce qui n'est pas la même chose — la coupure à quatre rendait les autres
- * inatteignables **même volontairement**, et sur une chaîne qui en porte douze, huit disparaissaient
- * sans que rien ne le dise. Huit essais de douze secondes font déjà une minute et demie devant un
- * écran noir, et la course a de toute façon mis devant celles qui répondent.
- */
-const REPLIS = 8;
-
-/**
- * Combien d'adresses la course sonde à l'ouverture.
- *
- * Toutes, c'était une mauvaise idée : mesuré sur le corpus, 356 chaînes en portent plus de vingt et
- * la pire en a **78**. Autant de requêtes lancées d'un coup pour choisir laquelle ouvrir est un coût
- * que personne n'a demandé. Le serveur les a déjà classées — échecs, définition, débit — : sonder les
- * douze premières suffit à écarter les mortes, et les suivantes gardent leur rang derrière.
- */
-const COURSE_MAX = 12;
-
-/**
- * Combien de sources le menu montre avant de proposer le reste.
- *
- * Le regroupement ramenait la pire chaîne du corpus de 78 lignes à 42 — mesuré, et toujours
- * illisible. Or le serveur les a classées par échecs, définition et débit : les huit premières sont
- * les meilleures qu'on connaisse, et celui qui cherche la neuvième sait ce qu'il fait. Le reste est
- * à un geste, pas caché.
- */
-const SOURCES_VISIBLES = 8;
-
 /** Une adresse, son doublon relayé et ce que le serveur sait d'elle. */
 interface SourceLisible {
   url: string; relais: string | null; hauteur: number | null; debit: number | null;
+  /** Les échecs que le serveur connaît pour cette adresse : une source qui en traîne est fragile d'emblée. */
+  echecs: number;
   /** Ce qui distingue deux adresses pour l'œil : l'hôte et le chemin, sans la requête. */
   empreinte: string;
-}
-
-/**
- * Le menu regroupe ce qui se ressemble, la liste garde tout.
- *
- * Mesuré sur le corpus : 7 559 adresses de 1 976 chaînes ne diffèrent de leur voisine que par un
- * jeton dans la requête. Le menu en listait quatre visiblement identiques, et l'on choisissait à
- * l'aveugle. Chaque groupe garde **l'index de son meilleur membre** — celui que le serveur a classé
- * en tête — et le repli automatique, lui, continue de parcourir chaque adresse : deux jetons ne se
- * valent pas, l'un peut être périmé quand l'autre fonctionne.
- */
-function regrouperLesSources(adresses: SourceLisible[]): Array<{ index: number; source: SourceLisible; doublons: number }> {
-  const groupes = new Map<string, { index: number; source: SourceLisible; doublons: number }>();
-  adresses.forEach((source, index) => {
-    const cle = source.empreinte || source.url;
-    const connu = groupes.get(cle);
-    if (connu) { connu.doublons += 1; return; }
-    groupes.set(cle, { index, source, doublons: 1 });
-  });
-  return [...groupes.values()];
 }
 
 /**
@@ -142,23 +97,15 @@ const IMAGE_FIGEE_MS = 8_000;
 /** Au-delà de deux segments, une fenêtre mérite une barre. En deçà, elle ne promettrait rien. */
 const FENETRE_MINIMALE_S = 2 * SEGMENT_TYPE_S;
 
-/** Le direct, c'est le bord à quelques secondes près : au-delà, on est en différé et on le dit. */
-const MARGE_DIRECT_S = 12;
-
 /**
- * Ce qu'on refuse de laisser entre le point de lecture et le bord **arrière** de la fenêtre.
+ * Le direct, c'est l'avance visée à quelques secondes près : au-delà, on est en différé et on le dit.
  *
- * C'est la marge qui manquait. Reculer coûte du retard, et le retard se prend quelque part : dans la
- * fenêtre, qui n'est pas infinie. Trois bégaiements faisaient reculer de 3 à 5 segments — **40 s
- * derrière le direct** — alors que la fenêtre médiane mesurée fait 61 s. Il restait 21 s ; et sur les
- * 8 % de chaînes dont la fenêtre est plus courte que 40 s, reculer jetait le lecteur **hors de la
- * fenêtre sur-le-champ**. L'image tenait un moment, puis coupait, et relancer réparait — parce que
- * relancer repart au bord.
- *
- * Vingt secondes, soit deux segments et demi : de quoi absorber un rechargement sans se retrouver à
- * demander un segment que l'hébergeur vient de retirer.
+ * Le seuil se comptait depuis le bord, à douze secondes, alors que le lecteur se tient à quarante :
+ * l'écran annonçait donc un différé permanent, et le bouton « Revenir au direct » envoyait au bord —
+ * c'est-à-dire là où le moindre hoquet du réseau fige l'image, la marge perdue jusqu'à la chaîne
+ * suivante.
  */
-const MARGE_ARRIERE_S = 20;
+const MARGE_DIRECT_S = 12;
 
 /**
  * La vitesse de rattrapage, et pourquoi elle vaut mieux qu'un saut.
@@ -183,6 +130,19 @@ const RATTRAPAGE_MAX = 1.06;
  */
 const REPRISES_MAX = 3;
 const ATTENTES_REPRISE_MS = [2_000, 5_000, 10_000];
+
+/**
+ * La relève silencieuse, bornée — voir `releve-direct.ts`.
+ *
+ * Trois par source au plus ; huit secondes pour obtenir le manifeste puis la playlist, douze pour
+ * remplir trois secondes de tampon. Au-delà, la reprise en place d'avant prend le relais. La relève
+ * démarre trois secondes en avant du point de lecture, le temps qu'elle charge, puis se cale exactement.
+ */
+const RELEVES_MAX = 3;
+const ATTENTE_RELEVE_MS = 8_000;
+const ATTENTE_TAMPON_RELEVE_MS = 12_000;
+const TAMPON_DE_RELEVE_S = 3;
+const AVANCE_DE_CHARGEMENT_S = 3;
 
 /**
  * **La déclaration de flux stable**, et pourquoi tout en dépend.
@@ -216,10 +176,16 @@ const SEUIL_STABILITE_MS = 15_000;
  *
  * La fenêtre médiane du corpus fait 61 s. En gardant les 20 s de marge arrière, on peut se tenir à
  * 40 s du bord : **la marge grandit de 65 %** sans rien coûter, et s'adapte à chaque chaîne au lieu
- * d'un chiffre unique. Le plafond de 40 s est un choix explicite — c'est le décalage maximal qu'on
- * accepte entre l'image et le temps réel.
+ * d'un chiffre unique.
+ *
+ * La marge arrière avait sa raison : sur les 8 % de chaînes dont la fenêtre est plus courte que 40 s,
+ * reculer jetait le lecteur **hors de la fenêtre sur-le-champ** ; l'image tenait un moment, puis
+ * coupait, et relancer réparait parce que relancer repart au bord. Vingt secondes, deux segments et
+ * demi, absorbent un rechargement sans réclamer un segment que l'hébergeur vient de retirer.
+ *
+ * **Depuis la r17, le plafond suit la fiabilité** : 40 s pour une source qui n'a jamais calé, 60 s pour
+ * une source fragile. La règle vit dans `avance-direct.ts`, partagée avec Android.
  */
-const CIBLE_MAX_S = 40;
 
 /**
  * Les deux seuils du tampon, et pourquoi on regarde la **descente** plutôt que le fond.
@@ -250,6 +216,23 @@ const INTERVALLE_RELANCE_MS = 10_000;
 /** L'obstination finale quand rien n'a jamais démarré : deux essais, et l'on conclut. */
 const RELANCES_SANS_PREUVE = 2;
 
+/** Ce que la vidéo a déjà devant elle, en secondes. */
+function tamponDevant(video: HTMLVideoElement): number {
+  for (let index = 0; index < video.buffered.length; index += 1) {
+    if (video.buffered.start(index) <= video.currentTime + 0.5 && video.buffered.end(index) > video.currentTime) {
+      return video.buffered.end(index) - video.currentTime;
+    }
+  }
+  return 0;
+}
+
+/** Les segments d'une playlist hls.js, réduits à ce que le raccord de la relève utilise. */
+function segmentsDe(details: LevelDetails | null | undefined): SegmentRepere[] {
+  return (details?.fragments ?? []).map((segment) => ({
+    sn: Number(segment.sn), start: segment.start, duration: segment.duration, programDateTime: segment.programDateTime,
+  }));
+}
+
 function horodatage(secondes: number): string {
   const entier = Math.max(0, Math.round(secondes));
   const minutes = Math.floor(entier / 60);
@@ -257,7 +240,11 @@ function horodatage(secondes: number): string {
 }
 
 /** Ce que la barre montre : la fenêtre publiée par la chaîne, et où l'on s'y trouve. */
-interface Fenetre { debut: number; fin: number; position: number; enPause: boolean }
+interface Fenetre {
+  debut: number; fin: number; position: number; enPause: boolean;
+  /** L'avance visée derrière le bord, en secondes : « en direct » veut dire « à cette avance ». */
+  avance: number;
+}
 
 export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
   chaine: ChaineDirect;
@@ -266,7 +253,25 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
   onChaine: (chaine: ChaineDirect) => void;
   onClose: () => void;
 }) {
+  /** La vidéo à l'écran. */
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  /**
+   * Les deux vidéos du lecteur, et celle qui est à l'écran.
+   *
+   * La seconde ne sert qu'à la relève silencieuse. Les échanger relance le relevé de la fenêtre sur la
+   * bonne ; la lecture en cours, elle, continue sans rien remarquer.
+   */
+  const videos = useRef<[HTMLVideoElement | null, HTMLVideoElement | null]>([null, null]);
+  const ecranRef = useRef(0);
+  const [ecran, setEcran] = useState(0);
+  const brancherVideo0 = useCallback((noeud: HTMLVideoElement | null) => {
+    videos.current[0] = noeud;
+    if (ecranRef.current === 0) videoRef.current = noeud;
+  }, []);
+  const brancherVideo1 = useCallback((noeud: HTMLVideoElement | null) => {
+    videos.current[1] = noeud;
+    if (ecranRef.current === 1) videoRef.current = noeud;
+  }, []);
   const hlsRef = useRef<Hls | null>(null);
   const [adresses, setAdresses] = useState<SourceLisible[]>([]);
   /**
@@ -299,8 +304,20 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
   const fenetreRef = useRef<Fenetre | null>(null);
   const [barreVisible, setBarreVisible] = useState(true);
   const [choixOuvert, setChoixOuvert] = useState(false);
-  /** Le menu s'ouvre court : la suite se demande, et se referme avec lui. */
-  const [toutesLesSources, setToutesLesSources] = useState(false);
+  /**
+   * Les adresses que le serveur n'a pas pu joindre, sondées une fois qu'une autre joue.
+   *
+   * Elles sortent du repli automatique, pas du menu : le NAS ne passe pas forcément par le même chemin
+   * que ce navigateur, et c'est la lecture qui garde le dernier mot.
+   */
+  const [muettes, setMuettes] = useState<ReadonlySet<string>>(() => new Set());
+  const muettesRef = useRef<ReadonlySet<string>>(new Set());
+  /** Ce que les rappels asynchrones doivent lire à jour : les adresses, la chaîne, ce qui est déjà couru ou sondé. */
+  const adressesRef = useRef<SourceLisible[]>([]);
+  const chaineRef = useRef(chaine.id);
+  chaineRef.current = chaine.id;
+  const vaguesCourues = useRef(new Set<number>([0]));
+  const sondee = useRef(false);
   /**
    * Le retard de sécurité pris après des blocages répétés, en secondes.
    *
@@ -309,6 +326,14 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
    */
   const [securite, setSecurite] = useState(0);
   const blocages = useRef<number[]>([]);
+  /**
+   * Les incidents de l'adresse en cours depuis qu'on la regarde — un blocage, une image figée, une
+   * reprise. Un seul suffit à la dire fragile, et à lui donner plus d'avance.
+   */
+  const incidents = useRef(0);
+  const adresseDesIncidents = useRef<string | null>(null);
+  /** L'avance visée en ce moment, en secondes, telle que le relevé l'a calculée pour cette chaîne. */
+  const avanceVisee = useRef(0);
   /**
    * Quand on a demandé quelque chose au lecteur pour la dernière fois.
    *
@@ -351,7 +376,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
          */
         const declarees = details.sources.map((source) => ({
           url: source.url, relais: source.relais ?? null,
-          hauteur: source.hauteur ?? null, debit: source.debit ?? null,
+          hauteur: source.hauteur ?? null, debit: source.debit ?? null, echecs: source.echecs,
           empreinte: source.empreinte ?? source.url,
         }));
         /*
@@ -372,6 +397,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
         rangRef.current = 0;
         setRang(0);
         setParRelais(false);
+        adressesRef.current = ordonnees;
         setAdresses(ordonnees);
       } catch {
         if (!annule) { setMessage("Chaîne indisponible"); setEchec(true); }
@@ -394,7 +420,41 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
     blocages.current = [];
     setFenetre(null);
     setChoixOuvert(false);
-    setToutesLesSources(false);
+    muettesRef.current = new Set();
+    setMuettes(muettesRef.current);
+    vaguesCourues.current = new Set([0]);
+    sondee.current = false;
+  }, [chaine.id]);
+
+  /**
+   * Ouvrir le rang choisi par le repli, en faisant d'abord courir sa vague si personne ne l'a sondée.
+   *
+   * La course d'ouverture ne sonde que les douze premières adresses. Quand elles ont toutes échoué, la
+   * suivante n'est pas essayée à l'aveugle douze secondes durant : ses voisines courent d'abord, et
+   * celles qui répondent passent devant. Une chaîne à quatre-vingts sources dont les vingt premières
+   * sont mortes démarre ainsi en quelques secondes, et non en quatre minutes.
+   */
+  const ouvrirLeRang = useCallback((prochain: number) => {
+    const annoncer = (index: number) => {
+      rangRef.current = index;
+      setParRelais(false);
+      setMessage(`Source ${index + 1} sur ${adressesRef.current.length}…`);
+      setRang(index);
+    };
+    const vague = debutDeVague(prochain);
+    if (vaguesCourues.current.has(vague)) { annoncer(prochain); return; }
+    vaguesCourues.current.add(vague);
+    const total = adressesRef.current.length;
+    setMessage(`Recherche d'une source qui répond, ${vague + 1} à ${Math.min(total, vague + COURSE_MAX)} sur ${total}…`);
+    const chaineCourue = chaine.id;
+    void courirLesAdresses(adressesRef.current.slice(vague, vague + COURSE_MAX)).then((ordonnee) => {
+      if (chaineRef.current !== chaineCourue) return;
+      const suite = [...adressesRef.current];
+      suite.splice(vague, ordonnee.length, ...ordonnee);
+      adressesRef.current = suite;
+      setAdresses(suite);
+      annoncer(prochaineAdresse(suite.map((adresse) => adresse.url), vague - 1, muettesRef.current) ?? prochain);
+    });
   }, [chaine.id]);
 
   /**
@@ -447,9 +507,9 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
     fluxDeclareStable.current = false;
     depuisLecture.current = 0;
     reprises.current = 0;
-    const disponibles = Math.min(adresses.length, REPLIS);
-    const prochain = rangRef.current + 1;
-    if (prochain >= disponibles) {
+    // Toutes les adresses entrent dans le repli, sauf celles que le serveur a trouvées muettes.
+    const prochain = prochaineAdresse(adresses.map((adresse) => adresse.url), rangRef.current, muettesRef.current);
+    if (prochain === null) {
       /*
        * Toutes les adresses ont échoué : on insiste, lentement, puis on le dit.
        *
@@ -472,9 +532,10 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
         relancesLentes.current += 1;
         setMessage(`Plus aucune source ne répond, nouvelle tentative (${relancesLentes.current}/${plafond})…`);
         window.setTimeout(() => {
-          rangRef.current = 0;
+          const premiere = premiereAdresse(adressesRef.current.map((adresse) => adresse.url), muettesRef.current);
+          rangRef.current = premiere;
           setParRelais(false);
-          setRang(0);
+          setRang(premiere);
         }, INTERVALLE_RELANCE_MS);
         return;
       }
@@ -487,11 +548,8 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
       setEchec(true);
       return;
     }
-    rangRef.current = prochain;
-    setParRelais(false);
-    setMessage(`Source ${prochain + 1} sur ${disponibles}…`);
-    setRang(prochain);
-  }, [adresses, chaine.id, parRelais]);
+    ouvrirLeRang(prochain);
+  }, [adresses, chaine.id, ouvrirLeRang, parRelais]);
 
   /**
    * Choisir une source à la main.
@@ -505,7 +563,6 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
    */
   const choisirSource = useCallback((index: number) => {
     setChoixOuvert(false);
-    setToutesLesSources(false);
     if (index === rangRef.current && !parRelais) return;
     essai.current = null;
     rangRef.current = index;
@@ -527,12 +584,19 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
     const relayer = (parRelais || mixte) && entree.relais;
     const source = relayer ? entree.relais! : entree.url;
     essai.current = entree.url;
+    // Les incidents sont ceux de l'adresse : la même, relancée ou relayée, garde les siens.
+    if (adresseDesIncidents.current !== entree.url) {
+      adresseDesIncidents.current = entree.url;
+      incidents.current = 0;
+    }
     // Ouvrir un flux remplit le tampon : c'est un geste, pas un hoquet.
     silenceJusqua.current = Date.now() + 4_000;
     depuisSource.current = Date.now();
     let annule = false;
     let minuteur = 0;
     let reparations = 0;
+    /** Les relèves en préparation : elles partent avec la lecture qu'elles devaient remplacer. */
+    const relevesEnCours = new Set<Hls>();
 
     const reussi = () => {
       if (annule) return;
@@ -556,6 +620,19 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
           dejaVuStable.current = true;
           reprises.current = 0;
           relancesLentes.current = 0;
+          /*
+           * Une source joue : c'est le moment de regarder les autres. Le serveur les sonde toutes, une
+           * fois par chaîne, et celles qui se taisent sortent du repli — pas du menu.
+           */
+          if (!sondee.current && adressesRef.current.length > 1) {
+            sondee.current = true;
+            const chaineSondee = chaine.id;
+            void api.sondesChaineLive(chaine.id, entree.url).then(({ muettes: trouvees }) => {
+              if (chaineRef.current !== chaineSondee) return;
+              muettesRef.current = new Set(trouvees);
+              setMuettes(muettesRef.current);
+            }).catch(() => undefined);
+          }
           /*
            * La tolérance interne se relève **à la déclaration**. hls.js relit sa configuration à
            * chaque chargement, si bien qu'il suffit de l'écrire ici : les reprises silencieuses
@@ -610,10 +687,10 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
            *
            * Il valait 30 s pour une latence de 24 : on demandait donc 30 s de tampon là où la latence
            * n'en autorisait que 24, et le réglage ne servait à rien. Il vaut maintenant plus que le
-           * plafond de 40 s, pour que ce soit la latence — ce qu'on maîtrise — qui décide de la
-           * marge, et non un plafond oublié.
+           * plafond de 60 s d'une source fragile, pour que ce soit la latence — ce qu'on maîtrise —
+           * qui décide de la marge, et non un plafond oublié.
            */
-          maxBufferLength: CIBLE_MAX_S + 10, liveSyncDurationCount: 3, capLevelToPlayerSize: false,
+          maxBufferLength: AVANCE_FRAGILE_S + 10, liveSyncDurationCount: 3, capLevelToPlayerSize: false,
           maxLiveSyncPlaybackRate: RATTRAPAGE_MAX,
           /*
            * **L'adaptation de débit, réglée pour tenir plutôt que pour briller.**
@@ -657,6 +734,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
          */
         reagirALInstabilite.current = () => {
           blocages.current = [];
+          incidents.current += 1;
           /*
            * **Reculer, mais jamais plus loin que la fenêtre ne le permet.**
            *
@@ -679,20 +757,22 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
            * surveillance du tampon lèvera ce plafond d'elle-même dès que la marge sera refaite : on
            * ne s'enferme pas dans une image dégradée pour un mauvais moment.
            */
-          const niveaux = hls.levels?.length ?? 0;
-          const plafond = hls.autoLevelCapping;
-          if (niveaux > 1 && plafond !== 0) {
-            hls.autoLevelCapping = Math.max(0, (plafond === -1 ? niveaux - 1 : plafond) - 1);
+          // La lecture à l'écran, qui n'est plus forcément la première : une relève a pu la remplacer.
+          const courant = hlsRef.current;
+          const niveaux = courant?.levels?.length ?? 0;
+          const plafond = courant?.autoLevelCapping ?? -1;
+          if (courant && niveaux > 1 && plafond !== 0) {
+            courant.autoLevelCapping = Math.max(0, (plafond === -1 ? niveaux - 1 : plafond) - 1);
             silenceJusqua.current = Date.now() + REPIT_APRES_RECUL_MS;
             setSecurite(0);
             return;
           }
-          if (rangRef.current + 1 >= Math.min(adresses.length, REPLIS)) return;
+          const prochain = prochaineAdresse(adresses.map((adresse) => adresse.url), rangRef.current, muettesRef.current);
+          if (prochain === null) return;
           /*
            * Elle n'est **pas** rapportée comme morte : elle ne l'est pas. Inscrire un échec pour une
            * source qui répond fausserait le classement avec une opinion.
            */
-          const prochain = rangRef.current + 1;
           essai.current = null;
           rangRef.current = prochain;
           setSecurite(0);
@@ -704,8 +784,96 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
         hls.attachMedia(element);
         hls.on(HlsClass.Events.MANIFEST_PARSED, () => { void element.play().catch(() => undefined); });
         hls.on(HlsClass.Events.FRAG_BUFFERED, reussi);
-        hls.on(HlsClass.Events.ERROR, (_evenement, donnees) => {
-          if (annule) return;
+
+        /*
+         * **La relève silencieuse** : une seconde lecture cachée de la même adresse, calée sur le segment
+         * que l'écran montre, qui prend la place de la première avant que son tampon ne s'épuise.
+         *
+         * Elle répare ce que la reprise en place ne répare pas — la session qui expire —, parce qu'elle
+         * recharge le manifeste maître, ce que hls.js ne sait pas faire sans vider le tampon.
+         */
+        const detailsDe = new WeakMap<Hls, LevelDetails>();
+        const suivreLesDetails = (instance: Hls) => {
+          instance.on(HlsClass.Events.LEVEL_LOADED, (_evenement, donnees) => { detailsDe.set(instance, donnees.details); });
+        };
+        suivreLesDetails(hls);
+        const relevesTentees = new WeakSet<Hls>();
+        let relevesFaites = 0;
+        const relever = async (): Promise<boolean> => {
+          const principale = hlsRef.current;
+          const aLEcran = videoRef.current;
+          const autre = videos.current[ecranRef.current === 0 ? 1 : 0];
+          if (annule || !principale || !aLEcran || !autre || relevesFaites >= RELEVES_MAX) return false;
+          const releve = new HlsClass({ ...principale.userConfig, autoStartLoad: false });
+          // La patience du flux déclaré stable, et non celle de l'ouverture.
+          releve.config.levelLoadingMaxRetry = principale.config.levelLoadingMaxRetry;
+          releve.config.fragLoadingMaxRetry = principale.config.fragLoadingMaxRetry;
+          releve.config.manifestLoadingMaxRetry = principale.config.manifestLoadingMaxRetry;
+          relevesEnCours.add(releve);
+          suivreLesDetails(releve);
+          const abandonner = (): false => {
+            relevesEnCours.delete(releve);
+            releve.destroy();
+            autre.removeAttribute("src");
+            autre.load();
+            return false;
+          };
+          autre.muted = true;
+          releve.loadSource(source);
+          releve.attachMedia(autre);
+          const manifeste = await new Promise<boolean>((resoudre) => {
+            const minuterie = window.setTimeout(() => resoudre(false), ATTENTE_RELEVE_MS);
+            releve.once(HlsClass.Events.MANIFEST_PARSED, () => { window.clearTimeout(minuterie); resoudre(true); });
+          });
+          if (annule || !manifeste) return abandonner();
+          // Sans chargement automatique, hls.js lit le manifeste maître puis attend : on demande la playlist.
+          releve.startLoad(-1);
+          const niveau = await new Promise<LevelDetails | null>((resoudre) => {
+            const minuterie = window.setTimeout(() => resoudre(null), ATTENTE_RELEVE_MS);
+            releve.once(HlsClass.Events.LEVEL_LOADED, (_evenement, donnees) => { window.clearTimeout(minuterie); resoudre(donnees.details); });
+          });
+          if (annule || !niveau || hlsRef.current !== principale) return abandonner();
+          const repere = repereDansLaPlaylist(segmentsDe(detailsDe.get(principale)), aLEcran.currentTime);
+          const depart = repere ? tempsPourRepere(segmentsDe(niveau), repere) : null;
+          releve.stopLoad();
+          releve.startLoad(depart != null ? depart + AVANCE_DE_CHARGEMENT_S : -1);
+          const limite = Date.now() + ATTENTE_TAMPON_RELEVE_MS;
+          while (!annule && tamponDevant(autre) < TAMPON_DE_RELEVE_S && Date.now() < limite) {
+            await new Promise((resoudre) => window.setTimeout(resoudre, 100));
+          }
+          if (annule || tamponDevant(autre) < TAMPON_DE_RELEVE_S || hlsRef.current !== principale) return abandonner();
+          // Rattraper exactement l'écran avant de montrer : même segment, même instant.
+          const ecart = ecartEntre(
+            repereDansLaPlaylist(segmentsDe(detailsDe.get(principale)), aLEcran.currentTime),
+            repereDansLaPlaylist(segmentsDe(detailsDe.get(releve)), autre.currentTime),
+            niveau.targetduration,
+          );
+          if (ecart != null && Math.abs(ecart) < niveau.targetduration * 4) autre.currentTime -= ecart;
+          try { await autre.play(); } catch { return abandonner(); }
+          if (annule || hlsRef.current !== principale) return abandonner();
+          // L'échange : le son et l'image passent à la relève, l'ancienne lecture s'efface.
+          autre.volume = aLEcran.volume;
+          autre.muted = aLEcran.muted;
+          aLEcran.muted = true;
+          aLEcran.pause();
+          relevesEnCours.delete(releve);
+          hlsRef.current = releve;
+          releve.on(HlsClass.Events.FRAG_BUFFERED, reussi);
+          releve.on(HlsClass.Events.ERROR, surErreurDe(releve));
+          ecranRef.current = ecranRef.current === 0 ? 1 : 0;
+          videoRef.current = autre;
+          setEcran(ecranRef.current);
+          silenceJusqua.current = Date.now() + 4_000;
+          relevesFaites += 1;
+          principale.destroy();
+          aLEcran.removeAttribute("src");
+          aLEcran.load();
+          return true;
+        };
+
+        // Seule la lecture à l'écran décide : une relève qui échoue en préparation ne touche à rien.
+        const surErreurDe = (instance: Hls) => (_evenement: unknown, donnees: ErrorData) => {
+          if (annule || hlsRef.current !== instance) return;
           /*
            * Le blocage du tampon n'est pas une panne, c'est un avertissement.
            *
@@ -719,6 +887,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
             const maintenant = Date.now();
             // Ce qui recharge pendant le répit vient de nous : une ouverture, un saut, un recul.
             if (maintenant < silenceJusqua.current) return;
+            incidents.current += 1;
             /*
              * **Les deux réactions n'ont pas le même prix, elles n'ont donc pas la même patience.**
              *
@@ -738,7 +907,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
               return blocages.current.length >= BLOCAGES_AVANT_RECUL;
             };
 
-            if ((hls.levels?.length ?? 0) > 1 && hls.autoLevelCapping !== 0) {
+            if ((instance.levels?.length ?? 0) > 1 && instance.autoLevelCapping !== 0) {
               if (!compter()) return;
               reagirALInstabilite.current();
               return;
@@ -774,8 +943,8 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
            */
           if (donnees.type === HlsClass.ErrorTypes.MEDIA_ERROR && reparations < 2) {
             reparations += 1;
-            if (reparations > 1) hls.swapAudioCodec();
-            hls.recoverMediaError();
+            if (reparations > 1) instance.swapAudioCodec();
+            instance.recoverMediaError();
             return;
           }
           /*
@@ -789,8 +958,27 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
            * reste en place, et la reprise coûte le remplissage du tampon au lieu d'une reconstruction
            * complète.
            */
+          /*
+           * **La relève d'abord, pour une erreur de réseau d'un flux qui a fait ses preuves.**
+           *
+           * Mesuré sur le banc du 13 septembre : une coupure réseau ne produit aucune erreur fatale —
+           * hls.js repart seul —, alors qu'une session expirée en produit une dans les dix secondes, et
+           * que la reprise en place la répétait jusqu'à l'abandon de la source, 39 s plus tard, image
+           * figée. La relève a tenu l'image à 0,1 s près. Si elle échoue, la reprise d'avant prend le
+           * relais, une fois par lecture.
+           */
+          if (fluxDeclareStable.current && donnees.type === HlsClass.ErrorTypes.NETWORK_ERROR && !relevesTentees.has(instance)) {
+            relevesTentees.add(instance);
+            incidents.current += 1;
+            dernierIncident.current = `réseau (${donnees.details})`;
+            void relever().then((faite) => {
+              if (!faite && !annule && hlsRef.current === instance) instance.startLoad();
+            });
+            return;
+          }
           if (fluxDeclareStable.current && reprises.current < REPRISES_MAX) {
             reprises.current += 1;
+            incidents.current += 1;
             dernierIncident.current = `réseau (${donnees.details})`;
             if (reprises.current > 1) {
               setMessage(`Reprise de la source (${reprises.current}/${REPRISES_MAX})…`);
@@ -801,10 +989,11 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
             }, ATTENTES_REPRISE_MS[reprises.current - 1]);
             return;
           }
-          hls.destroy();
+          instance.destroy();
           hlsRef.current = null;
           suivante();
-        });
+        };
+        hls.on(HlsClass.Events.ERROR, surErreurDe(hls));
       } else if (natif) {
         // Safari lit HLS nativement, et n'a alors besoin ni de MediaSource ni de CORS.
         element.src = source;
@@ -822,6 +1011,10 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
       window.clearTimeout(minuteur);
       hlsRef.current?.destroy();
       hlsRef.current = null;
+      for (const releve of relevesEnCours) releve.destroy();
+      relevesEnCours.clear();
+      const cachee = videos.current[ecranRef.current === 0 ? 1 : 0];
+      if (cachee?.getAttribute("src")) { cachee.removeAttribute("src"); cachee.load(); }
     };
   }, [adresses, chaine.id, echec, parRelais, rang, suivante]);
 
@@ -920,17 +1113,20 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
          * direct, puis **rabattu dans la fenêtre** avec un segment de garde. Le plancher ne peut plus
          * pousser dehors, il ne peut que remonter vers le bord.
          */
-        const largeur = fin - debut;
-        const plancher = 2 * segment;
-        const souhaitee = Math.min(CIBLE_MAX_S, Math.max(plancher, largeur - MARGE_ARRIERE_S));
-        const payable = Math.max(segment, Math.min(souhaitee, largeur - segment));
-        const segments = Math.max(1, Math.floor(payable / Math.max(1, segment)));
+        /*
+         * **Et la fiabilité fixe le plafond.** Une source qui a déjà calé depuis qu'on la regarde, ou
+         * que le serveur connaît pour ses échecs, vise jusqu'à 60 s au lieu de 40 : c'est le temps
+         * que la reprise se donne pour agir avant que le tampon ne s'épuise.
+         */
+        const fragile = incidents.current > 0 || (adresses[rang]?.echecs ?? 0) > 0;
+        const segments = segmentsDAvance(fin - debut, segment, fragile);
+        avanceVisee.current = segments * segment;
         if (courant.config.liveSyncDurationCount !== segments) {
           courant.config.liveSyncDurationCount = segments;
         }
       }
 
-      const releve = { debut, fin, position: element.currentTime, enPause: element.paused };
+      const releve = { debut, fin, position: element.currentTime, enPause: element.paused, avance: avanceVisee.current };
       fenetreRef.current = releve;
       setFenetre(releve);
 
@@ -946,24 +1142,32 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
         const marge = releve.position - debut;
         if (marge > 0 && marge < SEGMENT_TYPE_S) {
           silenceJusqua.current = Date.now() + 4_000;
-          element.currentTime = fin - MARGE_DIRECT_S;
+          // Revenir à l'avance visée, pas au bord : c'est la marge qui empêche la prochaine coupure.
+          element.currentTime = fin - Math.max(MARGE_DIRECT_S, avanceVisee.current);
         }
       }
     };
     const minuteur = window.setInterval(relever, 250);
     return () => window.clearInterval(minuteur);
-  }, [adresses, rang]);
+  }, [adresses, ecran, rang]);
 
-  const auDirect = !fenetre || fenetre.fin - fenetre.position <= MARGE_DIRECT_S;
+  const auDirect = !fenetre || fenetre.fin - fenetre.position <= fenetre.avance + MARGE_DIRECT_S;
   const largeurFenetre = fenetre ? fenetre.fin - fenetre.debut : 0;
   const barreUtile = largeurFenetre >= FENETRE_MINIMALE_S;
 
-  /** Revenir au bord du flux — la seule position qui mérite le mot « direct ». */
+  /**
+   * Revenir au direct — c'est-à-dire à l'avance visée, et non au bord.
+   *
+   * Le bord exact ne laisse devant soi que le segment en cours de publication : une seconde de réseau
+   * suffit à figer l'image. Revenir à l'avance visée garde la marge qui l'en protège.
+   */
   const rejoindreDirect = useCallback(() => {
     const element = videoRef.current;
     if (!element?.seekable.length) return;
     silenceJusqua.current = Date.now() + 4_000;
-    element.currentTime = element.seekable.end(element.seekable.length - 1) - 1;
+    const debut = element.seekable.start(0);
+    const fin = element.seekable.end(element.seekable.length - 1);
+    element.currentTime = Math.max(debut + 2, fin - Math.max(1, avanceVisee.current));
     void element.play().catch(() => undefined);
   }, []);
 
@@ -1004,6 +1208,11 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
 
   useEffect(() => {
     if (!fenetre || !barreUtile) return;
+    /*
+     * Pas pendant l'ouverture : tant que hls.js n'a pas posé le point de lecture, la vidéo est à zéro
+     * alors que la fenêtre est déjà connue, et l'on croirait être tombé au fond de la fenêtre.
+     */
+    if (Date.now() - depuisSource.current < 5_000 || fenetre.position <= 0) return;
     // Deux segments de marge : au-delà, l'hébergeur retire le segment qu'on est en train de lire.
     if (fenetre.position >= fenetre.debut + FENETRE_MINIMALE_S) return;
     rejoindreDirect();
@@ -1048,7 +1257,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
   }, [basculerPause, onChaine, onClose, precedente, rejoindreDirect, sauter]);
 
   const sources = adresses.length;
-  const groupesDeSources = regrouperLesSources(adresses);
+  const groupesDeSources = regrouperLesSources(adresses, muettes);
   const avance = fenetre && largeurFenetre > 0
     ? Math.min(100, Math.max(0, (fenetre.position - fenetre.debut) / largeurFenetre * 100))
     : 100;
@@ -1056,8 +1265,14 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
   return <div className={`lecteur-direct${barreVisible ? " commandes" : ""}`}
     role="dialog" aria-modal="true" aria-label={`Chaîne ${chaine.nom}`}
     onMouseMove={() => setBarreVisible(true)}>
-    <video ref={videoRef} autoPlay playsInline muted={false}
-      onClick={basculerPause} onPause={() => setBarreVisible(true)} />
+    {/*
+      * Deux vidéos, une seule à l'écran : l'autre ne sert qu'à la relève silencieuse, qui prépare une
+      * seconde lecture cachée de la même chaîne et prend la place de la première sans que l'image bouge.
+      */}
+    <video ref={brancherVideo0} autoPlay playsInline muted={false} className={ecran === 0 ? undefined : "lecteur-direct-releve"}
+      onClick={basculerPause} onPause={() => { if (ecranRef.current === 0) setBarreVisible(true); }} />
+    <video ref={brancherVideo1} autoPlay playsInline muted={false} className={ecran === 1 ? undefined : "lecteur-direct-releve"}
+      onClick={basculerPause} onPause={() => { if (ecranRef.current === 1) setBarreVisible(true); }} />
     <div className="lecteur-direct-barre">
       <button type="button" className="player-icon-button" onClick={onClose} aria-label="Fermer">←</button>
       {precedente && <button type="button" className="player-icon-button"
@@ -1085,27 +1300,29 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
       </div>
     </div>
 
+    {/*
+      * Toutes les sources, sans « voir les autres » : une chaîne regroupée en porte jusqu'à quatre-vingts,
+      * la liste défile, et celles que le serveur n'a pas pu joindre ferment la marche.
+      */}
     {choixOuvert && <ul className="lecteur-direct-choix" role="listbox" aria-label="Sources de la chaîne">
-      {(toutesLesSources ? groupesDeSources : groupesDeSources.slice(0, SOURCES_VISIBLES))
-        .map(({ index, source, doublons }, rangAffiche) => (
+      {groupesDeSources.map(({ index, source, doublons, muette }, rangAffiche) => (
         <li key={source.empreinte || source.url}>
           <button type="button" role="option" aria-selected={index === rang}
-            className={index === rang ? "actif" : undefined} onClick={() => choisirSource(index)}>
+            className={[index === rang ? "actif" : "", muette ? "muette" : ""].filter(Boolean).join(" ") || undefined}
+            onClick={() => choisirSource(index)}>
             <b>
-              Source {rangAffiche + 1}{rangAffiche === 0 ? " · recommandée" : ""}
+              Source {rangAffiche + 1}{rangAffiche === 0 && !muette ? " · recommandée" : ""}
               {/* Le compte se dit : savoir qu'une source a trois adresses explique qu'elle tienne mieux. */}
               {doublons > 1 ? ` · ${doublons} adresses` : ""}
             </b>
-            <small>{index === rang && parRelais ? "relayée par le serveur" : decrireSource(source)}</small>
+            <small>
+              {index === rang && parRelais ? "relayée par le serveur" : decrireSource(source)}
+              {/* Muette pour le serveur, pas forcément pour ce navigateur : elle reste choisissable. */}
+              {muette ? " · ne répond pas" : ""}
+            </small>
           </button>
         </li>
       ))}
-      {!toutesLesSources && groupesDeSources.length > SOURCES_VISIBLES && <li>
-        <button type="button" onClick={() => setToutesLesSources(true)}>
-          <b>Voir les {groupesDeSources.length - SOURCES_VISIBLES} autres</b>
-          <small>classées après les huit meilleures</small>
-        </button>
-      </li>}
     </ul>}
 
     {/*

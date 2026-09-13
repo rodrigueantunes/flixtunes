@@ -203,6 +203,21 @@ function positionSubtitleTrack(track: HTMLTrackElement, position: SubtitlePrefer
 }
 
 /**
+ * Précédent et suivant, **dessinés** : une barre et un triangle.
+ *
+ * Écrits en texte — `|◀` et `▶|` —, les deux caractères dépendaient de la police : une barre et un
+ * triangle qui ne partagent ni la même ligne de base ni la même largeur, et que le moindre manque de
+ * place séparait sur deux lignes. Un dessin garde la même taille partout, et suit la couleur du bouton.
+ */
+function IconeSaut({ sens }: { sens: "precedent" | "suivant" }) {
+  return <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+    {sens === "precedent"
+      ? <><rect x="3" y="3" width="2" height="10" rx="0.5" /><path d="M13 3v10L6 8z" /></>
+      : <><path d="M3 3v10l7-5z" /><rect x="11" y="3" width="2" height="10" rx="0.5" /></>}
+  </svg>;
+}
+
+/**
  * Lecteur, indépendant du catalogue.
  *
  * Il ne reçoit qu'un identifiant de média et va chercher lui-même ce dont il a besoin. Auparavant, il
@@ -1354,8 +1369,8 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
           ? media.title
           : <>S{media.seasonNumber} E{media.episodeNumber} · {media.title}</>}</span>}</div>
         {/* « Épisode » n'a pas de sens dans une chaîne : ce qui suit une vidéo est une vidéo. */}
-        {neighbors.previous && <button className="player-compact-button player-icon-button" onClick={() => onPlayMedia(neighbors.previous!.id)} aria-label={neighbors.previous.kind === "video" ? "Vidéo précédente" : "Épisode précédent"}>|◀</button>}
-        {neighbors.next && <button className="player-compact-button player-icon-button" onClick={() => onPlayMedia(neighbors.next!.id)} aria-label={neighbors.next.kind === "video" ? "Vidéo suivante" : "Épisode suivant"}>▶|</button>}
+        {neighbors.previous && <button className="player-compact-button player-icon-button" onClick={() => onPlayMedia(neighbors.previous!.id)} aria-label={neighbors.previous.kind === "video" ? "Vidéo précédente" : "Épisode précédent"}><IconeSaut sens="precedent" /></button>}
+        {neighbors.next && <button className="player-compact-button player-icon-button" onClick={() => onPlayMedia(neighbors.next!.id)} aria-label={neighbors.next.kind === "video" ? "Vidéo suivante" : "Épisode suivant"}><IconeSaut sens="suivant" /></button>}
         <button className="player-compact-button" onClick={() => setInfoOpen((open) => !open)} aria-expanded={infoOpen}>Infos</button>
         <button className="player-tracks-button" onClick={() => setSettingsOpen((open) => !open)} aria-expanded={settingsOpen}>Pistes</button>
         {session && <span className={`playback-mode ${session.mode}`}>{session.mode === "direct" ? "Direct Play" : session.mode === "remux" ? "Remux HLS" : "Transcodage HLS"}</span>}

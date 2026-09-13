@@ -606,6 +606,11 @@ function ensureLiveUrlColumn(name: string, definition: string) {
 ensureLiveUrlColumn("hauteur", "INTEGER");
 ensureLiveUrlColumn("debit", "INTEGER");
 ensureLiveUrlColumn("sonde_le", "TEXT");
+/**
+ * Ce que le dernier relevé des sondes dit de l'adresse : `1` joignable, `0` muette, rien si elle n'y
+ * figure pas ou si le relevé manque. Écrit avec l'adresse, à chaque rafraîchissement.
+ */
+ensureLiveUrlColumn("releve", "INTEGER");
 
 /**
  * Les fiabilités d'une chaîne, réunies en un seul entier.
@@ -643,6 +648,15 @@ ensureLiveChannelColumn("classements", "INTEGER NOT NULL DEFAULT 0");
  * charger : elle retire la ponctuation, si bien que « canal + » et « canal » y deviennent le même mot.
  */
 ensureLiveChannelColumn("nom_compact", "TEXT");
+/**
+ * Le pays qu'un identifiant de liste a attaché à la clé d'une chaîne.
+ *
+ * Il départage les homonymes de pays différents — « Canal+ Family » en France et en Pologne, que la
+ * clé de fusion réunirait. La première liste qui en donne un pour une clé le pose ; celles d'un autre
+ * pays écrivent ensuite leur déclinaison à part. Posé une fois, il ne bouge plus : c'est ce qui garde
+ * une chaîne, son numéro et ses favorites d'un rafraîchissement à l'autre.
+ */
+ensureLiveChannelColumn("pays_cle", "TEXT");
 
 /**
  * Les chaînes qu'un profil garde sous la main, et la dernière qu'il a regardée.

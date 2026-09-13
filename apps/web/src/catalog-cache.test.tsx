@@ -44,7 +44,7 @@ const { apiMock } = vi.hoisted(() => ({ apiMock: {
   // La télévision en direct : l'écran de configuration l'interroge dès son montage. Une valeur par
   // défaut suffit — éteinte et sans source, c'est l'état d'une installation qui ne s'en sert pas.
   live: vi.fn(async () => ({
-    parametres: { actif: false, dossier: null as string | null, fichier: "m3u.json", cadenceHeures: 12 },
+    parametres: { actif: false, dossier: null as string | null, fichier: "m3u.json" },
     etat: { actif: false, configure: false, enCours: false, listes: 0, listesRetenues: 0, chaines: 0, adresses: 0,
       fusionnees: 0, ecartees: 0, rafraichieLe: null as string | null, dernierMessage: null as string | null,
       progression: null, dureeSecondes: null as number | null },
@@ -52,7 +52,7 @@ const { apiMock } = vi.hoisted(() => ({ apiMock: {
   listesLive: vi.fn(async () => []),
   sourcesLive: vi.fn(async () => []),
   ajouterXtream: vi.fn(), activerFast: vi.fn(), retirerSourceLive: vi.fn(),
-  enregistrerLive: vi.fn(), rafraichirLive: vi.fn(), arreterLive: vi.fn(),
+  enregistrerLive: vi.fn(), rafraichirLive: vi.fn(), arreterLive: vi.fn(), creerJetonLive: vi.fn(), revoquerJetonLive: vi.fn(),
   chainesLive: vi.fn(async () => ({ items: [], total: 0, offset: 0, limit: 60 })),
   // Vu d'un client : la fonction est éteinte, donc l'entrée « Live TV » n'existe pas dans le menu.
   etatLive: vi.fn(async () => ({ disponible: false, chaines: 0, rafraichieLe: null as string | null })),
@@ -62,7 +62,7 @@ const { apiMock } = vi.hoisted(() => ({ apiMock: {
   favoriLive: vi.fn(),
   derniereChaineLive: vi.fn(async () => ({ chaine: null })),
   fiabilitesLive: vi.fn(async () => []),
-  chaineLive: vi.fn(), resultatChaineLive: vi.fn(),
+  chaineLive: vi.fn(), resultatChaineLive: vi.fn(), sondesChaineLive: vi.fn(),
 } }));
 vi.mock("./api", () => ({ api: apiMock }));
 vi.mock("./Player", () => ({ Player: () => <div>Lecteur</div> }));
