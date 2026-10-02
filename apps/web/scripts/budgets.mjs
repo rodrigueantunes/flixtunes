@@ -44,7 +44,11 @@ const BUDGETS = {
    */
   // 0.5.9.r5 : 95,1 Kio mesurés avec le contexte de classement VLC dans l'API partagée.
   // Le moteur et son interface restent dans des modules chargés à la demande.
-  jsEntree: { limite: 96 * Kio, libelle: "JavaScript du premier affichage (gzip)" },
+  // 0.6.0.r7 : relevé de 96 à 98 Kio. La r6 mesurait 96,0 Kio, sans marge. Le premier affichage doit
+  // désormais savoir qu'une diffusion est en cours — le bouton Cast le montre sur l'accueil, et le
+  // lecteur devient la télécommande du téléviseur — soit 1,1 Kio. La boucle de suivi, le panneau, la
+  // mini-télécommande et le relais restent chargés à la demande ; seuls le contexte et le bouton partent.
+  jsEntree: { limite: 98 * Kio, libelle: "JavaScript du premier affichage (gzip)" },
   /**
    * Relevé de 16 à 18 Kio le 31 août 2026, pour un écran entier qui n'existait pas.
    *
@@ -58,7 +62,10 @@ const BUDGETS = {
    * de marge pour une fonction de cette taille, et le prochain qui les dépassera devra à son tour dire
    * pourquoi.
    */
-  css: { limite: 18 * Kio, libelle: "Feuille de style (gzip)" },
+  // 0.6.0.r7 : relevé de 18 à 19 Kio pour 0,6 Kio de styles du cast : bouton actif, mini-télécommande,
+  // et lecteur devenu télécommande. Le budget compte toutes les feuilles, différées comprises : les
+  // déplacer dans un module à la demande n'y changerait rien.
+  css: { limite: 19 * Kio, libelle: "Feuille de style (gzip)" },
   /**
    * Relevé de 175 à 200 Kio le même jour, et pour la même raison vue de l'autre côté.
    *
@@ -95,7 +102,9 @@ const BUDGETS = {
   // 0.5.9.r5 : 212,6 Kio mesurés ; le lecteur VLC du direct est un module différé distinct.
   // 0.6.0.r1 : sélecteur Cast/AirPlay et réception des télécommandes, chargés séparément.
   // Le budget du premier affichage reste à 96 Kio ; seuls les modules différés gagnent 5 Kio.
-  jsDiffere: { limite: 220 * Kio, libelle: "Lecteur chargé à la demande (gzip)" },
+  // 0.6.0.r7 : 219,3 Kio, relevé à 223 : étapes de la préparation, annulation, mini-télécommande et
+  // relais du lecteur, tous chargés seulement quand une diffusion existe.
+  jsDiffere: { limite: 223 * Kio, libelle: "Lecteur chargé à la demande (gzip)" },
   imageUnitaire: { limite: 96 * Kio, libelle: "Image la plus lourde (brute)" },
   mediaDemarrage: { limite: 128 * Kio, libelle: "Son de démarrage (brut)" },
   totalDemarrage: { limite: 320 * Kio, libelle: "Tout ce qui part au premier affichage (gzip + images)" },

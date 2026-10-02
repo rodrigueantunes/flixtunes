@@ -41,6 +41,24 @@ describe("classement des chemins de tone mapping", () => {
     expect(classees.find((probe) => probe.id === "opencl")?.relativeToSoftware).toBe(0.2);
   });
 
+  it("ne retient le chemin « logiciel » qu'en dernier recours, parce qu'il assombrit l'image", () => {
+    // Mesure réelle du NAS le 2 octobre 2026 : `software` à 92 im/s, `zscale` à 14. Le plus rapide
+    // gagnait, alors qu'il applique `tonemap` sans linéariser la courbe PQ.
+    const nas = rankToneMapping([
+      sonde({ id: "zscale", framesPerSecond: 14 }),
+      sonde({ id: "software", framesPerSecond: 92 }),
+    ]);
+    expect(nas.find((probe) => probe.selected)?.id).toBe("zscale");
+    const avecTonemapx = rankToneMapping([
+      sonde({ id: "tonemapx", framesPerSecond: 80 }),
+      sonde({ id: "zscale", framesPerSecond: 14 }),
+      sonde({ id: "software", framesPerSecond: 92 }),
+    ]);
+    expect(avecTonemapx.find((probe) => probe.selected)?.id).toBe("tonemapx");
+    const seul = rankToneMapping([sonde({ id: "software", framesPerSecond: 92 }), sonde({ id: "zscale", usable: false })]);
+    expect(seul.find((probe) => probe.selected)?.id).toBe("software");
+  });
+
   it("ne retient jamais un chemin qui n'a pas converti", () => {
     const classees = rankToneMapping([
       sonde({ id: "vaapi", hardware: true, usable: false, framesPerSecond: null, error: "Pilote absent" }),
@@ -70,10 +88,11 @@ describe("choix du chemin en fonction de la mesure", () => {
     expect(selectToneMappingBackend(sansVulkan, "auto", false, "opencl")).toMatchObject({ backend: "opencl", hardware: true });
   });
 
-  it("revient au comportement d'avant quand rien n'a été mesuré", () => {
-    // Sans mesure, seul libplacebo est admis sans épreuve locale : c'est le seul chemin que le projet
-    // avait déjà qualifié. Les autres restent en retrait plutôt que d'être supposés bons.
-    expect(selectToneMappingBackend(complet, "auto", false, null)).toMatchObject({ backend: "libplacebo" });
+  it("ne retient aucun chemin matériel tant que rien n'a été mesuré", () => {
+    // libplacebo était admis d'office. Sur le NAS, sans Vulkan, il faisait échouer chaque conversion HDR.
+    expect(selectToneMappingBackend(complet, "auto", false, null)).toMatchObject({ backend: "zscale", hardware: false });
+    expect(selectToneMappingBackend({ ...complet, filters: new Set([...complet.filters, "tonemapx"]) }, "auto", false, null))
+      .toMatchObject({ backend: "tonemapx", hardware: false });
     expect(selectToneMappingBackend(sansVulkan, "auto", false, null)).toMatchObject({ backend: "zscale", hardware: false });
   });
 
@@ -82,6 +101,11 @@ describe("choix du chemin en fonction de la mesure", () => {
     // produirait une commande que FFmpeg refuse, et la lecture échouerait au lieu de ralentir.
     const sansVaapi = { ...complet, filters: new Set(["zscale", "tonemap"]), hwaccels: new Set<string>() };
     expect(selectToneMappingBackend(sansVaapi, "auto", false, "vaapi")).toMatchObject({ backend: "zscale", hardware: false });
+  });
+
+  it("suit une mesure qui désigne tonemapx", () => {
+    const avecTonemapx = { ...complet, filters: new Set([...complet.filters, "tonemapx"]) };
+    expect(selectToneMappingBackend(avecTonemapx, "auto", false, "tonemapx")).toMatchObject({ backend: "tonemapx", hardware: false });
   });
 
   it("un choix explicite prime sur la mesure", () => {

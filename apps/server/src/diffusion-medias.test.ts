@@ -147,5 +147,5 @@ it("ne lance pas une lourde conversion 4K pour simuler une copie source impossib
 });
 it("demande la copie vidéo pour le direct source et le fMP4 adapté au HEVC", async () => {
   const m = await medias.preparer("profil", { genre: "direct", id: "chaine", titre: "Test" }, "http://10.0.0.1", 0, { qualiteSource: true });
-  expect(fixture.live.mock.calls[0]?.[5]).toEqual({copieVideo:true}); expect(m.segmentsFmp4).toBe(true);
+  expect(fixture.live.mock.calls[0]?.[5]).toEqual({copieVideo:true, diffusion:true}); expect(m.segmentsFmp4).toBe(true);
 });

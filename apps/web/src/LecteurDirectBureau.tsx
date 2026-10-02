@@ -1,4 +1,4 @@
-import { BoutonDiffusion, useSurfaceDiffusion } from "./Diffusion";
+import { BoutonDiffusion, RelaisDiffusion, useSurfaceDiffusion } from "./Diffusion";
 import { useEffect, useRef, useState } from "react";
 import type { ChaineDirect, ChaineDirectDetaillee } from "@flixtunes/contracts";
 import { api } from "./api";
@@ -155,6 +155,7 @@ export function LecteurDirectBureau({ chaine, precedente, onChaine, onClose, onR
   return <div className={`lecteur-direct lecteur-direct-bureau${visible ? " commandes" : ""}`}
     role="dialog" aria-modal="true" aria-label={`Chaîne ${chaine.nom}`}
     onPointerMove={reveiller} onPointerDownCapture={reveiller} onFocusCapture={reveiller}>
+    <RelaisDiffusion contenu={chaine.id} onReprendreIci={() => { void pont.lecteur?.lire().then(() => { setPause(false); pauseRef.current = false; }).catch(() => undefined); }} />
     <div className="lecteur-direct-barre" inert={!visible} aria-hidden={!visible}>
       <BoutonDiffusion />
       <button type="button" className="player-icon-button" onClick={onClose} aria-label="Fermer" title="Fermer">←</button>

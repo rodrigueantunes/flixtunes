@@ -2,12 +2,14 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { AccuseDiffusion, CibleDiffusion, CommandeDiffusion, EtatDiffusion } from "@flixtunes/contracts";
 import { api } from "./api";
-import type { Catalogue } from "./Diffusion";
+import { useDiffusion, type Catalogue } from "./Diffusion";
 import { surfaceDiffusion } from "./diffusion-surface";
-import { attendre, message, etatDiffusionVide, marquerTransfert } from "./diffusion-utilitaires";
+import { attendre, message, etatDiffusionVide, libelleEtat, libelleProtocole, marquerTransfert } from "./diffusion-utilitaires";
 type VideoAirPlay = HTMLVideoElement & { webkitShowPlaybackTargetPicker?: () => void; webkitCurrentPlaybackTargetIsWireless?: boolean };
 export default function PanneauDiffusion({ catalogue, monId, ouvert, fermerPanneau }: { catalogue: Catalogue; monId: RefObject<string | null>; ouvert: boolean; fermerPanneau: () => void }) {
-  const [cibles, setCibles] = useState<CibleDiffusion[]>([]), [selection, choisir] = useState<string | null>(null);
+  const contexte = useDiffusion();
+  const cibles: CibleDiffusion[] = contexte?.cibles ?? [];
+  const [selection, choisir] = useState<string | null>(null);
   const [erreur, setErreur] = useState<string | null>(null), [travail, setTravail] = useState(false);
   const [locale, setLocale] = useState<EtatDiffusion>(etatDiffusionVide);
   const [airplay, setAirplay] = useState<{ url: string; cle: string; position: number; decalage: number; contenu: EtatDiffusion["contenu"]; duree: number; source: ReturnType<typeof surfaceDiffusion>; compatible: boolean } | null>(null);
@@ -17,24 +19,29 @@ export default function PanneauDiffusion({ catalogue, monId, ouvert, fermerPanne
   const airplayDisponible = typeof document !== "undefined" && "webkitShowPlaybackTargetPicker" in document.createElement("video");
 
   useEffect(() => {
-    if (!ouvert || !catalogue) return; let abandon = false;
+    if (!ouvert || !catalogue) return;
     const precedent = document.activeElement as HTMLElement | null; panneau.current?.focus();
-    const boucle = async () => { while (!abandon) {
-      try {
-        const r = await api.diffusion<{ cibles: CibleDiffusion[] }>(catalogue.profil, "cibles");
-        if (!abandon) { setCibles(r.cibles.filter((c) => c.id !== monId.current)); setLocale(surfaceDiffusion()?.current.etat() ?? etatDiffusionVide()); }
-      } catch (e) { if (!abandon) setErreur(message(e)); }
-      await attendre(2500);
-    } };
-    void boucle(); return () => { abandon = true; precedent?.focus(); };
+    setLocale(surfaceDiffusion()?.current.etat() ?? etatDiffusionVide());
+    // La diffusion déjà en cours est sélectionnée d'office : le panneau s'ouvre sur sa télécommande.
+    if (contexte?.active) choisir((actuel) => actuel ?? contexte.active!.id);
+    return () => { precedent?.focus(); };
   }, [ouvert, catalogue?.profil]);
-  useEffect(() => { choisir(null); setCibles([]); setAirplay(null); setAirplayActif(false); }, [catalogue.profil]);
+  useEffect(() => { if (ouvert) setLocale(surfaceDiffusion()?.current.etat() ?? etatDiffusionVide()); }, [cibles]);
+  useEffect(() => { choisir(null); setAirplay(null); setAirplayActif(false); }, [catalogue.profil]);
 
   async function envoyer(c: CommandeDiffusion, id = selection) {
     if (!catalogue || !id) return; setTravail(true); setErreur(null);
     const source = surfaceDiffusion();
     try {
-      const r = await api.diffusion<{ ordre?: string; ok?: boolean }>(catalogue.profil, `cibles/${encodeURIComponent(id)}/commande`, c);
+      // Un téléviseur suit l'étape de sa préparation par l'état de la cible : la commande répond tout
+      // de suite. Le lecteur local ne se met en pause qu'à la lecture confirmée, par le suivi central.
+      const asynchrone = c.type === "charger" && !id.startsWith("ft-");
+      const r = await api.diffusion<{ ordre?: string; ok?: boolean; operation?: string }>(catalogue.profil,
+        `cibles/${encodeURIComponent(id)}/commande${asynchrone ? "?asynchrone=1" : ""}`, c);
+      if (r.operation && c.type === "charger") {
+        contexte?.attendreTransfert({ cible: id, contenu: c.contenu.id, surface: source });
+        choisir(id); return;
+      }
       if (r.ordre) {
         const limite = Date.now() + 30_000; let resultat: AccuseDiffusion | null = null;
         while (!resultat && Date.now() < limite) {
@@ -101,24 +108,30 @@ export default function PanneauDiffusion({ catalogue, monId, ouvert, fermerPanne
         {erreur && <p role="alert" className="cast-error">{erreur}</p>}
         {travail && <p role="status">En attente du récepteur…</p>}
         <div className="cast-targets">{cibles.map((c) => <button key={c.id} disabled={c.occupe || travail} aria-pressed={selection === c.id} onClick={() => choisir(c.id)}>
-          <strong>{c.nom}</strong><small>{c.protocole === "googlecast" ? "Google Cast" : c.protocole === "dlna" ? "DLNA" : "FlixTunes"}{c.occupe ? " · utilisé par un autre profil" : c.etat?.contenu ? ` · ${c.etat.contenu.titre}` : ""}</small>
+          <strong>{c.nom}</strong><small>{libelleProtocole(c)}{c.occupe ? " · utilisé par un autre profil" : c.etat?.contenu ? ` · ${c.etat.contenu.titre}` : ""}</small>
         </button>)}</div>
         {!cibles.length && <p>Aucun appareil détecté pour le moment. Vérifiez qu’il est allumé et connecté au même réseau que le NAS.</p>}
         {cible && <section className="cast-remote" aria-label={`Télécommande de ${cible.nom}`}>
           <h3>{cible.nom}</h3>
-          {locale.contenu && <button className="primary" disabled={travail} onClick={() => void envoyer({ type: "charger", contenu: locale.contenu!, position: locale.position })}>Diffuser « {locale.contenu.titre} » ici</button>}
+          {locale.contenu && !(etat?.contenu?.id === locale.contenu.id && ["chargement", "lecture", "pause"].includes(etat.lecture))
+            && <button className="primary" disabled={travail} onClick={() => void envoyer({ type: "charger", contenu: locale.contenu!, position: locale.position })}>Diffuser « {locale.contenu.titre} » ici</button>}
           {!locale.contenu && !etat?.contenu && <p>Lancez un film, un épisode, une vidéo Web ou une chaîne, puis choisissez cet appareil.</p>}
-          {etat?.contenu && <><p>{etat.contenu.titre} · {etat.lecture}</p>{etat.qualite && <p>{etat.qualite}</p>}<div className="cast-transport">
-            <button disabled={travail} onClick={() => void envoyer({ type: etat.lecture === "pause" ? "reprendre" : "pause" })}>{etat.lecture === "pause" ? "Reprendre" : "Pause"}</button>
+          {etat?.contenu && <><p>{etat.contenu.titre}</p>
+          <p role="status" className={etat.lecture === "chargement" ? "cast-etape" : undefined}>{libelleEtat(etat, cible.nom)}</p>
+          {etat.qualite && etat.lecture !== "chargement" && <p>{etat.qualite}</p>}
+          {etat.lecture === "chargement"
+            ? <div className="cast-transport"><button disabled={travail} onClick={() => void envoyer({ type: "arreter" })}>Annuler</button></div>
+            : <div className="cast-transport">
+            <button disabled={travail || etat.lecture === "erreur" || etat.lecture === "repos"} onClick={() => void envoyer({ type: etat.lecture === "pause" ? "reprendre" : "pause" })}>{etat.lecture === "pause" ? "Reprendre" : "Pause"}</button>
             <button disabled={travail} onClick={() => void envoyer({ type: "arreter" })}>Arrêter</button>
-          </div>
-          {etat.navigation && etat.duree > 0 && <label>Position <input aria-label="Position de lecture" type="range" min="0" max={etat.duree} step="1" defaultValue={etat.position} key={`${cible.id}-${Math.floor(etat.position / 5)}`} disabled={travail}
+          </div>}
+          {["lecture", "pause"].includes(etat.lecture) && etat.navigation && etat.duree > 0 && <label>Position <input aria-label="Position de lecture" type="range" min="0" max={etat.duree} step="1" defaultValue={etat.position} key={`${cible.id}-${Math.floor(etat.position / 5)}`} disabled={travail}
             onPointerUp={(e) => void envoyer({ type: "position", valeur: Number(e.currentTarget.value) })}
             onKeyUp={(e) => { if (e.key.startsWith("Arrow")) void envoyer({ type: "position", valeur: Number(e.currentTarget.value) }); }} /></label>}
-          <label>Volume <input aria-label="Volume distant" type="range" min="0" max="1" step="0.05" defaultValue={etat.volume} key={`${cible.id}-${etat.volume}`} disabled={travail}
+          {["lecture", "pause"].includes(etat.lecture) && <label>Volume <input aria-label="Volume distant" type="range" min="0" max="1" step="0.05" defaultValue={etat.volume} key={`${cible.id}-${etat.volume}`} disabled={travail}
             onPointerUp={(e) => void envoyer({ type: "volume", valeur: Number(e.currentTarget.value) })}
-            onKeyUp={(e) => { if (e.key.startsWith("Arrow")) void envoyer({ type: "volume", valeur: Number(e.currentTarget.value) }); }} /></label>
-          {etat.erreur && <p role="alert">{etat.erreur}</p>}
+            onKeyUp={(e) => { if (e.key.startsWith("Arrow")) void envoyer({ type: "volume", valeur: Number(e.currentTarget.value) }); }} /></label>}
+          {etat.erreur && etat.lecture !== "erreur" && <p role="alert">{etat.erreur}</p>}
           </>}
         </section>}
         {airplayDisponible && <section className="cast-airplay"><h3>AirPlay</h3>

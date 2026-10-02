@@ -1,6 +1,7 @@
 import tls from "node:tls";
 import type { CommandeDiffusion, EtatDiffusion } from "@flixtunes/contracts";
 import type { Recepteur } from "./diffusion-reseau.js";
+import type { Verdict } from "./diffusion-sonde.js";
 
 const NS = "urn:x-cast:com.google.cast.";
 export class ErreurCast extends Error {
@@ -51,6 +52,9 @@ export class TransportCast {
   private messagesRecus = 0; private battementsRecus = 0;
   private application?: { transportId: string; sessionId?: string };
   private erreurLecture?: Error;
+  /** Le code détaillé du dernier refus du récepteur (`detailedErrorCode` du lecteur Cast). */
+  private codeDetaille?: string;
+  private observateurSonde?: (statut: any) => void;
   private attentes = new Map<number, { espace: string; destination: string; type: string; resolve: (r: Record<string, any>) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
   constructor(private cible: Recepteur, private etat: (etat: Partial<EtatDiffusion>) => void) {}
   private envoyer(espace: string, donnees: Record<string, unknown>, destination = "receiver-0") {
@@ -83,10 +87,22 @@ export class TransportCast {
           throw new ErreurCast("CAST_CANAL_FERME", "Le récepteur a fermé le canal Cast");
         }
         if (m.espace === NS + "tp.heartbeat" && m.donnees.type === "PING") this.envoyer("tp.heartbeat", { type: "PONG" }, m.source);
-        if (m.espace === NS + "media" && m.source === this.destination && m.donnees.type === "MEDIA_STATUS") this.actualiser(m.donnees.status?.find((s: any) => s.mediaSessionId === this.session) ?? m.donnees.status?.[0]);
+        if (m.espace === NS + "media" && m.source === this.destination && ["ERROR", "LOAD_FAILED"].includes(m.donnees.type)) {
+          const brut = String(m.donnees.detailedErrorCode ?? m.donnees.reason ?? "");
+          if (/^(?:[A-Z][A-Z0-9_]{0,39}|\d{1,9})$/.test(brut)) this.codeDetaille = brut;
+        }
+        if (m.espace === NS + "media" && m.source === this.destination && m.donnees.type === "MEDIA_STATUS") {
+          const statut = m.donnees.status?.find((s: any) => s.mediaSessionId === this.session) ?? m.donnees.status?.[0];
+          if (this.observateurSonde) this.observateurSonde(statut);
+          else this.actualiser(statut);
+        }
         if (m.espace === NS + "receiver" && m.source === "receiver-0" && m.donnees.type === "RECEIVER_STATUS") {
           const a = m.donnees.status?.applications?.find((a: any) => a.appId === "CC1AD845");
           this.application = typeof a?.transportId === "string" ? a : undefined;
+          // Le lecteur que nous pilotions a été fermé ou remplacé : une autre application a pris le
+          // récepteur, ou quelqu'un l'a quittée avec la télécommande. Ce n'est pas une panne.
+          const toujoursLa = (m.donnees.status?.applications ?? []).some((app: any) => app.transportId === this.destination);
+          if (this.destination && !toujoursLa && Array.isArray(m.donnees.status?.applications)) this.reprisParUnTiers();
         }
         if (m.espace === NS + "receiver" && m.source === "receiver-0" && typeof m.donnees.status?.volume?.level === "number") {
           this.volume = Math.max(0, Math.min(1, m.donnees.status.volume.level)); this.etat({ volume: this.volume });
@@ -124,16 +140,25 @@ export class TransportCast {
       this.fermer(this.erreurLecture);
     }
   }
+  /** La diffusion s'arrête sans erreur : le récepteur a été pris par un autre, ou rendu à son menu. */
+  private reprisParUnTiers() {
+    const actif = this.session != null || this.progressionConfirmee;
+    this.destination = ""; this.session = undefined; this.enLecture = false; this.progressionConfirmee = false;
+    this.positionConfirmee = undefined; this.contenuAttendu = undefined;
+    if (actif) this.etat({ lecture: "repos", erreur: null, motifRepos: "tiers" });
+  }
   private actualiser(s: any) {
     if (!s) {
       if (this.session != null) {
         this.session = undefined; this.enLecture = false; this.progressionConfirmee = false; this.positionConfirmee = undefined;
-        this.etat({ lecture: "repos", erreur: null });
+        this.etat({ lecture: "repos", erreur: null, motifRepos: "arret" });
       }
       return;
     }
     if (typeof s.mediaSessionId !== "number") return;
     const contenu = s.media?.contentId ?? s.media?.contentUrl;
+    // Un autre émetteur a chargé un autre média sur le même lecteur après que le nôtre a démarré.
+    if (this.progressionConfirmee && contenu && this.contenuAttendu && contenu !== this.contenuAttendu) { this.reprisParUnTiers(); return; }
     // Les anciens MEDIA_STATUS peuvent arriver après LOAD. Ils ne confirment pas le nouveau média.
     if (this.contenuAttendu && ((contenu && contenu !== this.contenuAttendu)
       || (this.session == null && contenu !== this.contenuAttendu))) return;
@@ -150,13 +175,16 @@ export class TransportCast {
     } else if (!this.progressionConfirmee) this.positionConfirmee = undefined;
     this.enLecture = s.playerState === "PLAYING" && this.progressionConfirmee;
     const bloquee = this.enLecture && Date.now() - this.dernierProgres > 20_000;
-    if (s.playerState === "IDLE" && s.idleReason === "ERROR") this.erreurLecture = new ErreurCast("CAST_MEDIA", "Le récepteur n’a pas pu décoder ou récupérer ce flux");
+    if (s.playerState === "IDLE" && s.idleReason === "ERROR") this.erreurLecture = new ErreurCast(`CAST_MEDIA${this.codeDetaille ? `_${this.codeDetaille}` : ""}`, "Le récepteur n’a pas pu décoder ou récupérer ce flux");
     else if (bloquee) this.erreurLecture = new ErreurCast("CAST_LECTURE_BLOQUEE", "La position de lecture du récepteur n’avance plus");
     else if (this.enLecture) this.erreurLecture = undefined;
+    const motifRepos = s.playerState !== "IDLE" ? undefined : s.idleReason === "FINISHED" ? "fin" as const
+      : s.idleReason === "INTERRUPTED" ? "tiers" as const : s.idleReason === "CANCELLED" ? "arret" as const : undefined;
     this.etat({ lecture: this.erreurLecture ? "erreur" : s.playerState === "PLAYING" ? (this.enLecture ? "lecture" : "chargement")
       : s.playerState === "PAUSED" ? "pause" : s.playerState === "BUFFERING" ? "chargement" : "repos",
       position: position ?? 0, duree: Number.isFinite(s.media?.duration) ? s.media.duration : 0,
-      navigation: s.media?.streamType === "BUFFERED", erreur: this.erreurLecture?.message ?? null });
+      navigation: s.media?.streamType === "BUFFERED", erreur: this.erreurLecture?.message ?? null,
+      ...(motifRepos && !this.erreurLecture ? { motifRepos } : {}) });
   }
   private ouvrirCanal(destination = "receiver-0") {
     this.envoyer("tp.connection", { type: "CONNECT", origin: {}, connType: 0,
@@ -214,7 +242,8 @@ export class TransportCast {
       }
     }
   }
-  async charger(url: string, mime: string, titre: string, direct: boolean, position: number, segmentsFmp4 = false) {
+  /** Le lecteur multimédia par défaut du récepteur, lancé s'il ne l'est pas, et notre canal vers lui. */
+  private async assurerLecteur() {
     if (!this.socket || this.socket.destroyed) await this.verifier();
     if (!this.application) {
       try { await this.requete("receiver", { type: "LAUNCH", appId: "CC1AD845" }, "receiver-0", 30_000); }
@@ -225,12 +254,50 @@ export class TransportCast {
       }
     }
     if (!this.application) throw new ErreurCast("CAST_LANCEUR", "Le lecteur du récepteur Cast n’est pas prêt");
-    this.destination = this.application.transportId;
-    this.ouvrirCanal(this.destination);
-    this.enLecture = false; this.erreurLecture = undefined; this.session = undefined;
+    if (this.destination !== this.application.transportId) {
+      this.destination = this.application.transportId;
+      this.ouvrirCanal(this.destination);
+    }
+  }
+  /**
+   * Fait lire un clip de sonde et rend le verdict du récepteur : il refuse en moins d'une seconde ce
+   * qu'il ne sait pas lire, et commence à lire ce qu'il accepte. Rien n'est attendu au-delà.
+   */
+  async sonder(url: string, mime: string, fmp4: boolean, delai = 6000): Promise<Verdict> {
+    await this.assurerLecteur();
+    this.contenuAttendu = undefined; this.session = undefined; this.enLecture = false; this.erreurLecture = undefined;
+    this.progressionConfirmee = false; this.positionConfirmee = undefined; this.codeDetaille = undefined;
+    let fini: (v: Verdict) => void = () => {};
+    const resultat = new Promise<Verdict>((resolve) => { fini = resolve; });
+    const timer = setTimeout(() => fini("inconnu"), delai);
+    this.observateurSonde = (st: any) => {
+      const contenu = st?.media?.contentId ?? st?.media?.contentUrl;
+      if (contenu && contenu !== url) return;
+      if (st?.playerState === "PLAYING" || (st?.playerState === "BUFFERING" && Number(st.currentTime) > 0)) fini("accepte");
+      else if (st?.playerState === "IDLE" && st.idleReason === "ERROR") fini("refuse");
+    };
+    try {
+      this.requete("media", { type: "LOAD", autoplay: true, currentTime: 0,
+        ...(this.application?.sessionId ? { sessionId: this.application.sessionId } : {}),
+        media: { ...(fmp4 ? { hlsSegmentFormat: "FMP4", hlsVideoSegmentFormat: "FMP4" } : {}), contentId: url, contentUrl: url,
+          contentType: mime, streamType: "BUFFERED", metadata: { metadataType: 0, title: "FlixTunes" } } }, this.destination, delai)
+        .catch((e) => { if (e instanceof ErreurCast && /^CAST_(LOAD_FAILED|LOAD_CANCELLED|INVALID_REQUEST)/.test(e.code)) fini("refuse"); else fini("inconnu"); });
+      const v = await resultat;
+      // Un dernier état de la sonde ne doit pas passer pour celui du vrai média.
+      const limite = Date.now() + 1500;
+      while (this.socket && Date.now() < limite && this.attentes.size) await new Promise((r) => setTimeout(r, 100));
+      return v;
+    } finally {
+      clearTimeout(timer); this.observateurSonde = undefined;
+      this.session = undefined; this.erreurLecture = undefined; this.codeDetaille = undefined;
+    }
+  }
+  async charger(url: string, mime: string, titre: string, direct: boolean, position: number, segmentsFmp4 = false) {
+    await this.assurerLecteur();
+    this.enLecture = false; this.erreurLecture = undefined; this.session = undefined; this.codeDetaille = undefined;
     this.contenuAttendu = url; this.positionConfirmee = undefined; this.progressionConfirmee = false; this.dernierProgres = Date.now();
     await this.requete("media", { type: "LOAD", autoplay: true, currentTime: direct ? 0 : position,
-      ...(this.application.sessionId ? { sessionId: this.application.sessionId } : {}),
+      ...(this.application?.sessionId ? { sessionId: this.application.sessionId } : {}),
       media: { ...(segmentsFmp4 ? { hlsSegmentFormat: "FMP4", hlsVideoSegmentFormat: "FMP4" } : {}), contentId: url, contentUrl: url, contentType: mime, streamType: direct ? "LIVE" : "BUFFERED", metadata: { metadataType: 0, title: titre } } }, this.destination, 35_000);
     const limite = Date.now() + 35_000;
     while (!this.enLecture && !this.erreurLecture && this.socket && Date.now() < limite) {

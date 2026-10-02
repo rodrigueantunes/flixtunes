@@ -12,6 +12,8 @@ import type {
   ActiveSessionCost,
   AdmissionDecision,
   CapacityAlert,
+  DiffusionMaterielleCalibration,
+  DiffusionMaterielleProbe,
   PlaybackMode,
   ServerCapacityReport,
 } from "@flixtunes/contracts";
@@ -19,6 +21,7 @@ import { config } from "./config.js";
 import { preferencesConversion } from "./preferences-conversion.js";
 import { getSetting, setSetting } from "./database.js";
 import { toneMappingFilters, toneMappingInputArgs } from "./tone-mapping-filters.js";
+import { entreeDecodageMateriel, filtresDecodageMateriel, TONEMAPX_NV12 } from "./diffusion-chaine.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -641,6 +644,7 @@ const toneMappingCatalog: Array<{ id: ToneMappingBackendId; label: string; hardw
     filtre: "libplacebo", accelerateur: "vulkan" },
   { id: "vaapi", label: "Tone mapping VA-API", hardware: true, filtre: "tonemap_vaapi", accelerateur: "vaapi" },
   { id: "opencl", label: "Tone mapping OpenCL", hardware: true, filtre: "tonemap_opencl", accelerateur: "opencl" },
+  { id: "tonemapx", label: "Tone mapping logiciel optimisé tonemapx", hardware: false, filtre: "tonemapx", accelerateur: null },
   { id: "zscale", label: "Tone mapping logiciel zscale", hardware: false, filtre: "zscale", accelerateur: null },
   { id: "software", label: "Tone mapping logiciel", hardware: false, filtre: "tonemap", accelerateur: null },
 ];
@@ -719,7 +723,11 @@ export function rankToneMapping(probes: ToneMappingProbe[]): ToneMappingProbe[] 
   }));
   const utilisables = notes.filter((probe) => probe.usable && probe.framesPerSecond);
   utilisables.sort((a, b) => (b.framesPerSecond ?? 0) - (a.framesPerSecond ?? 0));
-  const gagnant = utilisables[0] ?? notes.find((probe) => probe.usable);
+  // `software` applique `tonemap` sans linéariser la courbe PQ : l'image sort terne et sombre. Il
+  // gagnait le banc parce qu'il fait moins de travail, et le NAS l'a retenu. Il ne reste qu'un
+  // dernier recours, quand aucun chemin qui convertit correctement n'est utilisable.
+  const corrects = utilisables.filter((probe) => probe.id !== "software");
+  const gagnant = corrects[0] ?? utilisables[0] ?? notes.find((probe) => probe.usable);
   if (gagnant) gagnant.selected = true;
   return notes;
 }
@@ -743,7 +751,7 @@ export interface ToneMappingCalibration {
 export async function calibrateToneMapping(support: { version: string | null; filters: Set<string>; hwaccels: Set<string> }):
 Promise<ToneMappingCalibration> {
   // Le suffixe invalide les faux verdicts persistés par l'ancienne mire sans Mastering Display.
-  const signature = `${calibrationSignature(support.version, [...support.hwaccels], [...support.filters])}|hdr10-sei-v2`;
+  const signature = `${calibrationSignature(support.version, [...support.hwaccels], [...support.filters])}|hdr10-sei-v3-tonemapx`;
   if (toneMappingCache?.signature === signature) return toneMappingCache;
   const stored = getSetting(TONE_MAPPING_KEY);
   if (stored) {
@@ -784,9 +792,155 @@ export function toneMappingProbes(): ToneMappingProbe[] {
   return toneMappingCache?.probes ?? [];
 }
 
-/** Le chemin retenu par la mesure, ou `null` tant qu'aucune mesure n'a eu lieu. */
+/**
+ * Le chemin retenu par la mesure, ou `null` tant qu'aucune mesure n'a eu lieu.
+ *
+ * La mesure enregistrée est relue en base si elle n'est pas encore en mémoire. Elle ne l'était que
+ * par le rapport de capacité : après un redémarrage, toute conversion lancée avant l'ouverture de ce
+ * tableau choisissait sans mesure, donc `libplacebo`, que le NAS avait pourtant déclaré inutilisable
+ * faute de Vulkan. Chaque conversion HDR échouait alors à l'ouverture du périphérique, et le repli
+ * passait tout en logiciel : 0,33 fois le temps réel sur un film 4K, relevé le 2 octobre 2026.
+ */
 export function calibratedToneMapping(): ToneMappingBackendId | null {
+  if (!toneMappingCache && !toneMappingPromise) {
+    try {
+      const stored = getSetting(TONE_MAPPING_KEY);
+      const parsed = stored ? JSON.parse(stored) as ToneMappingCalibration : null;
+      // Reclassée à la lecture : une mesure ancienne a pu désigner `software`, qui assombrit l'image.
+      if (parsed && Array.isArray(parsed.probes)) toneMappingCache = { ...parsed, probes: rankToneMapping(parsed.probes) };
+    } catch { /* mesure illisible : elle sera refaite au calibrage */ }
+  }
   return toneMappingCache?.probes.find((probe) => probe.selected)?.id ?? null;
+}
+
+/* ------------------------------------------------------------------------ */
+/* La chaîne de conversion de la diffusion                                   */
+/* ------------------------------------------------------------------------ */
+
+const DIFFUSION_KEY = "capacity.diffusionMaterielle";
+let diffusionCache: DiffusionMaterielleCalibration | null = null;
+let diffusionPromise: Promise<DiffusionMaterielleCalibration> | null = null;
+
+/** Une vraie mire HEVC 4K 10 bits HDR10 : c'est le décodage en 4K que la chaîne matérielle soulage. */
+async function creerMireDiffusion(): Promise<{ fichier: string; nettoyer: () => Promise<void> }> {
+  const dossier = await mkdtemp(path.join(os.tmpdir(), "flixtunes-diffusion-"));
+  const fichier = path.join(dossier, "mire-4k-hdr10.mkv");
+  try {
+    await execFileAsync(config.ffmpegPath, ["-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+      "-f", "lavfi", "-i", "testsrc2=size=3840x2160:rate=24:duration=1",
+      "-vf", "format=yuv420p10le,setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc",
+      "-frames:v", "24", "-an", "-c:v", "libx265", "-preset", "ultrafast",
+      "-x265-params", "log-level=error:hdr-opt=1:repeat-headers=1:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1):max-cll=1000,400",
+      fichier], { windowsHide: true, timeout: 180_000, maxBuffer: 1_000_000 });
+    return { fichier, nettoyer: () => rm(dossier, { recursive: true, force: true }) };
+  } catch (erreur) {
+    await rm(dossier, { recursive: true, force: true }).catch(() => undefined);
+    throw erreur;
+  }
+}
+
+/** Les trois chaînes mesurées, vers 1280 × 720 en `h264_vaapi` : ce que vise un récepteur limité. */
+export function commandesDiffusionMaterielle(mire: string, toneMappingLogiciel: string[]): Record<DiffusionMaterielleProbe["id"], string[]> {
+  const sortie = ["-c:v", "h264_vaapi", "-qp", "23", "-f", "null", "-"];
+  const entree = ["-stream_loop", "3", "-i", mire, "-an"];
+  return {
+    "materiel-hdr": [...entreeDecodageMateriel(), ...entree, "-vf", filtresDecodageMateriel(1280, 720, true).join(","), ...sortie],
+    "materiel-sdr": [...entreeDecodageMateriel(), ...entree, "-vf", filtresDecodageMateriel(1280, 720, false).join(","), ...sortie],
+    "logiciel-hdr": ["-vaapi_device", config.hardwareDevice, ...entree, "-vf",
+      ["scale=w=1280:h=720", ...toneMappingLogiciel, "format=nv12", "hwupload"].join(","), ...sortie],
+  };
+}
+
+/** La chaîne matérielle n'est retenue que si elle fonctionne et va plus vite que celle d'avant. */
+export function retenirDiffusion(probes: DiffusionMaterielleProbe[]): DiffusionMaterielleCalibration["retenue"] {
+  const mesure = (id: DiffusionMaterielleProbe["id"]) => probes.find((probe) => probe.id === id);
+  const materiel = mesure("materiel-hdr"), logiciel = mesure("logiciel-hdr");
+  const hdr = Boolean(materiel?.usable && materiel.framesPerSecond
+    && (!logiciel?.usable || !logiciel.framesPerSecond || materiel.framesPerSecond > logiciel.framesPerSecond));
+  return { hdr, sdr: Boolean(mesure("materiel-sdr")?.usable) };
+}
+
+/**
+ * Mesure les chaînes de diffusion une fois par signature, à la suite des autres micro-bancs.
+ *
+ * Le décodage matériel avait été retiré d'un chemin de conversion parce qu'aucun banc ne l'avait
+ * qualifié. Celui-ci le qualifie sur la machine même, avec la mire et les filtres de la conversion
+ * réelle. Une machine dont le pilote refuse le HEVC 10 bits ou le transfert d'images garde le chemin
+ * d'avant, sans rien perdre.
+ */
+export async function calibrerDiffusionMaterielle(support: { version: string | null; encoders: Set<string>; hwaccels: Set<string>; filters: Set<string> }):
+Promise<DiffusionMaterielleCalibration> {
+  const signature = `${calibrationSignature(support.version, [...support.hwaccels], [...support.encoders])}|diffusion-v1`;
+  if (diffusionCache?.signature === signature) return diffusionCache;
+  const stored = getSetting(DIFFUSION_KEY);
+  if (stored) {
+    try {
+      const parsed = JSON.parse(stored) as DiffusionMaterielleCalibration;
+      if (parsed.signature === signature && Array.isArray(parsed.probes)) { diffusionCache = parsed; return parsed; }
+    } catch { /* mesure illisible : elle sera refaite */ }
+  }
+  diffusionPromise ??= aLaSuite(async () => {
+    const labels: Record<DiffusionMaterielleProbe["id"], string> = {
+      "materiel-hdr": "HEVC 4K HDR10 → 720p : décodage et réduction matériels, tonemapx, h264_vaapi",
+      "materiel-sdr": "HEVC 4K → 720p : décodage, réduction et encodage matériels",
+      "logiciel-hdr": "HEVC 4K HDR10 → 720p : décodage et tone mapping logiciels, h264_vaapi",
+    };
+    const ids = Object.keys(labels) as DiffusionMaterielleProbe["id"][];
+    const compile = support.hwaccels.has("vaapi") && support.encoders.has("h264_vaapi") && support.filters.has("scale_vaapi");
+    const probes: DiffusionMaterielleProbe[] = [];
+    if (!compile) {
+      for (const id of ids) probes.push({ id, label: labels[id], usable: false, framesPerSecond: null,
+        error: "VA-API, scale_vaapi ou h264_vaapi absent de la compilation FFmpeg installée." });
+    } else {
+      const logiciel = support.filters.has("tonemapx") ? ["format=yuv420p10le", TONEMAPX_NV12]
+        : toneMappingFilters("zscale", 1000, 100);
+      const mire = await creerMireDiffusion();
+      try {
+        const commandes = commandesDiffusionMaterielle(mire.fichier, logiciel);
+        for (const id of ids) {
+          if (id === "materiel-hdr" && !support.filters.has("tonemapx")) {
+            probes.push({ id, label: labels[id], usable: false, framesPerSecond: null, error: "tonemapx absent de la compilation FFmpeg installée." });
+            continue;
+          }
+          const debut = Date.now();
+          try {
+            await execFileAsync(config.ffmpegPath, ["-nostdin", "-hide_banner", "-loglevel", "error", ...commandes[id]],
+              { windowsHide: true, timeout: 90_000, maxBuffer: 1_000_000 });
+            probes.push({ id, label: labels[id], usable: true, error: null,
+              framesPerSecond: Math.round(96 * 1000 / Math.max(1, Date.now() - debut)) });
+          } catch (erreur) {
+            const brut = erreur instanceof Error ? erreur.message : String(erreur);
+            probes.push({ id, label: labels[id], usable: false, framesPerSecond: null,
+              error: friendlyAcceleratorError(brut), detail: extraitSignifiant(brut) });
+          }
+        }
+      } finally { await mire.nettoyer().catch(() => undefined); }
+    }
+    const calibration: DiffusionMaterielleCalibration = { signature, measuredAt: new Date().toISOString(),
+      probes, retenue: retenirDiffusion(probes) };
+    diffusionCache = calibration;
+    try { setSetting(DIFFUSION_KEY, JSON.stringify(calibration)); } catch { /* mesure non persistée */ }
+    diffusionPromise = null;
+    return calibration;
+  });
+  return diffusionPromise;
+}
+
+/** Ce que la diffusion emploie : relu en base au besoin, rien de matériel tant que rien n'est mesuré. */
+export function diffusionMaterielleRetenue(): DiffusionMaterielleCalibration["retenue"] {
+  if (!diffusionCache && !diffusionPromise) {
+    try {
+      const stored = getSetting(DIFFUSION_KEY);
+      const parsed = stored ? JSON.parse(stored) as DiffusionMaterielleCalibration : null;
+      if (parsed && Array.isArray(parsed.probes)) diffusionCache = { ...parsed, retenue: retenirDiffusion(parsed.probes) };
+    } catch { /* mesure illisible */ }
+  }
+  return diffusionCache?.retenue ?? { hdr: false, sdr: false };
+}
+
+export function diffusionMaterielleMesuree(): DiffusionMaterielleCalibration | null {
+  diffusionMaterielleRetenue();
+  return diffusionCache;
 }
 
 /**
@@ -807,7 +961,10 @@ export function oublierCalibrages(): void {
   calibrationPromise = null;
   toneMappingCache = null;
   toneMappingPromise = null;
+  diffusionCache = null;
+  diffusionPromise = null;
   try { setSetting(CALIBRATION_KEY, ""); } catch { /* rien a oublier */ }
+  try { setSetting(DIFFUSION_KEY, ""); } catch { /* rien a oublier */ }
   try { setSetting(TONE_MAPPING_KEY, ""); } catch { /* rien a oublier */ }
 }
 
@@ -828,6 +985,7 @@ export async function getCapacityReport(
   const filtres = support.filters;
   const toneMapping = () => filtres
     ? calibrateToneMapping({ version: support.version, filters: filtres, hwaccels: support.hwaccels })
+      .then(() => calibrerDiffusionMaterielle({ version: support.version, encoders: support.encoders, hwaccels: support.hwaccels, filters: filtres }))
     : Promise.resolve(undefined);
   if (!ready) {
     void calibrateHardware(support).then(toneMapping).catch(() => undefined);
@@ -858,7 +1016,7 @@ export async function getCapacityReport(
     totalMemoryBytes: os.totalmem(), freeMemoryBytes: os.freemem(),
     loadAverage1: os.platform() === "win32" ? null : Math.round(os.loadavg()[0]! * 100) / 100,
     temperatureCelsius,
-    accelerators: calibration.probes, toneMapping: toneMappingProbes(), selectedEncoder: selected?.encoder ?? null,
+    accelerators: calibration.probes, toneMapping: toneMappingProbes(), diffusion: diffusionMaterielleMesuree(), selectedEncoder: selected?.encoder ?? null,
     budgetUnits, usedUnits, headroomRatio: config.transcodeHeadroom,
     simultaneous,
     // Le plafond appliqué et celui que la mesure recommande, pour que l'écran puisse proposer un

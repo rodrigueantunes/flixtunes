@@ -469,7 +469,7 @@ class FlixTunesApi(
         try {
             connection.requestMethod = method
             connection.connectTimeout = 8_000
-            connection.readTimeout = if (path.startsWith("/diffusion/") && (path.endsWith("/commande") || path == "/diffusion/airplay")) 600_000
+            connection.readTimeout = if (path.startsWith("/diffusion/") && (path.substringBefore("?").endsWith("/commande") || path == "/diffusion/airplay")) 600_000
                 else if (path.startsWith("/diffusion/")) 15_000 else 45_000
             connection.setRequestProperty("Accept", "application/json")
             profileToken?.let { connection.setRequestProperty("X-FlixTunes-Profile-Token", it) }

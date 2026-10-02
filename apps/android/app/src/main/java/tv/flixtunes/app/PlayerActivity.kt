@@ -2,6 +2,9 @@ package tv.flixtunes.app
 import tv.flixtunes.app.playback.TelecommandeAndroid
 import tv.flixtunes.app.playback.etatDiffusionAndroid
 import tv.flixtunes.app.ui.ouvrirDialogueDiffusion
+import tv.flixtunes.app.ui.TelecommandeLecteur
+import tv.flixtunes.app.playback.toucheVolumeDiffusion
+import tv.flixtunes.app.playback.SuiviDiffusion
 
 import android.content.ComponentName
 import android.app.AlertDialog
@@ -255,6 +258,7 @@ class PlayerActivity : ComponentActivity() {
         mediaId = intent.getStringExtra(EXTRA_MEDIA_ID) ?: return finish()
         profileId = intent.getStringExtra(EXTRA_PROFILE_ID) ?: return finish()
         api = FlixTunesApi(server, intent.getStringExtra(EXTRA_PROFILE_TOKEN))
+        if (!estAppareilTv(this)) SuiviDiffusion.attacher(this, api)
         TelecommandeAndroid.attacher(this, api, profileId, ::etatPourDiffusion) { c ->
             val player = controller ?: error("Lecteur en préparation")
             when (c.getString("type")) {
@@ -584,6 +588,12 @@ class PlayerActivity : ComponentActivity() {
                     // quand la garniture s'est retiree — moment ou le geste sert le plus.
                     if (!enImageDansImage) {
                         CommandesLecteur(etatLecteur, actionsLecteur, garnitureVisible = commandesVisibles)
+                        // Le film passe sur un téléviseur : le lecteur devient sa télécommande.
+                        TelecommandeLecteur(mediaId) { position ->
+                            lectureDiffusee = false
+                            naviguerA(position)
+                            controller?.play()
+                        }
                     }
                 }
             }
@@ -818,6 +828,7 @@ class PlayerActivity : ComponentActivity() {
      */
     @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (toucheVolumeDiffusion(event, lifecycleScope)) return true
         if (event.action != KeyEvent.ACTION_DOWN) return super.dispatchKeyEvent(event)
         val panneauOuvert = infoVisible || etatLecteur.pistesOuvertes
         return when (gesteTelecommande(event.keyCode, commandesVisibles, panneauOuvert, parcoursCommandes)) {

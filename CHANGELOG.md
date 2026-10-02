@@ -1,5 +1,68 @@
 # Journal des versions
 
+## 0.6.0.r7 — un cast qui démarre, et vite
+
+<!-- release -->
+### Préparation des vidéos, sur le serveur
+
+- **Les films HDR se convertissent de nouveau au matériel.** Après chaque redémarrage, le NAS
+  choisissait `libplacebo` pour passer le HDR en SDR, alors qu'il avait lui-même mesuré que Vulkan
+  manquait. Chaque conversion HDR échouait à l'ouverture, et le repli passait tout en logiciel :
+  0,33 fois le temps réel sur un film 4K, relevé sur le NAS. La mesure est désormais relue au
+  démarrage, et aucun chemin matériel n'est retenu sans avoir été mesuré.
+- **Un tone mapping correct et rapide.** Le filtre `tonemapx` du FFmpeg embarqué est mesuré comme
+  les autres et préféré quand il l'emporte. Le chemin « logiciel » retenu jusqu'ici assombrissait
+  l'image ; il ne sert plus qu'en dernier recours.
+- **Décodage matériel pour la diffusion.** Le circuit vidéo du NAS décode le HEVC 10 bits et réduit
+  l'image avant le tone mapping ; seule l'image réduite passe par le processeur. La chaîne est
+  qualifiée au démarrage par un banc sur une mire 4K HDR10, et n'est employée que si elle fonctionne
+  et va plus vite.
+- **Un filtre matériel qui échoue ne fait plus perdre l'encodeur matériel.** Le second essai retire
+  seulement le décodage et le tone mapping matériels.
+
+### Diffusion vers les téléviseurs, sur le serveur
+
+- **Le serveur demande au récepteur ce qu'il sait lire.** Au premier cast, trois clips noirs de deux
+  secondes, embarqués dans le paquet, sont présentés au récepteur Google Cast : le verdict tombe en
+  moins d'une seconde, et il est retenu un mois. La Pixel Tablet, par exemple, refuse tout HLS
+  au-delà du 720p : elle reçoit désormais directement une conversion 720p, au lieu d'une suite de
+  conversions qu'elle ne pouvait pas lire.
+- **Plus de passages sautés.** Un récepteur prenait une conversion en cours pour un direct : il
+  démarrait au deuxième segment, puis sautait de dix secondes à chaque mise à jour de la liste. La
+  liste se déclare maintenant comme un événement qui commence au début.
+- **Le direct garde une réserve.** La conversion d'une chaîne repart cinq segments en arrière dans la
+  source et attend trois segments avant de lancer le téléviseur. Sur CNews, la tablette alternait
+  lecture et attente toutes les trois secondes ; elle lit maintenant en continu.
+- **Les déplacements restent sur le récepteur** dans la partie déjà convertie, sans relancer de
+  conversion.
+- **Caster depuis le générique de fin repart du début.** Une conversion lancée au-delà de la
+  dernière image ne produisait rien, et la préparation attendait son délai complet.
+- **La fin d'un film le marque comme vu**, et la conversion est libérée. Une autre application qui
+  prend le téléviseur arrête la diffusion sans la déclarer en erreur.
+- **DLNA** : les formats déclarés par le téléviseur sont lus, et un téléviseur qui ne lit pas le HLS
+  reçoit la conversion en MPEG-TS continu.
+- Les erreurs du récepteur gardent leur code détaillé, la découverte démarre avec le serveur, et les
+  battements des lecteurs ne remplissent plus le journal du NAS.
+
+### Piloter le cast, sur le Web, Windows, Linux, Android téléphone et tablette
+
+- **Chaque étape se voit**, et la préparation s'annule : connexion, vérification des formats,
+  préparation de la vidéo et qualité visée, démarrage. La commande ne bloque plus le client pendant
+  toute la préparation.
+- **Le lecteur devient la télécommande** du téléviseur : lecture, pause, position et volume, avec
+  « Reprendre ici » pour revenir sur l'appareil à la position atteinte. La lecture locale ne se met en
+  pause qu'une fois la lecture confirmée sur le téléviseur.
+- **Le bouton Cast montre qu'une diffusion est en cours**, et une mini-télécommande reste en bas de
+  l'accueil.
+- Sur Android, les touches de volume règlent le téléviseur pendant la diffusion. Android TV reste
+  récepteur.
+<!-- /release -->
+
+Mesuré sur la Pixel Tablet depuis le PC, avec le vrai code du serveur : film 4K HDR lu en 5,8 s,
+MP4 1080p en 2,8 s, chaîne du direct en 6,5 s puis tenue sans interruption ; pause, reprise, volume
+et arrêt confirmés en moins d'une seconde. Le NAS doit passer en r7 ; la chaîne de conversion
+matérielle s'y qualifie d'elle-même au démarrage. [Analyse, mesures et plan de la r7](docs/DIFFUSION_060_R7.md).
+
 ## 0.6.0.r6 — Qualité source et confirmation réelle du Cast
 
 <!-- release -->

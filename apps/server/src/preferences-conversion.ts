@@ -41,7 +41,7 @@ export interface PreferencesConversion {
 const CLE = "conversion.preferences";
 
 const ACCELERATEURS = ["auto", "software", "vaapi", "qsv", "nvenc", "amf", "v4l2m2m"];
-const TONE_MAPPINGS = ["auto", "libplacebo", "vaapi", "opencl", "zscale", "software"];
+const TONE_MAPPINGS = ["auto", "libplacebo", "vaapi", "opencl", "tonemapx", "zscale", "software"];
 const CODECS = ["auto", "h264", "hevc"];
 const RESOLUTIONS = ["auto", "2160", "1440", "1080", "720"];
 

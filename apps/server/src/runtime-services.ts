@@ -6,7 +6,7 @@ import { config } from "./config.js";
 import { getSetting, listLibraries, repairTranscodedProgress, setSetting } from "./database.js";
 import { scanCoordinator } from "./scan-coordinator.js";
 import { cleanupIdleSessions, cleanupPlaybackSessions, detectFfmpegSupport } from "./playback.js";
-import { calibrateHardware, refreshTemperature } from "./capacity.js";
+import { calibrateHardware, calibrateToneMapping, calibrerDiffusionMaterielle, refreshTemperature } from "./capacity.js";
 import { createBackup, listBackups } from "./maintenance.js";
 import { regrouperSiNecessaire, renumeroterSiNecessaire } from "./television-direct.js";
 import { reparerAvatarsWeb } from "./web-analyse.js";
@@ -131,11 +131,19 @@ export function startRuntimeServices(log: FastifyBaseLogger): RuntimeServices {
   // Le micro-banc matériel est différé : il ne doit ni retarder le démarrage ni concurrencer le scan initial.
   const calibrationTimer = setTimeout(() => {
     void (async () => {
-      const calibration = await calibrateHardware(await detectFfmpegSupport());
+      const support = await detectFfmpegSupport();
+      const calibration = await calibrateHardware(support);
       const selected = calibration.probes.find((probe) => probe.selected);
       log.info({ encoder: selected?.encoder ?? "aucun", framesPerSecond: selected?.framesPerSecond ?? null,
         rejected: calibration.probes.filter((probe) => probe.compiled && !probe.usable).map((probe) => probe.encoder) },
       "Calibrage matériel terminé");
+      // Le tone mapping et la chaîne de diffusion se mesurent à la suite, au démarrage : attendre
+      // l'ouverture du rapport de capacité laissait les conversions choisir sans mesure.
+      const toneMapping = await calibrateToneMapping(support);
+      log.info({ toneMapping: toneMapping.probes.find((probe) => probe.selected)?.id ?? "aucun" }, "Calibrage du tone mapping terminé");
+      const diffusion = await calibrerDiffusionMaterielle(support);
+      log.info({ retenue: diffusion.retenue, mesures: diffusion.probes.map((probe) => ({ id: probe.id, imagesParSeconde: probe.framesPerSecond, erreur: probe.error })) },
+        "Calibrage de la chaîne de diffusion terminé");
     })().catch((error) => log.warn({ err: error }, "Calibrage matériel impossible"));
   }, 5_000);
   calibrationTimer.unref?.();

@@ -14,11 +14,12 @@ export class TransportDlna {
   private timer?: NodeJS.Timeout; private occupe = false; private ferme = false;
   private enLecture = false;
   constructor(private cible: Recepteur, private etat: (e: Partial<EtatDiffusion>) => void) {}
-  private async soap(action: string, args: Record<string, string | number> = {}, rendu = false) {
-    const service = rendu ? this.cible.rendu : this.cible.transport;
+  private async soap(action: string, args: Record<string, string | number> = {}, rendu: boolean | "connexion" = false) {
+    const service = rendu === "connexion" ? this.cible.connexion : rendu ? this.cible.rendu : this.cible.transport;
     if (!service) throw new Error(rendu ? "Le téléviseur ne propose pas le réglage du volume" : "Récepteur DLNA indisponible");
     const url = urlRecepteur(service.url, this.cible.adresse);
-    const contenu = Object.entries({ InstanceID: 0, ...args }).map(([k, v]) => `<${k}>${echapperXml(String(v))}</${k}>`).join("");
+    // GetProtocolInfo ne prend aucun argument : certains téléviseurs refusent une instance en trop.
+    const contenu = Object.entries(rendu === "connexion" ? args : { InstanceID: 0, ...args }).map(([k, v]) => `<${k}>${echapperXml(String(v))}</${k}>`).join("");
     const xml = `<?xml version="1.0" encoding="utf-8"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:${action} xmlns:u="${service.type}">${contenu}</u:${action}></s:Body></s:Envelope>`;
     const r = await fetch(url, { method: "POST", redirect: "error", signal: AbortSignal.timeout(5000),
       headers: { "Content-Type": 'text/xml; charset="utf-8"', SOAPAction: `"${service.type}#${action}"` }, body: xml });
@@ -28,6 +29,14 @@ export class TransportDlna {
       throw new Error(`Commande ${action} refusée par le téléviseur [DLNA_${code}]`);
     }
     return corps?.[`${action}Response`] ?? {};
+  }
+  /** Les formats que le téléviseur déclare savoir lire, ou `null` s'il ne le dit pas. */
+  async protocolesAcceptes(): Promise<string[] | null> {
+    if (!this.cible.connexion) return null;
+    try {
+      const r = await this.soap("GetProtocolInfo", {}, "connexion");
+      return String(r.Sink ?? "").split(",").map((entree) => entree.trim()).filter(Boolean).slice(0, 512);
+    } catch { return null; }
   }
   async charger(url: string, mime: string, titre: string, direct: boolean, position: number) {
     const metadata = `<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/"><item id="0" parentID="-1" restricted="1"><dc:title>${echapperXml(titre)}</dc:title><upnp:class>object.item.videoItem</upnp:class><res protocolInfo="http-get:*:${mime}:*">${echapperXml(url)}</res></item></DIDL-Lite>`;
@@ -68,4 +77,10 @@ export class TransportDlna {
     await this.actualiser();
   }
   fermer() { this.ferme = true; clearInterval(this.timer); }
+}
+
+/** Le téléviseur lit-il le HLS ? `null` quand il ne déclare rien : on essaie alors comme avant. */
+export function dlnaLitLeHls(protocoles: string[] | null): boolean | null {
+  if (!protocoles?.length) return null;
+  return protocoles.some((entree) => /mpegurl/i.test(entree.split(":")[2] ?? ""));
 }

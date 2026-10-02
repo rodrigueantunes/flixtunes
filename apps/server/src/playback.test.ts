@@ -450,7 +450,7 @@ describe("chaîne colorimétrique HDR", () => {
     const clientHdr10 = { ...capabilities, videoCodecs: ["hevc"], hdrFormats: ["hdr10" as const] };
     expect(hdrDeliveryFormat(video, clientHdr10).compatible).toBe(false);
     const plan = planColorPipeline(video, clientHdr10, fullEngine, "transcode");
-    expect(plan).toMatchObject({ action: "hdr-to-sdr", outputFormat: "sdr", toneMapping: "libplacebo", toneMappingHardware: true });
+    expect(plan).toMatchObject({ action: "hdr-to-sdr", outputFormat: "sdr", toneMapping: "zscale", toneMappingHardware: false });
     expect(plan.lossNotice).toContain("SDR");
     expect(plan.steps.some((step) => step.includes("Sous-titres"))).toBe(true);
   });
@@ -477,8 +477,12 @@ describe("chaîne colorimétrique HDR", () => {
     });
   });
 
-  it("préfère libplacebo puis retombe sur zscale sans Vulkan", () => {
-    expect(selectToneMappingBackend(fullEngine, "auto")).toMatchObject({ backend: "libplacebo", hardware: true });
+  it("n'admet aucun chemin matériel sans mesure, et préfère tonemapx au logiciel classique", () => {
+    // La compilation ne dit pas si Vulkan est installé : sur le NAS, libplacebo figurait dans FFmpeg
+    // et chaque conversion HDR échouait à l'ouverture du périphérique.
+    expect(selectToneMappingBackend(fullEngine, "auto", false, null)).toMatchObject({ backend: "zscale", hardware: false });
+    expect(selectToneMappingBackend({ ...fullEngine, filters: new Set([...fullEngine.filters, "tonemapx"]) }, "auto", false, null))
+      .toMatchObject({ backend: "tonemapx", hardware: false });
     expect(selectToneMappingBackend(softwareEngine, "auto")).toMatchObject({ backend: "zscale", hardware: false });
     expect(selectToneMappingBackend(fullEngine, "auto", true)).toMatchObject({ backend: "zscale", hardware: false });
     // VA-API et OpenCL ne sont jamais choisis automatiquement : ils exigent une décision explicite.

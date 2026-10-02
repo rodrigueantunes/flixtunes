@@ -28,3 +28,8 @@
 *.jar binary
 *.keystore binary
 *.pyc binary
+
+# Clips de sonde des récepteurs Cast : des segments MPEG-TS et MP4, jamais du texte ni du TypeScript.
+apps/server/assets/sonde-cast/**/*.ts binary
+apps/server/assets/sonde-cast/**/*.m4s binary
+apps/server/assets/sonde-cast/**/*.mp4 binary

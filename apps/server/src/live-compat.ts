@@ -16,10 +16,21 @@ interface Conversion {
 }
 const sessions = new Map<string, Conversion>();
 
-export function argumentsConversionLive(entree: string, dossier: string, format: FormatLive, copieVideo = false): string[] {
+/**
+ * Les segments de la source repris en arrière pour un téléviseur.
+ *
+ * Partie du dernier segment, la conversion produit exactement au temps réel : le récepteur Cast n'a
+ * jamais d'avance, attend chaque segment et saute ceux qu'il croit perdus. Banc du 2 octobre 2026 sur
+ * la Pixel Tablet, CNews : lecture et attente en alternance toutes les trois secondes. Repartir cinq
+ * segments en arrière laisse la conversion rattraper ce retard à pleine vitesse et se constituer une
+ * réserve, au prix d'un léger différé, sans effet sur un téléviseur.
+ */
+export const RETARD_SOURCE_DIFFUSION = 5;
+
+export function argumentsConversionLive(entree: string, dossier: string, format: FormatLive, copieVideo = false, diffusion = false): string[] {
   return ["-hide_banner", "-loglevel", "error", "-nostdin", "-threads", "2", "-filter_threads", "1",
     "-protocol_whitelist", "http,tcp,crypto", "-format_whitelist", "hls,dash,mpegts,mov,aac", "-rw_timeout", "20000000",
-    ...(format === "hls" ? ["-live_start_index", "-1"] : []),
+    ...(format === "hls" ? ["-live_start_index", diffusion ? String(-RETARD_SOURCE_DIFFUSION) : "-1"] : []),
     ...(format === "ts" || format === "mp4" ? ["-re"] : []),
     "-i", entree, "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn",
     ...(copieVideo ? ["-c:v", "copy"] : ["-vf", "scale=w='min(1280,iw)':h='min(720,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2", "-r", "30", "-c:v", "libx264", "-threads", "2",
@@ -55,7 +66,7 @@ async function arreter(session: Conversion): Promise<void> {
   return session.nettoyage;
 }
 
-export async function commencerConversionLive(profil: string, chaine: string, source: string, lecture: string, signal?: AbortSignal, options: { copieVideo?: boolean } = {}) {
+export async function commencerConversionLive(profil: string, chaine: string, source: string, lecture: string, signal?: AbortSignal, options: { copieVideo?: boolean; diffusion?: boolean } = {}) {
   signal?.throwIfAborted();
   for (const s of sessions.values()) if (Date.now() - s.acces > 60_000) await arreter(s);
   for (const s of sessions.values()) if (s.profil === profil && s.lecture === lecture) await arreter(s);
@@ -76,7 +87,7 @@ export async function commencerConversionLive(profil: string, chaine: string, so
     session.entree = await ouvrirEntreeLive(source);
     signal?.throwIfAborted();
     if (session.arretee) { await session.entree.fermer(); throw new Error("Conversion annulée"); }
-    const processus = spawn(config.ffmpegPath, argumentsConversionLive(session.entree.url, session.dossier, format, options.copieVideo), {
+    const processus = spawn(config.ffmpegPath, argumentsConversionLive(session.entree.url, session.dossier, format, options.copieVideo, options.diffusion), {
       cwd: session.dossier, windowsHide: true, stdio: ["ignore", "ignore", "pipe"],
     });
     session.processus = processus;
@@ -97,7 +108,8 @@ export async function commencerConversionLive(profil: string, chaine: string, so
     while (!session.arretee && !erreur && Date.now() < limite) {
       signal?.throwIfAborted();
       const manifeste = await readFile(path.join(session.dossier, "live.m3u8"), "utf8").catch(() => "");
-      if ((manifeste.match(/#EXTINF/g) ?? []).length >= 2) return { id, url: `/api/live/compat/${id}/live.m3u8`, mode: "compatibilite" as const };
+      // Un téléviseur démarre avec trois segments d'avance, le lecteur local avec deux comme avant.
+      if ((manifeste.match(/#EXTINF/g) ?? []).length >= (options.diffusion ? 3 : 2)) return { id, url: `/api/live/compat/${id}/live.m3u8`, mode: "compatibilite" as const };
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
     throw new Error("Ce flux ne peut pas être converti");

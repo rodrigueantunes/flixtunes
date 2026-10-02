@@ -4,6 +4,9 @@ import tv.flixtunes.app.ui.BoutonCast
 import tv.flixtunes.app.playback.TelecommandeAndroid
 import tv.flixtunes.app.playback.etatDiffusionAndroid
 import tv.flixtunes.app.ui.ouvrirDialogueDiffusion
+import tv.flixtunes.app.ui.TelecommandeLecteur
+import tv.flixtunes.app.playback.toucheVolumeDiffusion
+import tv.flixtunes.app.playback.SuiviDiffusion
 
 import android.annotation.SuppressLint
 import android.app.ActivityManager
@@ -366,6 +369,7 @@ class LecteurDirectActivity : ComponentActivity() {
         profileId = intent.getStringExtra(EXTRA_PROFILE_ID) ?: return finish()
         val chaineId = intent.getStringExtra(EXTRA_CHANNEL_ID) ?: return finish()
         api = FlixTunesApi(serveur, intent.getStringExtra(EXTRA_PROFILE_TOKEN))
+        if (!estAppareilTv(this)) SuiviDiffusion.attacher(this, api)
         TelecommandeAndroid.attacher(this, api, profileId, ::etatPourDiffusion) { c ->
             val player = lecteur ?: error("Lecteur en préparation")
             when (c.getString("type")) {
@@ -876,6 +880,7 @@ class LecteurDirectActivity : ComponentActivity() {
      */
     @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(evenement: KeyEvent): Boolean {
+        if (toucheVolumeDiffusion(evenement, lifecycleScope)) return true
         if (evenement.action != KeyEvent.ACTION_DOWN) return super.dispatchKeyEvent(evenement)
         val code = evenement.keyCode
         if (code == KeyEvent.KEYCODE_INFO || code == KeyEvent.KEYCODE_MENU) {
@@ -1812,6 +1817,8 @@ class LecteurDirectActivity : ComponentActivity() {
                     .clip(RoundedCornerShape(12.dp)).background(Encre.copy(alpha = .9f)).padding(24.dp, 12.dp),
                     color = Color.White, fontSize = 44.sp, fontWeight = FontWeight.ExtraBold)
             }
+            // La chaîne passe sur un téléviseur : le lecteur devient sa télécommande.
+            chaine?.let { courante -> TelecommandeLecteur(courante.id) { lecteur?.play() } }
         }
     }
 

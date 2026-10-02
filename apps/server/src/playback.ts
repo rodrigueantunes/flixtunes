@@ -22,7 +22,7 @@ import type {
 import { pistesApresLesDonneesDuFichier } from "./matroska-entetes.js";
 import { marqueursGenerique } from "./generique.js";
 import { marqueursDeduits } from "./marqueurs-saison.js";
-import { calibratedAccelerator, calibratedToneMapping, currentAdmissionState, decideAdmission, plafondConversions, registerSessionCost, releaseSessionCost } from "./capacity.js";
+import { calibratedAccelerator, calibratedToneMapping, currentAdmissionState, diffusionMaterielleRetenue, decideAdmission, plafondConversions, registerSessionCost, releaseSessionCost } from "./capacity.js";
 import { config } from "./config.js";
 import { preferencesConversion } from "./preferences-conversion.js";
 import { toneMappingFilters, toneMappingInputArgs } from "./tone-mapping-filters.js";
@@ -31,6 +31,7 @@ export { toneMappingFilters, toneMappingInputArgs };
 import { db } from "./database.js";
 import { quarantinedCodecs, withoutQuarantined } from "./codec-quarantine.js";
 import { AvancementPreparation, filtresPreparationDiffusion } from "./diffusion-preparation.js";
+import { dimensionsCible, entreeDecodageMateriel, filtresDecodageMateriel, sourceDecodableMateriellement } from "./diffusion-chaine.js";
 import { essaiDirectPertinent } from "./essai-direct.js";
 import { enrichHdrFrameMetadata, parseProbeOutput, probeMedia } from "./ffprobe.js";
 import { displayResolution } from "./video-resolution.js";
@@ -101,6 +102,8 @@ interface InternalSession extends PlaybackSession {
    */
   blocageSignale: boolean;
   diffusion?: boolean;
+  /** La conversion décode et réduit sur le circuit vidéo : voir `diffusion-chaine.ts`. */
+  decodageMateriel?: boolean;
   avancementPreparation?: AvancementPreparation;
 }
 
@@ -392,15 +395,19 @@ export function selectToneMappingBackend(support: ColorEngineSupport, preference
   if (auto && mesure) {
     if (mesure === "libplacebo" || mesure === "vaapi" || mesure === "opencl") {
       if (disponible(mesure)) return { backend: mesure, hardware: true };
+    } else if (mesure === "tonemapx" && support.filters.has("tonemapx")) {
+      return { backend: "tonemapx", hardware: false };
     } else if (mesure === "zscale" && support.filters.has("zscale") && support.filters.has("tonemap")) {
       return { backend: "zscale", hardware: false };
     } else if (mesure === "software" && support.filters.has("tonemap")) {
       return { backend: "software", hardware: false };
     }
   }
-  // Sans mesure, le comportement d'avant : seul libplacebo est admis sans avoir été éprouvé ici,
-  // parce que c'est le seul chemin déjà qualifié par le projet.
-  if (auto && disponible("libplacebo")) return { backend: "libplacebo", hardware: true };
+  if (explicit("tonemapx") && support.filters.has("tonemapx")) return { backend: "tonemapx", hardware: false };
+  // Sans mesure, aucun chemin matériel. `libplacebo` était admis d'office parce qu'il figurait dans
+  // la compilation, mais la compilation ne dit pas si Vulkan est installé : sur le NAS il ne l'est
+  // pas, et chaque conversion HDR échouait dès l'ouverture du périphérique.
+  if (support.filters.has("tonemapx")) return { backend: "tonemapx", hardware: false };
   if (support.filters.has("zscale") && support.filters.has("tonemap")) return { backend: "zscale", hardware: false };
   if (support.filters.has("tonemap")) return { backend: "software", hardware: false };
   return { backend: "none", hardware: false };
@@ -1659,7 +1666,7 @@ function journaliserDecision(session: InternalSession, decision: ReturnType<type
   const audio = decision.audio;
   console.info(`[FlixTunes] Décision de lecture — session ${session.id}, média ${session.mediaId}, `
     + `mode=${decision.mode}, motif=${decision.reason}, `
-    + `video=${decision.video?.codec ?? "aucune"}→${session.videoEncoder ?? "aucun"}, `
+    + `video=${decision.video?.codec ?? "aucune"}→${session.videoEncoder ?? "aucun"}${session.decodageMateriel ? " (décodage matériel)" : ""}, `
     + `audio=${audio?.codec ?? "aucune"}/${audio?.channels ?? 0}ch→${session.audioEncoder ?? "aucun"}, `
     + `depart=${(capabilities.startSeconds ?? 0).toFixed(1)}s, conteneur=${capabilities.hlsSegmentContainer ?? "fmp4"}, `
     + `appareil=${capabilities.deviceClass ?? "inconnu"}`);
@@ -1671,12 +1678,16 @@ async function startFfmpegSession(
   info: PlaybackInfo,
   capabilities: PlaybackCapabilities,
   forceSoftware = false,
+  // Second essai d'une conversion dont un filtre matériel a échoué : le décodage et le tone mapping
+  // matériels sont retirés, mais l'encodeur matériel reste. Le repli d'avant abandonnait tout, et un
+  // tone mapping impossible faisait encoder un film 4K par le processeur.
+  sansMateriel = false,
 ): Promise<void> {
   const decision = decidePlayback(info, capabilities);
   const source = orientedDimensions(decision.video);
   const adaptive = selectAdaptiveProfile(capabilities, source.width, source.height);
   const support = await detectFfmpegSupport();
-  const colorPipeline = planColorPipeline(decision.video, capabilities, support, decision.mode, preferencesConversion().toneMapping, forceSoftware);
+  const colorPipeline = planColorPipeline(decision.video, capabilities, support, decision.mode, preferencesConversion().toneMapping, forceSoftware || sansMateriel);
   session.colorPipeline = colorPipeline;
   const externalSubtitles = capabilities.externalSubtitleId != null ? await findExternalSubtitles(filePath) : [];
   const externalSubtitle = externalSubtitles.find((subtitle) => subtitle.id === capabilities.externalSubtitleId) ?? null;
@@ -1707,6 +1718,15 @@ async function startFfmpegSession(
     : hdrEncoder ?? await chooseVideoEncoder(forceSoftware || imageSubtitleBurn,
       codecDeSortie(capabilities.videoCodecs, decision.video?.codec, capabilities.hlsSegmentContainer, preferencesConversion().codecSortie));
   session.videoEncoder = decision.mode === "remux" ? "copy" : encoder?.encoder ?? null;
+  // La diffusion vers un téléviseur décode et réduit sur le circuit vidéo quand le micro-banc de cette
+  // machine l'a qualifié. Les lectures locales gardent leur chemin, éprouvé : voir `diffusion-chaine.ts`.
+  const retenue = session.diffusion && !forceSoftware && !sansMateriel ? diffusionMaterielleRetenue() : { hdr: false, sdr: false };
+  const hdrVersSdr = colorPipeline.action === "hdr-to-sdr";
+  const decodageMateriel = decision.mode === "transcode" && encoder?.encoder === "h264_vaapi" && !hdrEncoder
+    && !capabilities.burnSubtitles && colorPipeline.deinterlace === "none" && !colorPipeline.rotationDegrees
+    && sourceDecodableMateriellement(decision.video?.codec, decision.video?.color?.bitDepth)
+    && (hdrVersSdr ? retenue.hdr && support.filters.has("tonemapx") : colorPipeline.action === "sdr-passthrough" && retenue.sdr);
+  session.decodageMateriel = decodageMateriel;
   /**
    * L'E-AC-3 recopié dans un fMP4 se restitue avec du retard dès qu'on se déplace.
    *
@@ -1761,7 +1781,8 @@ async function startFfmpegSession(
   const manifestPath = path.join(session.directory, "manifest.m3u8");
   const segmentPattern = path.join(session.directory, "segment_%05d.m4s");
   const args = ["-nostdin", "-hide_banner", "-loglevel", "warning", "-y",
-    ...(toneMapping ? toneMappingInputArgs(colorPipeline.toneMapping) : []), ...(encoder?.inputArgs ?? []),
+    ...(decodageMateriel ? entreeDecodageMateriel()
+      : [...(toneMapping ? toneMappingInputArgs(colorPipeline.toneMapping) : []), ...(encoder?.inputArgs ?? [])]),
     ...regulationDebitArgs(support.version), ...startArgs(session.startOffsetSeconds ?? 0), "-i", filePath];
   const subtitleOffset = normalizedSubtitleOffset(capabilities.subtitleOffsetSeconds);
   if (externalSubtitle?.kind === "image" && externalSubtitlePath && capabilities.burnSubtitles) {
@@ -1770,7 +1791,10 @@ async function startFfmpegSession(
 
   // Désentrelacement puis tone mapping d'abord : les sous-titres sont composés ensuite, sur une image déjà convertie.
   let videoFilters: string[] = [...colorPipeline.filters];
-  if (decision.mode === "transcode" && decision.video) {
+  if (decodageMateriel) {
+    const cible = dimensionsCible(source.width, source.height, adaptive.width, adaptive.height);
+    videoFilters = filtresDecodageMateriel(cible.largeur, cible.hauteur, hdrVersSdr);
+  } else if (decision.mode === "transcode" && decision.video) {
     const downscale = adaptive.width < source.width || adaptive.height < source.height;
     videoFilters = filtresPreparationDiffusion(videoFilters, transcodeScaleFilter(adaptive.width, adaptive.height, downscale),
       Boolean(session.diffusion && toneMapping && !colorPipeline.toneMappingHardware && downscale));
@@ -1812,7 +1836,7 @@ async function startFfmpegSession(
   } else {
     args.push("-map", decision.video ? `0:${decision.video.index}` : "0:v:0");
   }
-  if (!complexVideoFilter) videoFilters.push(...(encoder?.filterSuffix ?? []));
+  if (!complexVideoFilter && !decodageMateriel) videoFilters.push(...(encoder?.filterSuffix ?? []));
   if (videoFilters.length) args.push("-vf", videoFilters.join(","));
   if (decision.audio) args.push("-map", `0:${decision.audio.index}`);
   else args.push("-an");
@@ -1887,12 +1911,14 @@ async function startFfmpegSession(
       if (session.id) releaseSessionCost(session.id);
       if (session.status !== "failed") session.status = "completed";
     } else if (!forceSoftware && session.status === "starting"
-      && ((encoder && encoder.encoder !== "libx264") || colorPipeline.toneMappingHardware)) {
+      && ((encoder && encoder.encoder !== "libx264") || colorPipeline.toneMappingHardware || decodageMateriel)) {
       rememberTranscodeFailure(session);
       session.stderr = "";
+      // D'abord sans les filtres matériels, en gardant l'encodeur ; tout en logiciel ensuite seulement.
+      const filtresMateriels = !sansMateriel && (decodageMateriel || colorPipeline.toneMappingHardware);
       void (async () => {
         await rm(session.directory, { recursive: true, force: true });
-        await startFfmpegSession(session, filePath, info, capabilities, true);
+        await startFfmpegSession(session, filePath, info, capabilities, !filtresMateriels, filtresMateriels);
       })().catch((error) => { session.status = "failed"; session.error = error instanceof Error ? error.message : String(error); });
     } else {
       if (session.id) releaseSessionCost(session.id);
@@ -2033,7 +2059,7 @@ export async function createPlaybackSession(mediaId: string, capabilities: Playb
 
 function publicSession(session: InternalSession): PlaybackSession {
   const { directory: _directory, process: _process, createdAt: _createdAt, stderr: _stderr,
-    cacheKey: _cacheKey, refCount: _refCount, lastAccess: _lastAccess, diffusion: _diffusion, avancementPreparation: _avancement, ...result } = session;
+    cacheKey: _cacheKey, refCount: _refCount, lastAccess: _lastAccess, diffusion: _diffusion, decodageMateriel: _decodageMateriel, avancementPreparation: _avancement, ...result } = session;
   return result;
 }
 

@@ -384,7 +384,7 @@ export interface VideoColorMetadata {
 
 /** `hdr-base-layer` : le flux d'origine est lu via sa couche rétrocompatible (Dolby Vision 8.1, HDR10+ sur HDR10). */
 export type ColorPipelineAction = "sdr-passthrough" | "preserve" | "hdr-base-layer" | "hdr-to-sdr";
-export type ToneMappingBackend = "none" | "libplacebo" | "vaapi" | "opencl" | "cuda" | "zscale" | "software";
+export type ToneMappingBackend = "none" | "libplacebo" | "vaapi" | "opencl" | "cuda" | "tonemapx" | "zscale" | "software";
 
 /** Décision colorimétrique explicite prise avant la lecture, affichable dans le diagnostic. */
 export interface ColorPipelinePlan {
@@ -680,7 +680,7 @@ export type CommandeAppareil =
   | { type: "arreter" };
 
 /** Chemin de tone mapping HDR vers SDR soumis au micro-banc. */
-export type ToneMappingBackendId = "libplacebo" | "vaapi" | "opencl" | "zscale" | "software";
+export type ToneMappingBackendId = "libplacebo" | "vaapi" | "opencl" | "tonemapx" | "zscale" | "software";
 
 /**
  * Resultat mesure d'un chemin de tone mapping sur cette machine.
@@ -724,6 +724,27 @@ export interface ActiveSessionCost {
 }
 
 /** Tableau « capacité de mon serveur ». Une unité vaut un transcodage 1080p à 25 images/s. */
+/**
+ * Une chaîne complète de diffusion : décodage, réduction, tone mapping et encodage, vers 720p.
+ * `materiel-*` décode et réduit sur le circuit vidéo ; `logiciel-hdr` est le chemin d'avant.
+ */
+export interface DiffusionMaterielleProbe {
+  id: "materiel-hdr" | "materiel-sdr" | "logiciel-hdr";
+  label: string;
+  usable: boolean;
+  framesPerSecond: number | null;
+  error: string | null;
+  detail?: string | null;
+}
+
+export interface DiffusionMaterielleCalibration {
+  signature: string;
+  measuredAt: string;
+  probes: DiffusionMaterielleProbe[];
+  /** Ce que la diffusion emploie : la chaîne matérielle n'est retenue que mesurée plus rapide. */
+  retenue: { hdr: boolean; sdr: boolean };
+}
+
 export interface ServerCapacityReport {
   generatedAt: string;
   calibration: { signature: string; measuredAt: string | null; source: "mesure" | "estimation" };
@@ -737,6 +758,8 @@ export interface ServerCapacityReport {
   accelerators: AcceleratorProbe[];
   /** Chemins de tone mapping mesures sur cette machine, du plus rapide au plus lent. */
   toneMapping: ToneMappingProbe[];
+  /** Chaînes de conversion de la diffusion vers un téléviseur, mesurées sur une mire HEVC 4K HDR10. */
+  diffusion?: DiffusionMaterielleCalibration | null;
   selectedEncoder: string | null;
   budgetUnits: number;
   usedUnits: number;

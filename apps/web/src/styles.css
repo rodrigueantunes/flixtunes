@@ -1501,6 +1501,36 @@ html.bureau-video, body.bureau-video { background: transparent; }
 .cast-remote input:focus-visible,.cast-panel:focus-visible { outline:2px solid #83b1ff; outline-offset:3px; }
 .cast-panel .cast-error { background:#60283b; color:#ffe2e8; border-radius:10px; padding:12px; }
 .cast-airplay-video { position:fixed; width:1px; height:1px; opacity:.01; pointer-events:none; }
+/* Diffusion en cours : le bouton le dit, la mini-télécommande et le lecteur la pilotent. */
+.cast-button.actif { background:#2b62c4; border-color:#9cc0ff; color:#fff; box-shadow:0 0 0 3px #2b62c455; }
+.cast-panel .cast-etape, .cast-relais h2 { color:#dbe8ff; }
+.cast-mini { position:fixed; z-index:9000; left:50%; bottom:max(16px, env(safe-area-inset-bottom)); transform:translateX(-50%); width:min(720px, calc(100% - 32px)); display:flex; align-items:center; gap:12px; padding:10px 12px 10px 16px; border:1px solid #3e5273; border-radius:18px; background:#0e182aee; color:#eef4ff; box-shadow:0 14px 50px #0009; backdrop-filter:blur(10px); }
+.cast-mini-ouvrir { flex:1; min-width:0; display:grid; gap:2px; text-align:left; border:0; background:none; color:inherit; padding:4px; cursor:pointer; }
+.cast-mini-ouvrir strong, .cast-mini-ouvrir small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cast-mini-ouvrir small { color:#adbbd1; }
+.cast-mini .cast-relais-actions button, .cast-relais button { border:1px solid #395078; border-radius:12px; padding:10px 14px; color:#eef4ff; background:#1a2b48; cursor:pointer; }
+.cast-mini button:focus-visible, .cast-relais button:focus-visible, .cast-relais input:focus-visible { outline:3px solid #83b1ff; outline-offset:2px; }
+.cast-mini button:disabled, .cast-relais button:disabled { opacity:.5; cursor:wait; }
+.cast-relais-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.cast-relais { position:absolute; inset:0; z-index:2; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:24px; text-align:center; color:#eef4ff; background:radial-gradient(circle at 50% 40%, #16284acc, #050a14f2 70%); }
+.cast-relais h2 { margin:0; font-size:clamp(1.2rem, 3vw, 1.8rem); }
+.cast-relais-titre { margin:0; color:#adbbd1; font-weight:600; letter-spacing:.02em; }
+.cast-relais-qualite { margin:0; color:#8ea3c4; font-size:.9rem; }
+.cast-relais .cast-relais-lecture { min-width:64px; font-size:1.1rem; }
+.cast-relais-barre { display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:12px; width:min(640px, 100%); color:#adbbd1; font-variant-numeric:tabular-nums; }
+.cast-relais-volume { display:grid; grid-template-columns:auto 1fr; align-items:center; gap:12px; width:min(320px, 100%); color:#adbbd1; }
+.cast-relais input[type=range] { width:100%; accent-color:#508aff; }
+.cast-relais .cast-relais-ici { background:#2b62c4; border-color:#9cc0ff; }
+.cast-relais-erreur { margin:0; background:#60283b; color:#ffe2e8; border-radius:10px; padding:10px 12px; }
+.cast-attente { width:18px; height:18px; border-radius:50%; border:2px solid #83b1ff55; border-top-color:#83b1ff; animation:cast-tourne 1s linear infinite; }
+@keyframes cast-tourne { to { transform:rotate(360deg); } }
+/* Pendant la diffusion, les commandes locales s'effacent : seule la barre du haut reste, pour fermer ou ouvrir le panneau. */
+.player-page:has(.cast-relais) :is(.player-controls, .player-skip, .player-spinner, .player-message, .player-next, .player-clock) { display:none; }
+.player-page:has(.cast-relais) .player-top { opacity:1; z-index:5; pointer-events:auto; }
+.lecteur-direct:has(.cast-relais) :is(.lecteur-direct-progression, .lecteur-direct-retard, .lecteur-direct-message, .lecteur-direct-volume) { display:none; }
+.lecteur-direct:has(.cast-relais) .lecteur-direct-barre { z-index:5; }
+@media(prefers-reduced-motion:reduce) { .cast-attente { animation:none; } }
+@media(max-width:560px) { .cast-mini { flex-wrap:wrap; } .cast-mini-ouvrir { flex-basis:100%; } .cast-relais { padding:16px; } }
 @media(max-width:560px) { .cast-backdrop{padding:10px}.cast-panel{padding:18px}.cast-button span{display:none} }
 
 @media(max-width:360px) { .topbar{gap:8px}.top-brand .brand img{display:none} }

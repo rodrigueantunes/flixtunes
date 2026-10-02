@@ -1,6 +1,7 @@
 package tv.flixtunes.app.ui.ecrans
 
 import tv.flixtunes.app.ui.BoutonCast
+import tv.flixtunes.app.ui.MiniTelecommande
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -349,6 +350,9 @@ import tv.flixtunes.app.ui.tv.NavigationTelevision
                 model.search("")
             }
         }
+        // Tant qu'une diffusion est en cours, sa télécommande reste à portée de pouce.
+        if (!gabarit.televiseur) MiniTelecommande(ouvrir = ouvrirCast,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 16.dp, vertical = bottomInset + 12.dp).widthIn(max = 720.dp))
     }
 }
 

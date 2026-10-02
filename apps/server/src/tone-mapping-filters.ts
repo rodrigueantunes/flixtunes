@@ -34,6 +34,11 @@ export function toneMappingFilters(backend: ToneMappingBackend, sourcePeakNits: 
       return ["format=p010", "hwupload",
         `tonemap_opencl=tonemap=bt2390:transfer=bt709:matrix=bt709:primaries=bt709:range=tv:format=nv12:peak=${relativePeak}`,
         "hwdownload", "format=nv12"];
+    case "tonemapx":
+      // Le filtre SIMD du FFmpeg de Jellyfin : il lit lui-même la courbe PQ ou HLG et les métadonnées
+      // de mastering, et applique le RPU Dolby Vision quand il est présent. Sans `peak`, le pic vient
+      // du flux, comme pour les autres chemins qui savent le lire.
+      return ["tonemapx=tonemap=bt2390:desat=0:t=bt709:m=bt709:p=bt709:r=tv:format=yuv420p"];
     case "zscale":
       // npl=100 ramène le blanc de référence à 1,0. Toute autre valeur assombrit l'image d'un facteur npl/100.
       return ["zscale=transfer=linear:npl=100", "format=gbrpf32le", "zscale=primaries=bt709",

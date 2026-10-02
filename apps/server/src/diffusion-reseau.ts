@@ -8,6 +8,9 @@ export interface Recepteur {
   id: string; nom: string; protocole: "googlecast" | "dlna"; adresse: string; port: number; vu: number;
   adresses?: string[];
   transport?: { url: string; type: string }; rendu?: { url: string; type: string };
+  connexion?: { url: string; type: string };
+  /** Le modèle annoncé par un récepteur Google Cast (« Pixel Tablet »). */
+  modele?: string;
 }
 export function ipv4Privee(ip: string): boolean {
   const octets = ip.split(".");
@@ -53,7 +56,8 @@ export function descriptionDlna(xml: string, location: string, adresse: string):
   const transport = service("AVTransport"); if (!transport) return null;
   return { id: `dlna-${createHash("sha256").update(`${adresse}|${device.UDN}`).digest("hex").slice(0, 24)}`,
     nom: String(device.friendlyName ?? "Téléviseur DLNA").slice(0, 120), adresse,
-    port: Number(new URL(location).port || 80), protocole: "dlna", vu: Date.now(), transport, rendu: service("RenderingControl") };
+    port: Number(new URL(location).port || 80), protocole: "dlna", vu: Date.now(), transport, rendu: service("RenderingControl"),
+    connexion: service("ConnectionManager"), modele: device.modelName ? String(device.modelName).slice(0, 80) : undefined };
 }
 
 /** Découverte à la demande, bornée, sur les interfaces privées. Aucun scan de ports ni URL fournie
@@ -90,7 +94,7 @@ export class DecouverteDiffusion {
           const adresse = adresses[0], id = identifier(s);
           if (this.ferme || !adresse || s.port < 1 || s.port > 65535 || observees.size >= 128 && !observees.has(id)) return;
           observees.set(id, { id, nom: String(s.txt?.fn || s.name).slice(0, 120), adresse, adresses,
-            port: s.port, protocole: "googlecast", vu: Date.now() });
+            port: s.port, protocole: "googlecast", vu: Date.now(), modele: s.txt?.md ? String(s.txt.md).slice(0, 80) : undefined });
           reconcilier(id);
         };
         const browser = bonjour.find({ type: "googlecast" }, actualiser); this.browsers.push(browser);

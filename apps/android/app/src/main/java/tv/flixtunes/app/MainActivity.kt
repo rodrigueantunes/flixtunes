@@ -16,6 +16,9 @@ import tv.flixtunes.app.data.FlixTunesApi
 import tv.flixtunes.app.playback.TelecommandeAndroid
 import tv.flixtunes.app.playback.etatDiffusionAndroid
 import tv.flixtunes.app.ui.ouvrirDialogueDiffusion
+import androidx.lifecycle.lifecycleScope
+import tv.flixtunes.app.playback.toucheVolumeDiffusion
+import tv.flixtunes.app.playback.SuiviDiffusion
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import tv.flixtunes.app.data.DecouverteServeurs
@@ -58,7 +61,10 @@ class MainActivity : ComponentActivity() {
                 val detacher = if (state.server != null && profil != null) TelecommandeAndroid.attacher(
                     this@MainActivity, FlixTunesApi(state.server, model.profileAccessToken()), profil,
                     { etatDiffusionAndroid() }, { error("Aucune lecture en cours") }) else null
-                onDispose { detacher?.invoke() }
+                // Le téléviseur reste récepteur : seuls téléphones et tablettes suivent les diffusions.
+                val suivi = if (state.server != null && profil != null && !televiseur)
+                    SuiviDiffusion.attacher(this@MainActivity, FlixTunesApi(state.server, model.profileAccessToken())) else null
+                onDispose { detacher?.invoke(); suivi?.invoke() }
             }
             // La largeur est relue par Compose : rotation et dépliage changent de gabarit sans
             // recréer artificiellement l'activité. Le mode TV reste décidé par le système.
@@ -78,6 +84,12 @@ class MainActivity : ComponentActivity() {
         }
     }
     override fun onPause() { discovery.stop(); super.onPause() }
+    // Touches de volume pendant une diffusion. `dispatchKeyEvent` est réservé à AndroidX sur une
+    // `ComponentActivity` (règle RestrictedApi du lint) : `onKeyDown` et `onKeyUp` sont publics.
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent): Boolean =
+        toucheVolumeDiffusion(event, lifecycleScope) || super.onKeyDown(keyCode, event)
+    override fun onKeyUp(keyCode: Int, event: android.view.KeyEvent): Boolean =
+        toucheVolumeDiffusion(event, lifecycleScope) || super.onKeyUp(keyCode, event)
     private fun ouvrirCast() {
         val serveur = model.state.server ?: return
         ouvrirDialogueDiffusion(this, FlixTunesApi(serveur, model.profileAccessToken()))

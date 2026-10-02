@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BoutonDiffusion, useSurfaceDiffusion } from "./Diffusion";
+import { BoutonDiffusion, RelaisDiffusion, useSurfaceDiffusion } from "./Diffusion";
 import { progressionLocaleSuspendue } from "./diffusion-utilitaires";
 import type { MediaItem, MediaStream, PlaybackCapabilities, PlaybackInfo, PlaybackNeighbors, PlaybackSession, Profile, SubtitlePreference } from "@flixtunes/contracts";
 import type Hls from "hls.js";
@@ -1381,6 +1381,11 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
           {repliquesVisibles.map((texte, rang) => <p key={`${rang}-${texte}`}>{texte}</p>)}
         </div>
       )}
+      {/* Le contenu passe sur un téléviseur : le lecteur devient sa télécommande. */}
+      <RelaisDiffusion contenu={media.id} onReprendreIci={(position) => {
+        seekTo(position);
+        void videoRef.current?.play()?.catch(() => undefined);
+      }} />
       <div className="player-top">
         <BoutonDiffusion />
         <button className="player-icon-button" onClick={onClose} aria-label="Fermer le lecteur">←</button>

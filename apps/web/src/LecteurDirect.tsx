@@ -1,4 +1,4 @@
-import { BoutonDiffusion, useSurfaceDiffusion } from "./Diffusion";
+import { BoutonDiffusion, RelaisDiffusion, useSurfaceDiffusion } from "./Diffusion";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { pontBureau } from "./bureau";
 import type { PropsDirect } from "./LecteurDirectBureau";
@@ -1704,6 +1704,7 @@ function LecteurDirectWeb({ chaine, precedente, onChaine, onClose }: {
       onClick={basculerPause} onPause={() => { if (ecranRef.current === 0) setBarreVisible(true); }} />
     <video ref={brancherVideo1} autoPlay={false} playsInline muted={ecran !== 1} className={ecran === 1 ? undefined : "lecteur-direct-releve"}
       onClick={basculerPause} onPause={() => { if (ecranRef.current === 1) setBarreVisible(true); }} />
+    <RelaisDiffusion contenu={chaine.id} onReprendreIci={() => { void videoRef.current?.play().catch(() => undefined); }} />
     <div className="lecteur-direct-barre" inert={!barreVisible} aria-hidden={!barreVisible}>
       <BoutonDiffusion />
       <button type="button" className="player-icon-button" onClick={onClose} aria-label="Fermer">←</button>

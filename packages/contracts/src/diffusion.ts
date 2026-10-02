@@ -22,11 +22,17 @@ export const etatDiffusionSchema = z.object({
   navigation: z.boolean().default(false),
   qualite: z.string().max(160).optional(),
   erreur: z.string().max(300).nullable().default(null),
+  /** Pendant le chargement : ce que le serveur est en train de faire. */
+  etape: z.enum(["connexion", "sonde", "preparation", "demarrage"]).optional(),
+  /** Pourquoi la lecture est au repos : fin du média, arrêt demandé, ou récepteur pris par une autre application. */
+  motifRepos: z.enum(["fin", "arret", "tiers"]).optional(),
 });
 export type EtatDiffusion = z.infer<typeof etatDiffusionSchema>;
 export interface CibleDiffusion {
   id: string; nom: string; protocole: "flixtunes" | "googlecast" | "dlna";
   etat: EtatDiffusion | null; occupe: boolean;
+  /** Le modèle annoncé par le récepteur, quand il le dit (« Pixel Tablet », « Chromecast »). */
+  modele?: string;
 }
 export interface OrdreDiffusion { id: string; commande: CommandeDiffusion }
 export interface AccuseDiffusion { id: string; ok: boolean; erreur?: string }

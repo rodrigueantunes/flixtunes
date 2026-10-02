@@ -62,7 +62,7 @@ const ACCELERATEURS: Array<[string, string]> = [
 ];
 const TONE_MAPPINGS: Array<[string, string]> = [
   ["auto", "Automatique (mesuré)"], ["libplacebo", "libplacebo / Vulkan"], ["vaapi", "VA-API"],
-  ["opencl", "OpenCL"], ["zscale", "zscale logiciel"], ["software", "tonemap logiciel"],
+  ["opencl", "OpenCL"], ["tonemapx", "tonemapx logiciel optimisé"], ["zscale", "zscale logiciel"], ["software", "tonemap logiciel"],
 ];
 const CODECS: Array<[string, string]> = [
   ["auto", "Automatique (conserve le HEVC d’une source HEVC)"], ["h264", "Toujours H.264"], ["hevc", "Toujours HEVC"],
