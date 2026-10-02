@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const { apiMock } = vi.hoisted(() => ({ apiMock: {
   catalogPage: vi.fn(), details: vi.fn(), candidatsWeb: vi.fn(), corrigerWeb: vi.fn(),
@@ -15,7 +15,7 @@ import { RayonWeb } from "./RayonWeb";
 const chaine = {
   id: "m-c1", catalogId: "c1", title: "Greg Guillotin", showTitle: "Greg Guillotin",
   posterUrl: null, backdropUrl: null, airDate: null, progressPercent: 0, playableMediaId: null,
-} as never;
+};
 
 const video = (id: string, titre: string) => ({
   id, catalogId: id, title: titre, showTitle: "Greg Guillotin", posterUrl: null, backdropUrl: null,
@@ -37,6 +37,28 @@ beforeEach(() => {
   });
 });
 afterEach(cleanup);
+
+it("parcourt les pages au-delà de 200 chaînes et recherche sur tout le catalogue", async () => {
+  apiMock.catalogPage.mockImplementation(async (_profil, query) => ({ total: query.query ? 1 : 241,
+    items: [{ ...chaine, id: `chaine-${query.offset}`, title: query.query ? "Joueur du Grenier" : `Chaîne ${query.offset}`, showTitle: null }] }));
+  render(<RayonWeb profileId="p" onPlay={() => {}} />);
+  await screen.findByText("Chaîne 0");
+  for (const offset of [60, 120, 180, 240]) {
+    fireEvent.click(screen.getByText("Page suivante"));
+    await screen.findByText(`Chaîne ${offset}`);
+  }
+  expect(screen.getByText("Page suivante")).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Rechercher une chaîne"), { target: { value: "grenier" } });
+  await screen.findByText("Joueur du Grenier");
+  await waitFor(() => expect(apiMock.catalogPage).toHaveBeenLastCalledWith("p", expect.objectContaining({ offset: 0, query: "grenier" })));
+});
+
+it("permet de parcourir les chaînes WAN sans proposer de correction administrative", async () => {
+  render(<RayonWeb profileId="p" onPlay={() => {}} modifiable={false} />);
+  fireEvent.click(await screen.findByText("Greg Guillotin"));
+  expect(await screen.findByText("Pranks")).toBeInTheDocument();
+  expect(screen.queryByText("Corriger la correspondance")).not.toBeInTheDocument();
+});
 
 /**
  * Ressortir d'une chaîne, depuis la grille.

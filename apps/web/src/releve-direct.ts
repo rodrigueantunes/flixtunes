@@ -49,13 +49,14 @@ export function repereDansLaPlaylist(segments: readonly SegmentRepere[], temps: 
  * le numéro de segment qui les relie, ou mieux l'heure de programme quand la chaîne la publie. `null`
  * quand le segment est déjà sorti de la fenêtre de l'autre lecture.
  */
-export function tempsPourRepere(segments: readonly SegmentRepere[], repere: Repere): number | null {
+export function tempsPourRepere(segments: readonly SegmentRepere[], repere: Repere, memeSource = true): number | null {
   if (repere.pdt != null) {
     const pdt = repere.pdt;
     const parHeure = segments.find((candidat) => candidat.programDateTime != null
       && candidat.programDateTime <= pdt && pdt < candidat.programDateTime + candidat.duration * 1000);
     if (parHeure) return parHeure.start + (pdt - parHeure.programDateTime!) / 1000;
   }
+  if (!memeSource) return null;
   const parNumero = segments.find((candidat) => candidat.sn === repere.sn);
   return parNumero ? parNumero.start + repere.decalage : null;
 }

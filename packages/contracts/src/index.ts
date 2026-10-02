@@ -1148,7 +1148,11 @@ export interface ChaineDirect {
  * cesse d'être un tirage au sort.
  */
 export interface SourceChaine {
+  /** Résultats observés pour cette famille de lecteur, sans pénaliser Android. */
+  cheminPrefere?: "relais";
   url: string;
+  /** Identité exacte, conservée lors du renouvellement des liens de lecture. */
+  identifiant?: string;
   succes: number;
   echecs: number;
   /**
@@ -1199,3 +1203,4 @@ export type ParametresDirectInput = z.infer<typeof parametresDirectSchema>;
 
 // La géométrie des planches de vignettes, partagée par le serveur et l'interface.
 export * from "./vignettes.js";
+export * from "./diffusion.js";

@@ -23,6 +23,12 @@ function sondeSimulee(delais: Record<string, number | null>) {
 }
 
 describe("la course des adresses", () => {
+  it("ne lance pas de lectures concurrentes sur les liens WAN du NAS", async () => {
+    const sources = [adresse("/api/live/relais?t=a"), adresse("/api/live/relais?t=b")];
+    const sonder = vi.fn();
+    expect(await courirLesAdresses(sources, sonder)).toEqual(sources);
+    expect(sonder).not.toHaveBeenCalled();
+  });
   it("garde le classement du serveur entre celles qui répondent", async () => {
     /*
      * La course répond à une seule question : qui est joignable. Elle ne classe pas.

@@ -118,6 +118,7 @@ data class PisteChoix(
  * `PanneauPistes`.
  */
 class ActionsLecteur(
+    val caster: () -> Unit = {},
     val basculerLecture: () -> Unit = {},
     /** Position visée, en secondes de film. */
     val naviguer: (Double) -> Unit = {},

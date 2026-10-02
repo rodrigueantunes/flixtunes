@@ -1,5 +1,6 @@
 import { mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { rename, unlink, writeFile } from "node:fs/promises";
+import { backup } from "node:sqlite";
 import path from "node:path";
 import { db } from "./database.js";
 import { config } from "./config.js";
@@ -21,12 +22,26 @@ export function backupPath(name: string): string | null {
   return /^flixtunes-\d{8}-\d{9}\.db$/.test(name) ? path.join(backupsDir, name) : null;
 }
 
-export function createBackup(): BackupInfo {
+let backupInProgress: Promise<BackupInfo> | null = null;
+/** Une seule copie incrémentale à la fois ; le fichier n'est publié qu'une fois complet. */
+export function createBackup(): Promise<BackupInfo> {
+  if (backupInProgress) return backupInProgress;
+  backupInProgress = writeBackup().finally(() => { backupInProgress = null; });
+  return backupInProgress;
+}
+
+async function writeBackup(): Promise<BackupInfo> {
   const compact = new Date().toISOString().replace(/\D/g, "").slice(0, 17);
   const stamp = `${compact.slice(0, 8)}-${compact.slice(8)}`;
   const name = `flixtunes-${stamp}.db`; const target = path.join(backupsDir, name);
-  db.exec("PRAGMA wal_checkpoint(FULL)");
-  db.exec(`VACUUM INTO '${target.replaceAll("'", "''")}'`);
+  const temporary = `${target}.partial`;
+  try {
+    await backup(db, temporary, { rate: 100 });
+    await rename(temporary, target);
+  } catch (error) {
+    await unlink(temporary).catch(() => undefined);
+    throw error;
+  }
   const backups = listBackups();
   for (const expired of backups.slice(config.backupRetention)) {
     try { unlinkSync(path.join(backupsDir, expired.name)); } catch { /* best effort */ }

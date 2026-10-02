@@ -11,6 +11,11 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.DisposableEffect
+import tv.flixtunes.app.data.FlixTunesApi
+import tv.flixtunes.app.playback.TelecommandeAndroid
+import tv.flixtunes.app.playback.etatDiffusionAndroid
+import tv.flixtunes.app.ui.ouvrirDialogueDiffusion
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import tv.flixtunes.app.data.DecouverteServeurs
@@ -47,11 +52,19 @@ class MainActivity : ComponentActivity() {
         // une taille de texture.
         val memoire = memoireTv(this)
         setContent {
+            val state = model.state
+            DisposableEffect(state.server, state.profile?.id, model.profileAccessToken()) {
+                val profil = state.profile?.id
+                val detacher = if (state.server != null && profil != null) TelecommandeAndroid.attacher(
+                    this@MainActivity, FlixTunesApi(state.server, model.profileAccessToken()), profil,
+                    { etatDiffusionAndroid() }, { error("Aucune lecture en cours") }) else null
+                onDispose { detacher?.invoke() }
+            }
             // La largeur est relue par Compose : rotation et dépliage changent de gabarit sans
             // recréer artificiellement l'activité. Le mode TV reste décidé par le système.
             val gabarit = gabaritPour(televiseur, LocalConfiguration.current.screenWidthDp)
             CompositionLocalProvider(LocalGabarit provides gabarit, LocalMemoireTv provides memoire) {
-                ThemeFlixTunes { FlixTunesApp(model, discovered, ::play, ::jouerChaine) }
+                ThemeFlixTunes { FlixTunesApp(model, discovered, ::play, ::jouerChaine, ::ouvrirCast) }
             }
         }
     }
@@ -65,6 +78,10 @@ class MainActivity : ComponentActivity() {
         }
     }
     override fun onPause() { discovery.stop(); super.onPause() }
+    private fun ouvrirCast() {
+        val serveur = model.state.server ?: return
+        ouvrirDialogueDiffusion(this, FlixTunesApi(serveur, model.profileAccessToken()))
+    }
 
     /**
      * Ouvrir une chaîne en direct.

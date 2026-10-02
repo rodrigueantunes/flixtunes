@@ -9,6 +9,8 @@ import { cleanupIdleSessions, cleanupPlaybackSessions, detectFfmpegSupport } fro
 import { calibrateHardware, refreshTemperature } from "./capacity.js";
 import { createBackup, listBackups } from "./maintenance.js";
 import { regrouperSiNecessaire, renumeroterSiNecessaire } from "./television-direct.js";
+import { reparerAvatarsWeb } from "./web-analyse.js";
+import { repairMissingArtwork } from "./artwork.js";
 
 /**
  * Génération de l'agent de métadonnées.
@@ -25,6 +27,23 @@ export interface RuntimeServices { close(): Promise<void> }
 export function startRuntimeServices(log: FastifyBaseLogger): RuntimeServices {
   const timers: NodeJS.Timeout[] = []; const debounce = new Map<string, NodeJS.Timeout>();
   let bonjour: Bonjour | null = null; let watcher: FSWatcher | null = null;
+  let avatarsEnCours = false;
+  const reparerAvatars = async () => {
+    if (avatarsEnCours) return;
+    avatarsEnCours = true;
+    try {
+      const images = await repairMissingArtwork();
+      if (images.repaired) log.info({ images: images.repaired }, "Images manquantes restaurées");
+      if (images.missing > images.repaired) log.warn({ images: images.missing - images.repaired }, "Images locales encore indisponibles, récupération différée");
+      const chaines = await reparerAvatarsWeb();
+      if (chaines) log.info({ chaines }, "Vignettes de chaînes Web récupérées");
+    } catch { log.warn("Récupération des vignettes Web différée"); }
+    finally { avatarsEnCours = false; }
+  };
+  if (process.env.NODE_ENV !== "test") {
+    timers.push(setTimeout(() => void reparerAvatars(), 30_000));
+    timers.push(setInterval(() => void reparerAvatars(), 5 * 60_000));
+  }
   if (config.mdnsEnabled) {
     try {
       bonjour = new Bonjour();
@@ -162,13 +181,13 @@ export function startRuntimeServices(log: FastifyBaseLogger): RuntimeServices {
     première.unref?.();
     timers.push(première);
   }
-  timers.push(setInterval(() => { try { createBackup(); } catch (error) { log.error({ err: error }, "Sauvegarde automatique impossible"); } }, config.backupIntervalHours * 3_600_000));
+  timers.push(setInterval(() => { void createBackup().catch((error) => log.error({ err: error }, "Sauvegarde automatique impossible")); }, config.backupIntervalHours * 3_600_000));
   timers.push(setInterval(() => void cleanupPlaybackSessions(), 60 * 60_000));
   timers.push(setInterval(() => void cleanupIdleSessions(), 60_000));
   const latest = listBackups()[0];
   if (!latest || Date.now() - Date.parse(latest.createdAt) > config.backupIntervalHours * 3_600_000) {
-    try { const backup = createBackup(); log.info({ backup: backup.name }, "Sauvegarde de démarrage créée"); }
-    catch (error) { log.warn({ err: error }, "Sauvegarde de démarrage impossible"); }
+    void createBackup().then((backup) => log.info({ backup: backup.name }, "Sauvegarde de démarrage créée"))
+      .catch((error) => log.warn({ err: error }, "Sauvegarde de démarrage impossible"));
   }
 
   return { async close() { for (const timer of timers) clearInterval(timer); for (const timer of debounce.values()) clearTimeout(timer); await watcher?.close(); bonjour?.unpublishAll(); bonjour?.destroy(); } };

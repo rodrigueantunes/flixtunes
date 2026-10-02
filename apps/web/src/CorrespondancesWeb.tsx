@@ -106,9 +106,10 @@ export function CorrespondancesWeb({ library, profileId, onClose, onChanged }: {
           * messages : « aucune chaîne trouvée » là où la chaîne existe et où c'est le budget qui
           * manquait — ce qui envoie chercher le défaut là où il n'est pas.
           */}
-        {budget && <p className={budget.reste < 100 ? "web-budget epuise" : "web-budget"}>
-          Budget YouTube : {budget.reste} unités restantes sur {budget.plafond}
-          {budget.reste < 100 && " — une recherche en coûte 100, elle ne partira pas avant 9 h."}
+        {budget && <p className={(budget.recherches?.reste ?? 1) < 1 ? "web-budget epuise" : "web-budget"}>
+          YouTube : {budget.reste} unités de lecture restantes sur {budget.plafond}
+          {budget.recherches && ` · ${budget.recherches.reste} recherches restantes sur ${budget.recherches.plafond}`}
+          {(budget.recherches?.reste ?? 1) < 1 && " — recherches disponibles à minuit, heure du Pacifique."}
         </p>}
       </div>
       <button className="close-button" onClick={onClose} aria-label="Retour">×</button>
@@ -174,7 +175,7 @@ export function CorrespondancesWeb({ library, profileId, onClose, onChanged }: {
               aria-label="Terme de recherche"
               placeholder={choisie.genre === "chaine" ? "Nom de la chaîne" : "Titre de la vidéo"} />
             <button type="button" className="secondary" disabled={occupe}
-              onClick={() => void chercher(choisie, recherche || undefined)}>Chercher (100 unités)</button>
+              onClick={() => void chercher(choisie, recherche || undefined)}>Chercher</button>
           </div>
 
           {candidats.map((candidat) => <button key={candidat.identifiant ?? candidat.url} type="button"

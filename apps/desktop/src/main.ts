@@ -3,6 +3,7 @@ import path from "node:path";
 import { cheminDuJournal, journal, ouvrirLeJournal } from "./journal.js";
 import { ecrireReglages, lireReglages, memeServeur, normaliserAdresse } from "./reglages.js";
 import { ETAT_INITIAL, Lecteur, trouverVlc } from "./vlc.js";
+import { adresseDirectAutorisee, ouvrirDirectBureau } from "./direct.js";
 
 /**
  * La coque du client de bureau.
@@ -51,6 +52,16 @@ function poigneeDe(fenetre: BrowserWindow): string | null {
 }
 
 const lecteur = new Lecteur(() => (fenetreVideo ? poigneeDe(fenetreVideo) : null));
+let relaisDirect: Awaited<ReturnType<typeof ouvrirDirectBureau>> | null = null;
+let commandeNative: Promise<unknown> = Promise.resolve();
+function serialiser<T>(action: () => Promise<T>): Promise<T> {
+  const suite = commandeNative.then(action, action); commandeNative = suite.catch(() => undefined); return suite;
+}
+async function fermerDirect() {
+  if (!relaisDirect) return;
+  const ancien = relaisDirect; relaisDirect = null;
+  await lecteur.fermer(); await ancien.fermer();
+}
 
 // L'état de lecture est poussé vers l'interface, jamais demandé par elle : une barre de progression
 // qui interroge quatre fois par seconde traverserait le pont quatre fois par seconde pour rien.
@@ -194,6 +205,7 @@ function ouvrirFenetres(): void {
   fenetreVideo.on("closed", () => {
     // VLC dessine dans cette fenêtre : elle disparaît, il n'a plus de raison d'être. Sans cela le
     // processus survivrait à la fermeture, invisible et toujours en train de lire.
+    void relaisDirect?.fermer(); relaisDirect = null;
     lecteur.arreter();
     if (fenetreInterface && !fenetreInterface.isDestroyed()) fenetreInterface.destroy();
     fenetreVideo = null;
@@ -357,7 +369,7 @@ app.whenReady().then(() => {
    * disque. On n'accepte donc que ce qui vient du serveur auquel la coque est connectée. Les autres
    * commandes ne portent qu'un nombre et ne peuvent rien ouvrir.
    */
-  ipcMain.handle("flixtunes:lecteur-ouvrir", async (_evenement, uri: unknown, pistes: unknown) => {
+  ipcMain.handle("flixtunes:lecteur-ouvrir", async (_evenement, uri: unknown, pistes: unknown) => serialiser(async () => {
     const serveur = lireReglages(app.getPath("userData")).serveur;
     if (typeof uri !== "string" || !memeServeur(uri, serveur)) {
       return { ok: false, message: "Ce flux ne vient pas du serveur FlixTunes." };
@@ -365,11 +377,37 @@ app.whenReady().then(() => {
     // Ce qui traverse le pont est relu ici : la page qui l'emprunte vient du réseau, et un numéro de
     // piste est la seule chose qu'on accepte d'elle en plus de l'adresse.
     const lu = (pistes ?? {}) as { audio?: unknown; sousTitre?: unknown };
+    await fermerDirect();
     return lecteur.ouvrir(uri, {
       audio: typeof lu.audio === "number" ? lu.audio : null,
       sousTitre: typeof lu.sousTitre === "number" ? lu.sousTitre : null,
     });
-  });
+  }));
+  ipcMain.handle("flixtunes:direct-ouvrir", async (evenement, uri: unknown) => serialiser(async () => {
+    const serveur = lireReglages(app.getPath("userData")).serveur;
+    const cadre = evenement.senderFrame;
+    if (!serveur || typeof uri !== "string" || !adresseDirectAutorisee(uri, serveur) ||
+        evenement.sender !== fenetreInterface?.webContents || cadre !== evenement.sender.mainFrame ||
+        !memeServeur(cadre.url, serveur)) return { ok: false, message: "Accès au direct refusé" };
+    await fermerDirect();
+    try {
+      const relais = await ouvrirDirectBureau(new URL(uri, serveur).href, serveur,
+        (url, init) => evenement.sender.session.fetch(url, { ...init, credentials: "include" }));
+      relaisDirect = relais;
+      const resultat = await lecteur.ouvrir(relais.url, { direct: true });
+      if (!resultat.ok) await fermerDirect();
+      return resultat;
+    } catch { await fermerDirect(); return { ok: false, message: "Lecture native indisponible" }; }
+  }));
+  ipcMain.handle("flixtunes:direct-fermer", () => serialiser(fermerDirect));
+  ipcMain.handle("flixtunes:direct-renouveler", (evenement, uri: unknown) => serialiser(async () => {
+    const serveur = lireReglages(app.getPath("userData")).serveur;
+    if (!serveur || typeof uri !== "string" || !adresseDirectAutorisee(uri, serveur) ||
+        evenement.sender !== fenetreInterface?.webContents || evenement.senderFrame !== evenement.sender.mainFrame ||
+        !memeServeur(evenement.senderFrame.url, serveur)) return false;
+    return relaisDirect?.renouveler(uri).catch(() => false) ?? false;
+  }));
+  ipcMain.handle("flixtunes:direct-diagnostic", () => relaisDirect?.diagnostic() ?? null);
   ipcMain.handle("flixtunes:lecteur-lire", () => lecteur.lire());
   ipcMain.handle("flixtunes:lecteur-pause", () => lecteur.pause());
   ipcMain.handle("flixtunes:lecteur-aller", (_evenement, secondes: unknown) =>
@@ -416,4 +454,4 @@ app.on("window-all-closed", () => {
 
 // Un arrêt demandé par le système — session qui se ferme, machine qui s'éteint — n'emprunte pas le
 // chemin des fenêtres. VLC est un processus à part : il faut le renvoyer explicitement.
-app.on("before-quit", () => lecteur.arreter());
+app.on("before-quit", () => { void relaisDirect?.fermer(); relaisDirect = null; lecteur.arreter(); });

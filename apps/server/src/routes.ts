@@ -1,4 +1,7 @@
+import { commencerConversionLive, fichierConversionLive, arreterConversionLive, fermerConversionsLive } from "./live-compat.js";
+import { formatLive } from "./live-compat-entree.js";
 import { createReadStream, statSync } from "node:fs";
+import { classerPourLecteur, lecteurWeb, noterStabilite } from "./live-stabilite.js";
 import { Readable } from "node:stream";
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { stat } from "node:fs/promises";
@@ -48,6 +51,8 @@ import {
   signatureValide,
 } from "./live-relais.js";
 import { fetchWithTimeout } from "./resilience.js";
+import { adresseLiveDistante, empreinteLiveDistante, sourceLiveDistante } from "./live-acces-distant.js";
+import { lireCorpsBorne, relayerLiveDistant, relayerLiveLocal } from "./live-relais-distant.js";
 import { enregistrerXtream, listerSources, reglerFast, retirerSource } from "./live-fournisseurs.js";
 import { sonderLesAutres, sonderLesSources } from "./live-qualite.js";
 import {
@@ -216,6 +221,13 @@ function sendMedia(request: FastifyRequest<{ Params: IdParams }>, reply: Fastify
     .send(createReadStream(row.file_path, range));
 }
 
+function logoDistant<T extends { id: string; logo: string | null }>(chaine: T, profil: string): T {
+  try {
+    return { ...chaine, logo: chaine.logo && /^https?:\/\//i.test(chaine.logo)
+      ? adresseLiveDistante(chaine.logo, profil, chaine.id, "image") : null };
+  } catch { return { ...chaine, logo: null }; }
+}
+
 export async function registerRoutes(app: FastifyInstance) {
   /**
    * Contrôle de santé.
@@ -291,7 +303,7 @@ export async function registerRoutes(app: FastifyInstance) {
 
   app.get("/api/system/metrics", async () => ({ ...telemetrySnapshot(), scans: scanCoordinator.stats(), memory: process.memoryUsage(), uptimeSeconds: Math.round(process.uptime()) }));
   app.get("/api/system/backups", async () => listBackups());
-  app.post("/api/system/backups", async (_request, reply) => reply.code(201).send(createBackup()));
+  app.post("/api/system/backups", async (_request, reply) => reply.code(201).send(await createBackup()));
   app.get<{ Params: { name: string } }>("/api/system/backups/:name", async (request, reply) => {
     const file = backupPath(request.params.name); if (!file) return reply.code(400).send({ message: "Sauvegarde invalide" });
     try { const info = statSync(file); return reply.header("Content-Type", "application/vnd.sqlite3").header("Content-Length", info.size)
@@ -735,7 +747,8 @@ export async function registerRoutes(app: FastifyInstance) {
       WHERE c.kind = 'show' AND EXISTS (
         SELECT 1 FROM library_folders lib WHERE lib.id = c.library_id AND lib.kind = 'web')`)
       .get() as { total: number };
-    return { disponible: ligne.bibliotheques > 0, bibliotheques: ligne.bibliotheques, chaines: chaines.total };
+    return { disponible: ligne.bibliotheques > 0, bibliotheques: ligne.bibliotheques, chaines: chaines.total,
+      modifiable: !request.expositionWan };
   });
 
   /**
@@ -816,7 +829,8 @@ export async function registerRoutes(app: FastifyInstance) {
   app.get("/api/live/derniere", async (request, reply) => {
     const profile = profileFromRequest(request);
     if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
-    return { chaine: derniereChaine(profile.id) };
+    const chaine = derniereChaine(profile.id);
+    return { chaine: chaine && request.expositionWan ? logoDistant(chaine, profile.id) : chaine };
   });
 
   /*
@@ -858,12 +872,13 @@ export async function registerRoutes(app: FastifyInstance) {
     }
     const decouper = (valeur: string | undefined): string[] =>
       (valeur ?? "").split(",").map((element) => element.trim()).filter(Boolean).slice(0, 200);
-    return listerChaines({
+    const page = listerChaines({
       q: query.q, profileId: profile.id,
       favoris: query.favoris === "1", masquerMortes: query.masquerMortes === "1",
       listes: decouper(query.listes), pays: decouper(query.pays),
       fiabilites: decouper(query.fiabilites) as ClassementListe[], offset, limit,
     });
+    return request.expositionWan ? { ...page, items: page.items.map((chaine) => logoDistant(chaine, profile.id)) } : page;
   });
 
   /**
@@ -884,7 +899,7 @@ export async function registerRoutes(app: FastifyInstance) {
     const sens = query.sens === "1" ? 1 : query.sens === "-1" ? -1 : null;
     const chaine = sens ? chaineVoisine(numero, sens) : chaineParNumero(numero);
     if (!chaine) return reply.code(404).send({ message: "Aucune chaîne à ce numéro" });
-    return chaine;
+    return request.expositionWan ? logoDistant(chaine, profile.id) : chaine;
   });
 
   app.get<{ Params: IdParams }>("/api/live/channels/:id", async (request, reply) => {
@@ -892,6 +907,9 @@ export async function registerRoutes(app: FastifyInstance) {
     if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
     const chaine = chaineDetaillee(request.params.id);
     if (!chaine) return reply.code(404).send({ message: "Chaîne introuvable" });
+    chaine.sources = classerPourLecteur(chaine.id, chaine.sources,
+      request.expositionWan ? `wan:${profile.id}` : "lan",
+      lecteurWeb((request.query as { lecteur?: string }).lecteur));
     /*
      * Chaque adresse part avec son doublon relayé, signé pour elle seule.
      *
@@ -907,7 +925,7 @@ export async function registerRoutes(app: FastifyInstance) {
      * tout de suite avec ce qu'on sait déjà, et ce qu'on apprend ici améliore le classement pour la
      * prochaine fois. Une seule chaîne à la fois, seulement si elle a plusieurs adresses.
      */
-    if (chaine.sources.length > 1) {
+    if (!request.expositionWan && chaine.sources.length > 1) {
       void sonderLesSources(request.params.id)
         .catch((cause) => app.log.debug({ err: cause }, "Sonde de qualité des sources interrompue"));
     }
@@ -915,10 +933,20 @@ export async function registerRoutes(app: FastifyInstance) {
      * L'empreinte voyage avec chaque adresse : les deux clients regroupent alors de la même façon,
      * sans que le calcul ait à exister deux fois — et sans qu'il puisse diverger.
      */
+    if (request.expositionWan) return {
+      ...logoDistant(chaine, profile.id),
+      sources: chaine.sources.map((source) => ({
+        ...source, url: adresseLiveDistante(source.url, profile.id, chaine.id),
+        identifiant: empreinteLiveDistante(`${profile.id}:${source.url}`),
+        relais: adresseLiveDistante(source.url, profile.id, chaine.id),
+        empreinte: empreinteLiveDistante(empreinteDAffichage(source.url)),
+      })),
+    };
     return {
       ...chaine,
       sources: chaine.sources.map((source) => ({
-        ...source, relais: adresseRelayee(source.url), empreinte: empreinteDAffichage(source.url),
+        ...source, identifiant: empreinteLiveDistante(source.url),
+        relais: adresseRelayee(source.url), empreinte: empreinteDAffichage(source.url),
       })),
     };
   });
@@ -933,12 +961,27 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post<{ Params: IdParams }>("/api/live/channels/:id/resultat", async (request, reply) => {
     const profile = profileFromRequest(request);
     if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
-    const corps = request.body as { url?: unknown; ok?: unknown } | null;
+    const corps = request.body as { url?: unknown; ok?: unknown; secondesStables?: unknown; lecteur?: unknown; chemin?: unknown } | null;
     if (typeof corps?.url !== "string" || typeof corps.ok !== "boolean") {
       return reply.code(400).send({ message: "Résultat invalide" });
     }
-    if (!noterResultat(request.params.id, corps.url, corps.ok)) {
+    if (corps.secondesStables !== undefined && (typeof corps.secondesStables !== "number"
+      || !Number.isInteger(corps.secondesStables) || corps.secondesStables < 0 || corps.secondesStables > 120)) {
+      return reply.code(400).send({ message: "Durée de lecture invalide" });
+    }
+    const source = request.expositionWan ? sourceLiveDistante(corps.url, profile.id, request.params.id) : corps.url;
+    const lecteur = lecteurWeb(corps.lecteur);
+    const reconnue = source && (request.expositionWan || lecteur
+      ? chaineDetaillee(request.params.id)?.sources.some((s) => s.url === source)
+      : noterResultat(request.params.id, source, corps.ok));
+    if (!reconnue) {
       return reply.code(404).send({ message: "Adresse inconnue pour cette chaîne" });
+    }
+    if (corps.secondesStables !== undefined || !corps.ok || lecteur) {
+      const base = request.expositionWan ? `wan:${profile.id}` : "lan";
+      const contexte = lecteur ? `${base}:${lecteur}:${corps.chemin === "relais" ? "relais" : "direct"}` : base;
+      noterStabilite(request.params.id, source!, contexte,
+        Number(corps.secondesStables ?? (corps.ok && lecteur ? 15 : 0)), !corps.ok);
     }
     // Une adresse qui a joué vaut « c'est ce qu'on regarde » : c'est le moment le plus sûr pour
     // retenir la chaîne, plutôt qu'à l'ouverture d'un flux dont on ignore encore s'il répondra.
@@ -958,6 +1001,11 @@ export async function registerRoutes(app: FastifyInstance) {
     const profile = profileFromRequest(request);
     if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
     if (!chaineDetaillee(request.params.id)) return reply.code(404).send({ message: "Chaîne introuvable" });
+    if (request.expositionWan) {
+      const muettes = db.prepare("SELECT url FROM live_channel_urls WHERE channel_id = ? AND releve = 0")
+        .all(request.params.id) as Array<{ url: string }>;
+      return { muettes: muettes.map(({ url }) => adresseLiveDistante(url, profile.id, request.params.id)) };
+    }
     const corps = request.body as { enCours?: unknown } | null;
     return { muettes: await sonderLesAutres(request.params.id, typeof corps?.enCours === "string" ? corps.enCours : null) };
   });
@@ -973,56 +1021,51 @@ export async function registerRoutes(app: FastifyInstance) {
    * quel, sans être mis en mémoire — un flux en direct n'a pas de fin, et l'accumuler serait une fuite
    * de mémoire à retardement.
    */
+  app.post<{ Params: IdParams }>("/api/live/channels/:id/compat", async (request, reply) => {
+    const profile = profileFromRequest(request);
+    if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
+    const corps = request.body as { url?: unknown; lecture?: unknown; analyser?: unknown } | null;
+    if (typeof corps?.url !== "string" || typeof corps.lecture !== "string" || !/^[a-zA-Z0-9-]{1,64}$/.test(corps.lecture)) {
+      return reply.code(400).send({ message: "Demande invalide" });
+    }
+    const source = request.expositionWan ? sourceLiveDistante(corps.url, profile.id, request.params.id) : corps.url;
+    if (!source || !chaineDetaillee(request.params.id)?.sources.some((s) => s.url === source)) {
+      return reply.code(404).send({ message: "Source inconnue" });
+    }
+    if (corps.analyser === true) return { format: await formatLive(source) };
+    const arret = new AbortController();
+    const annuler = () => arret.abort();
+    reply.raw.once("close", annuler);
+    try { return await commencerConversionLive(profile.id, request.params.id, source, corps.lecture, arret.signal); }
+    catch { return reply.code(503).send({ message: "Lecture de compatibilité indisponible pour ce flux" }); }
+    finally { reply.raw.off("close", annuler); }
+  });
+  app.get<{ Params: { id: string; file: string } }>("/api/live/compat/:id/:file", async (request, reply) => {
+    const profile = profileFromRequest(request);
+    const fichier = profile && await fichierConversionLive(profile.id, request.params.id, request.params.file);
+    if (!fichier) return reply.code(404).send({ message: "Lecture introuvable" });
+    try { await stat(fichier.chemin); }
+    catch { return reply.code(404).send({ message: "Segment indisponible" }); }
+    return reply.header("Cache-Control", "private, no-store").type(fichier.type).send(createReadStream(fichier.chemin));
+  });
+  app.delete<{ Params: IdParams }>("/api/live/compat/:id", async (request, reply) => {
+    const profile = profileFromRequest(request);
+    if (profile) await arreterConversionLive(profile.id, request.params.id);
+    return reply.code(204).send();
+  });
+  app.addHook("onClose", fermerConversionsLive);
+
   app.get("/api/live/relais", async (request, reply) => {
     const profile = profileFromRequest(request);
     if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
+    if (request.expositionWan) return relayerLiveDistant(request, reply, profile.id);
     const query = request.query as { u?: string; s?: string };
     const cible = query.u ? lireAdresseRelayee(query.u) : null;
     if (!cible || !query.s || !signatureValide(cible, query.s)) {
       // Indiscernable d'une route inexistante : un 403 confirmerait qu'une adresse existe.
       return reply.code(404).send({ message: "Adresse inconnue" });
     }
-    /*
-     * Chaque saut est rejugé, pas seulement le premier.
-     *
-     * `hoteAutorise` seul ne suffisait pas : `fetch` suit les redirections de lui-même, si bien qu'une
-     * adresse publique redirigeant vers `192.168.x.x` faisait chercher cette page par le NAS. La
-     * fonction ci-dessous les suit à la main et rejuge l'hôte à chaque fois.
-     */
-    const suivie = await recupererSansSortirDuPublic(
-      cible,
-      { headers: { "User-Agent": "FlixTunes", ...(request.headers.range ? { Range: String(request.headers.range) } : {}) } },
-      (url, init) => fetchWithTimeout(url, init, 20_000),
-    );
-    if (!suivie) return reply.code(403).send({ message: "Adresse interne refusée" });
-    try {
-      const amont = suivie.reponse;
-      if (!amont.ok || !amont.body) return reply.code(502).send({ message: `Source indisponible (${amont.status})` });
-
-      const type = amont.headers.get("content-type");
-      // Un manifeste tient en quelques kilooctets : le lire entier pour le réécrire ne coûte rien.
-      // Un segment, lui, est transmis en flux — d'où les deux chemins.
-      if ((type ?? "").toLowerCase().includes("mpegurl") || /\.m3u8(\?|$)/i.test(suivie.url)) {
-        const corps = await amont.text();
-        if (estUnManifeste(type, corps)) {
-          return reply.header("Content-Type", "application/vnd.apple.mpegurl")
-            .header("Cache-Control", "no-store")
-            // L'adresse **d'arrivée** sert de base : un manifeste redirigé résout ses segments
-            // relatifs à partir d'elle, et non de celle qu'on avait demandée.
-            .send(reecrireManifeste(corps, suivie.url));
-        }
-        return reply.header("Content-Type", type ?? "application/octet-stream").send(corps);
-      }
-      reply.code(amont.status === 206 ? 206 : 200);
-      if (type) reply.header("Content-Type", type);
-      for (const entete of ["content-length", "content-range", "accept-ranges"]) {
-        const valeur = amont.headers.get(entete);
-        if (valeur) reply.header(entete, valeur);
-      }
-      return reply.header("Cache-Control", "no-store").send(Readable.fromWeb(amont.body as never));
-    } catch (cause) {
-      return reply.code(502).send({ message: cause instanceof Error ? cause.message : "Relais impossible" });
-    }
+    return relayerLiveLocal(request, reply, cible);
   });
 
   app.post("/api/scans", async (request, reply) => {
@@ -1187,12 +1230,26 @@ export async function registerRoutes(app: FastifyInstance) {
     if (!/^(w185|w342|w500)$/.test(request.params.size) || !/^[a-zA-Z0-9_.-]+$/.test(request.params.name)) {
       return reply.code(400).send({ message: "Image TMDB invalide" });
     }
+    if (request.expositionWan) {
+      const profil = profileFromRequest(request);
+      const adresse = `/api/metadata/image/${request.params.size}/${request.params.name}`;
+      const credits = db.prepare(`SELECT DISTINCT c.catalog_id FROM catalog_people p
+        JOIN catalog_people_credits c ON c.person_id = p.id WHERE p.profile_url = ?`).all(adresse) as Array<{ catalog_id: string }>;
+      if (!profil || !credits.some((c) => isCatalogAllowed(profil.id, c.catalog_id))) {
+        return reply.code(404).send({ message: "Image introuvable" });
+      }
+    }
     try {
       const response = await fetchTmdbPreview(`/${request.params.size}/${request.params.name}`);
       if (!response.ok) return reply.code(response.status).send({ message: "Aperçu indisponible" });
       const contentType = response.headers.get("content-type") || "image/jpeg";
-      return reply.header("Content-Type", contentType).header("Cache-Control", "public, max-age=86400")
-        .send(Buffer.from(await response.arrayBuffer()));
+      if (!/^image\/(jpeg|png|webp)(?:;|$)/i.test(contentType) || !response.body) {
+        await response.body?.cancel();
+        return reply.code(502).send({ message: "Portrait indisponible" });
+      }
+      return reply.header("Content-Type", contentType).header("X-Content-Type-Options", "nosniff")
+        .header("Cache-Control", request.expositionWan ? "private, no-store" : "public, max-age=86400")
+        .send(await lireCorpsBorne(response, 4 * 1024 * 1024));
     } catch (error) {
       return reply.code(502).send({ message: error instanceof Error ? error.message : String(error) });
     }

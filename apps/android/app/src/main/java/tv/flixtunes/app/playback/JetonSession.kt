@@ -18,6 +18,8 @@ import androidx.media3.datasource.DefaultHttpDataSource
  */
 object JetonSession {
     @Volatile
+    var serveur: String? = null
+    @Volatile
     var profil: String? = null
     @Volatile
     var compteDistant: String? = null

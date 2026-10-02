@@ -6,7 +6,7 @@ import { db, getSetting, setSetting } from "./database.js";
 import { MASQUES_CLASSEMENT, analyserM3U, cleDeChaine, lireCatalogueM3U, lisibleParNosLecteurs, masqueDesClassements, paysDeLIdentifiant } from "./m3u.js";
 import { appellationsPossibles, chargerLaReference } from "./reference-chaines.js";
 import { RANG_INCONNU, RANG_SANS_PAYS, empreinteDesRangs, nomDuPays, numerosTnt, paysDeLaChaine, rangDuPays, rangsDesPays } from "./pays.js";
-import { listerSources, listesDeLaSource, type SourceDirect } from "./live-fournisseurs.js";
+import { CatalogueVerifieInvalide, listerSources, listesDeLaSource, type SourceDirect } from "./live-fournisseurs.js";
 import { FICHIER_RELEVE, RELEVE_MAX_OCTETS, lireLeReleve, type Releve } from "./live-releve.js";
 import { fetchWithTimeout } from "./resilience.js";
 import { normaliseForSearch } from "./search-normalise.js";
@@ -299,11 +299,18 @@ export async function rafraichirDirect(): Promise<EtatDirect> {
      * Une source qui échoue ne fait pas échouer les autres : son message est retenu sur sa ligne, et
      * ses listes précédentes restent en place. Une panne d'un portail ne doit pas vider la grille.
      */
+    const contenusLocaux = new Map<string, string>();
+    const sourcesVerifieesInvalides = new Set<string>();
     for (const reglee of reglees) {
       try {
-        synchroniserLesListes(reglee.id, await listesDeLaSource(reglee, CATALOGUE_MAX));
+        const catalogue = await listesDeLaSource(reglee, CATALOGUE_MAX);
+        synchroniserLesListes(reglee.id, catalogue);
+        for (const liste of catalogue) {
+          if (liste.contenu !== undefined) contenusLocaux.set(`${reglee.id}:${liste.url}`, liste.contenu);
+        }
         marquerLaSource(reglee.id, null);
       } catch (cause) {
+        if (cause instanceof CatalogueVerifieInvalide) sourcesVerifieesInvalides.add(reglee.id);
         marquerLaSource(reglee.id, cause instanceof Error ? cause.message : "Source illisible");
       }
     }
@@ -311,15 +318,19 @@ export async function rafraichirDirect(): Promise<EtatDirect> {
     // Le relevé des sondes, s'il est posé à côté du fichier de listes et qu'il est frais.
     const releve = await releveDuDossier(parametres);
 
-    const retenues = db.prepare(`SELECT p.id, p.nom, p.url FROM live_playlists p
+    const retenues = db.prepare(`SELECT p.id, p.nom, p.url, p.source_id FROM live_playlists p
       JOIN live_sources s ON s.id = p.source_id
       WHERE p.cochee = 1 AND s.activee = 1 ORDER BY p.nom COLLATE NOCASE`)
-      .all() as unknown as Array<{ id: string; nom: string; url: string }>;
+      .all() as unknown as Array<{ id: string; nom: string; url: string; source_id: string }>;
     total = retenues.length;
 
     await enParallele(retenues, FILS, async (liste) => {
       if (signal.aborted) return;
-      const resultat = await telecharger(liste, signal);
+      const contenu = contenusLocaux.get(`${liste.source_id}:${liste.url}`);
+      const resultat = sourcesVerifieesInvalides.has(liste.source_id)
+        ? { ...liste, texte: null, message: "Playlist vérifiée indisponible ; import suspendu." }
+        : contenu !== undefined ? { ...liste, texte: contenu, message: null }
+          : await telecharger(liste, signal);
       if (signal.aborted) return;
       listeCourante = liste.nom;
       if (resultat.texte === null) {
@@ -424,6 +435,9 @@ function synchroniserLesListes(sourceId: string, catalogue: Array<{ nom: string;
 async function telecharger(liste: { id: string; nom: string; url: string }, signal: AbortSignal): Promise<ResultatListe> {
   const base = { id: liste.id, nom: liste.nom, url: liste.url };
   if (signal.aborted) return { ...base, texte: null, message: "Interrompu" };
+  if (liste.url.startsWith("flixtunes-local:")) {
+    return { ...base, texte: null, message: "Playlist vérifiée indisponible ; import suspendu." };
+  }
   try {
     const reponse = await fetchWithTimeout(liste.url, { headers: { "User-Agent": "FlixTunes" } }, 20_000);
     if (!reponse.ok) return { ...base, texte: null, message: `HTTP ${reponse.status}` };

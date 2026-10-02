@@ -1,7 +1,7 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { db } from "./database.js";
 import {
-  avatarDeChaineYoutube, chercherYoutube, dureeIso, identifierChaineYoutube, quotaDisponible, quotaDuJour,
+  avatarChaineYoutubeParId, avatarDeChaineYoutube, chercherYoutube, dureeIso, identifierChaineYoutube, jourQuotaYoutube, quotaDisponible, quotaDuJour,
   resoudreParOEmbed, resoudreYoutube,
 } from "./web-fournisseurs.js";
 
@@ -14,6 +14,13 @@ import {
  * résolutions à une unité qui sont pourtant ce qui marche le mieux.
  */
 const CLE = "cle-d-essai";
+
+it("retrouve l'avatar par identifiant sans recherche de nom", async () => {
+  const faux = faussaire({ items: [{ snippet: { thumbnails: { high: { url: "https://image.example/avatar.jpg" } } } }] });
+  expect(await avatarChaineYoutubeParId("UC_arte", { cleYoutube: CLE, recuperer: faux.recuperer })).toBe("https://image.example/avatar.jpg");
+  expect(new URL(faux.appels[0]!).pathname).toBe("/youtube/v3/channels");
+  expect(new URL(faux.appels[0]!).searchParams.get("id")).toBe("UC_arte");
+});
 
 /** Une réponse d'API, et la trace de l'adresse appelée. */
 function faussaire(charge: unknown) {
@@ -179,7 +186,8 @@ describe("quota", () => {
     expect(quotaDuJour().depense, "une résolution coûte une unité").toBe(1);
 
     await chercherYoutube("UC-arte-officiel", "Un titre", { cleYoutube: CLE, recuperer: faux.recuperer });
-    expect(quotaDuJour().depense, "une recherche en coûte cent").toBe(101);
+    expect(quotaDuJour().depense, "une recherche ne consomme pas le budget de lectures").toBe(1);
+    expect(quotaDuJour().recherches).toBe(1);
   });
 
   it("s'arrête avant d'épuiser la clé", async () => {
@@ -240,4 +248,32 @@ describe("durées ISO 8601", () => {
     expect(dureeIso(null)).toBeNull();
     expect(dureeIso("PT0S")).toBeNull();
   });
+});
+
+
+it("réinitialise les quotas à minuit Pacifique, été comme hiver", () => {
+  expect(jourQuotaYoutube(new Date("2026-09-17T06:59:59Z"))).toBe("2026-09-16");
+  expect(jourQuotaYoutube(new Date("2026-09-17T07:00:00Z"))).toBe("2026-09-17");
+  expect(jourQuotaYoutube(new Date("2026-01-17T07:59:59Z"))).toBe("2026-01-16");
+  expect(jourQuotaYoutube(new Date("2026-01-17T08:00:00Z"))).toBe("2026-01-17");
+});
+
+it("garde les lectures disponibles lorsque les recherches sont épuisées", async () => {
+  db.prepare("INSERT OR REPLACE INTO server_settings(key,value) VALUES ('web_quota_youtube',?)")
+    .run(JSON.stringify({ version: 2, date: jourQuotaYoutube(), depense: 0, recherches: 100 }));
+  const faux = faussaire(VIDEO);
+  expect(await chercherYoutube("UC_chaine", "titre", { cleYoutube: CLE, recuperer: faux.recuperer })).toBeNull();
+  expect(await resoudreYoutube("dQw4w9WgXcQ", { cleYoutube: CLE, recuperer: faux.recuperer })).not.toBeNull();
+  expect(faux.appels).toHaveLength(1);
+});
+
+it("réserve la dernière recherche avant les appels concurrents et compte les erreurs", async () => {
+  db.prepare("INSERT OR REPLACE INTO server_settings(key,value) VALUES ('web_quota_youtube',?)")
+    .run(JSON.stringify({ version: 2, date: jourQuotaYoutube(), depense: 0, recherches: 99 }));
+  const recuperer = vi.fn(async () => new Response('{}', { status: 403 }));
+  const resultats = await Promise.allSettled(Array.from({ length: 4 }, () =>
+    chercherYoutube("UC_chaine", "titre", { cleYoutube: CLE, recuperer })));
+  expect(recuperer).toHaveBeenCalledTimes(1);
+  expect(quotaDuJour().recherches).toBe(100);
+  expect(resultats.filter((r) => r.status === "rejected")).toHaveLength(1);
 });

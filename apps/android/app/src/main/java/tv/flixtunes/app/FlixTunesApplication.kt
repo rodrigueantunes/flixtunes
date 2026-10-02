@@ -12,6 +12,7 @@ import coil3.request.crossfade
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import okhttp3.OkHttpClient
 import tv.flixtunes.app.playback.JetonSession
+import tv.flixtunes.app.playback.estOrigineFlixTunes
 import tv.flixtunes.app.ui.tailleCacheImages
 
 /**
@@ -49,12 +50,17 @@ class FlixTunesApplication : Application(), SingletonImageLoader.Factory {
              */
             .components {
                 add(OkHttpNetworkFetcherFactory(callFactory = {
-                    OkHttpClient.Builder().addInterceptor { chaine ->
+                    // Réévalué à chaque saut HTTP, y compris après une redirection d'image.
+                    OkHttpClient.Builder().addNetworkInterceptor { chaine ->
                         val requete = chaine.request().newBuilder().apply {
+                            removeHeader("X-FlixTunes-Profile-Token")
+                            removeHeader("X-FlixTunes-Remote-Token")
+                            if (JetonSession.serveur?.let { estOrigineFlixTunes(chaine.request().url.toString(), it) } == true) {
                             JetonSession.profil?.takeIf { it.isNotBlank() }
                                 ?.let { header("X-FlixTunes-Profile-Token", it) }
                             JetonSession.compteDistant?.takeIf { it.isNotBlank() }
                                 ?.let { header("X-FlixTunes-Remote-Token", it) }
+                            }
                         }.build()
                         chaine.proceed(requete)
                     }.build()

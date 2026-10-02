@@ -42,7 +42,9 @@ const BUDGETS = {
    * Le seuil descend donc pour retenir le gain. Le laisser à 100 aurait rendu vingt kilooctets de
    * dérive à peine gagnés, ce que ce fichier existe précisément pour empêcher.
    */
-  jsEntree: { limite: 95 * Kio, libelle: "JavaScript du premier affichage (gzip)" },
+  // 0.5.9.r5 : 95,1 Kio mesurés avec le contexte de classement VLC dans l'API partagée.
+  // Le moteur et son interface restent dans des modules chargés à la demande.
+  jsEntree: { limite: 96 * Kio, libelle: "JavaScript du premier affichage (gzip)" },
   /**
    * Relevé de 16 à 18 Kio le 31 août 2026, pour un écran entier qui n'existait pas.
    *
@@ -88,7 +90,12 @@ const BUDGETS = {
    *
    * Trois kilooctets de marge. Le prochain qui les dépassera devra, lui aussi, dire pourquoi.
    */
-  jsDiffere: { limite: 207 * Kio, libelle: "Lecteur chargé à la demande (gzip)" },
+  // 0.5.9.r2 : 207,7 Kio mesurés avec la relève HLS native, le diagnostic et la pagination Web.
+  // Le budget du premier affichage reste à 95 Kio ; ce code ne part qu'à l'ouverture du rayon.
+  // 0.5.9.r5 : 212,6 Kio mesurés ; le lecteur VLC du direct est un module différé distinct.
+  // 0.6.0.r1 : sélecteur Cast/AirPlay et réception des télécommandes, chargés séparément.
+  // Le budget du premier affichage reste à 96 Kio ; seuls les modules différés gagnent 5 Kio.
+  jsDiffere: { limite: 220 * Kio, libelle: "Lecteur chargé à la demande (gzip)" },
   imageUnitaire: { limite: 96 * Kio, libelle: "Image la plus lourde (brute)" },
   mediaDemarrage: { limite: 128 * Kio, libelle: "Son de démarrage (brut)" },
   totalDemarrage: { limite: 320 * Kio, libelle: "Tout ce qui part au premier affichage (gzip + images)" },

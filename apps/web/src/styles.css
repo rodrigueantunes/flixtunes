@@ -757,7 +757,8 @@ h1, h2 { font-family: "Manrope", sans-serif; }
 .lecteur-direct video.lecteur-direct-releve { visibility: hidden; }
 .lecteur-direct-barre { position: absolute; inset: 0 0 auto; display: flex; align-items: center; gap: var(--pas-3);
   padding: 1.4rem 2rem 4rem; background: linear-gradient(#000c, transparent); opacity: 0; transition: opacity var(--duree-reponse); }
-.lecteur-direct:hover .lecteur-direct-barre, .lecteur-direct:focus-within .lecteur-direct-barre { opacity: 1; }
+.lecteur-direct:not(.commandes) { cursor: none; }
+.lecteur-direct:not(.commandes) .lecteur-direct-barre { visibility: hidden; pointer-events: none; }
 .lecteur-direct-titre { display: grid; gap: .15rem; }
 .lecteur-direct-titre small { color: var(--muted); font-size: .85rem; }
 .lecteur-direct-message { position: absolute; padding: var(--pas-2) var(--pas-3); border-radius: var(--rayon-commande);
@@ -944,6 +945,9 @@ footer > button:first-of-type { margin-left: auto; }
 .player-top button,
 .player-command-row button,
 .player-command-row select,
+.lecteur-direct-barre > button,
+.lecteur-direct-progression > button,
+.lecteur-direct-diagnostic button,
 /*
  * Le panneau **Pistes** avait été oublié, et il portait le défaut à l'état pur.
  *
@@ -978,6 +982,9 @@ footer > button:first-of-type { margin-left: auto; }
 .player-top button:hover,
 .player-command-row button:hover,
 .player-command-row select:hover,
+.lecteur-direct-barre > button:hover,
+.lecteur-direct-progression > button:hover,
+.lecteur-direct-diagnostic button:hover,
 .playback-choice-actions button:not(.primary):hover:not(:disabled),
 .player-message-actions button:hover,
 .player-tracks select:hover:not(:disabled) { background: #17223ae8; border-color: #ffffff66; }
@@ -1006,7 +1013,22 @@ footer > button:first-of-type { margin-left: auto; }
  * étroits. Le lecteur du direct n'avait pas ce défaut : aucune règle de ses barres ne l'écrase.
  */
 .player-top button.player-icon-button,
+.lecteur-direct-barre > button.player-icon-button,
+.lecteur-direct-progression > button.player-icon-button,
 .player-command-row button.player-icon-button { width: 38px; min-width: 38px; padding: 0; border-radius: var(--rayon-pastille); font-size: 1.1rem; line-height: 1; white-space: nowrap; }
+.lecteur-direct button:focus-visible { outline: 2px solid var(--blue-light); outline-offset: 3px; }
+.lecteur-direct-volume input { width: clamp(60px, 10vw, 130px); height: 24px; padding: 0; margin: 0;
+  appearance: none; border: 0; background: transparent; cursor: pointer; }
+.lecteur-direct-volume input::-webkit-slider-runnable-track { height: 4px; border-radius: 3px; background: #ffffff40; }
+.lecteur-direct-volume input::-moz-range-track { height: 4px; border-radius: 3px; background: #ffffff40; }
+.lecteur-direct-volume input::-webkit-slider-thumb { appearance: none; width: 14px; height: 14px; margin-top: -5px;
+  border: 0; border-radius: 50%; background: var(--blue-light); }
+.lecteur-direct-volume input::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: var(--blue-light); }
+.lecteur-direct-volume input:focus-visible { outline: 2px solid var(--blue-light); outline-offset: 3px; }
+@media (max-width: 600px) {
+  .lecteur-direct-progression { gap: .5rem; padding-inline: .75rem; flex-wrap: wrap; }
+  .lecteur-direct-volume { flex-wrap: wrap; }
+}
 .player-icon-button svg { display: block; width: 16px; height: 16px; fill: currentColor; }
 /* Lire et mettre en pause est le geste principal : il se distingue par la taille, pas par la couleur. */
 .player-command-row .player-icon-button:first-child { width: 46px; min-width: 46px; min-height: 46px; font-size: 1.25rem; }
@@ -1062,6 +1084,7 @@ video.subtitles-color-green::cue { color: #86efac; }
 */
 html.bureau-video, body.bureau-video { background: transparent; }
 .player-page-bureau { background: transparent; }
+.lecteur-direct.lecteur-direct-bureau { background: transparent; }
 
 /*
   Les sous-titres, dessinés par nous puisqu'il n'y a plus de balise à qui les confier.
@@ -1448,3 +1471,36 @@ html.bureau-video, body.bureau-video { background: transparent; }
 /* Le budget de l'API, montré avant toute dépense — rouge quand il ne suffit plus à une recherche. */
 .web-budget { margin: .3rem 0 0; color: var(--muted); font-size: .8rem; }
 .web-budget.epuise { color: #ffb7c0; }
+
+.lecteur-direct-diagnostic { position: absolute; right: 1rem; top: 5rem; z-index: 5;
+  max-width: min(24rem, 90vw); background: #10151eee; color: #fff; padding: .6rem .8rem;
+  border: 1px solid #ffffff40; border-radius: .5rem; font-size: .8rem; }
+.lecteur-direct-diagnostic summary { cursor: pointer; }
+.lecteur-direct-diagnostic dl { display: grid; grid-template-columns: 1fr 1fr; gap: .4rem; margin-bottom: 0; }
+.lecteur-direct-diagnostic dd { margin: 0; overflow-wrap: anywhere; }
+.top-brand { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+.cast-button { display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; width:44px; height:44px; border:1px solid #395078; border-radius:12px; background:#13203b; color:#eef4ff; padding:9px; cursor:pointer; }
+.cast-button:hover, .cast-button:focus-visible { background:#234578; outline:2px solid #75a8ff; }
+.cast-backdrop { position:fixed; inset:0; z-index:10000; background:#040914c9; display:flex; justify-content:center; align-items:center; padding:20px; }
+.cast-panel { width:min(560px,100%); max-height:90dvh; overflow:auto; padding:24px; border:1px solid #3e5273; border-radius:22px; background:#0e182a; color:#eef4ff; box-shadow:0 20px 80px #0008; }
+.cast-panel button { border:1px solid #395078; border-radius:12px; padding:11px 15px; color:#eef4ff; background:#1a2b48; cursor:pointer; }
+.cast-panel button:focus-visible { outline:3px solid #83b1ff; outline-offset:2px; }
+.cast-panel button:disabled { opacity:.5; cursor:wait; }
+.cast-panel p,.cast-panel small { color:#adbbd1; line-height:1.5; }
+.cast-heading,.cast-transport { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.cast-heading h2 { margin:0; }
+.cast-targets { display:grid; gap:10px; margin:20px 0; }
+.cast-targets button { text-align:left; display:grid; gap:5px; }
+.cast-targets button[aria-pressed=true] { background:#183c72; border-color:#78aaff; }
+.cast-remote,.cast-airplay { border-top:1px solid #344463; padding:16px 0; }
+.cast-remote label { display:grid; grid-template-columns:75px 1fr; align-items:center; gap:12px; margin:18px 0; }
+.cast-remote input { width:100%; accent-color:#508aff; }
+.cast-remote input[type=range] { appearance:none; height:6px; min-height:0; padding:0; border:0; border-radius:8px; background:#344c70; cursor:pointer; }
+.cast-remote input[type=range]::-webkit-slider-thumb { appearance:none; width:18px; height:18px; border-radius:50%; background:#83b1ff; border:2px solid #e3edff; }
+.cast-remote input[type=range]::-moz-range-thumb { width:14px; height:14px; border-radius:50%; background:#83b1ff; border:2px solid #e3edff; }
+.cast-remote input:focus-visible,.cast-panel:focus-visible { outline:2px solid #83b1ff; outline-offset:3px; }
+.cast-panel .cast-error { background:#60283b; color:#ffe2e8; border-radius:10px; padding:12px; }
+.cast-airplay-video { position:fixed; width:1px; height:1px; opacity:.01; pointer-events:none; }
+@media(max-width:560px) { .cast-backdrop{padding:10px}.cast-panel{padding:18px}.cast-button span{display:none} }
+
+@media(max-width:360px) { .topbar{gap:8px}.top-brand .brand img{display:none} }

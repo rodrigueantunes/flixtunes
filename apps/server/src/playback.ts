@@ -30,6 +30,7 @@ import { toneMappingFilters, toneMappingInputArgs } from "./tone-mapping-filters
 export { toneMappingFilters, toneMappingInputArgs };
 import { db } from "./database.js";
 import { quarantinedCodecs, withoutQuarantined } from "./codec-quarantine.js";
+import { AvancementPreparation, filtresPreparationDiffusion } from "./diffusion-preparation.js";
 import { essaiDirectPertinent } from "./essai-direct.js";
 import { enrichHdrFrameMetadata, parseProbeOutput, probeMedia } from "./ffprobe.js";
 import { displayResolution } from "./video-resolution.js";
@@ -99,6 +100,8 @@ interface InternalSession extends PlaybackSession {
    * client interroge la session deux fois par seconde et `kill` ne rend pas la main tout de suite.
    */
   blocageSignale: boolean;
+  diffusion?: boolean;
+  avancementPreparation?: AvancementPreparation;
 }
 
 const sessions = new Map<string, InternalSession>();
@@ -183,8 +186,8 @@ export function regulationDebitArgs(version: string | null | undefined,
   return ["-readrate", rate.toFixed(2), "-readrate_initial_burst", String(Math.max(1, Math.round(burstSeconds)))];
 }
 
-export function keyframeArgs(encoder: string): string[] {
-  const args = ["-force_key_frames", `expr:gte(t,n_forced*${SEGMENT_SECONDS})`];
+export function keyframeArgs(encoder: string, secondes = SEGMENT_SECONDS): string[] {
+  const args = ["-force_key_frames", `expr:gte(t,n_forced*${secondes})`];
   // `-sc_threshold` n'appartient qu'aux encodeurs logiciels x264/x265 ; le passer à un encodeur
   // matériel produit un avertissement sans effet. Sans lui, un changement de plan insère une
   // image-clé supplémentaire et découpe un segment plus court que prévu.
@@ -653,7 +656,13 @@ async function startAdaptiveFfmpegSession(session: InternalSession, filePath: st
     "-hls_segment_filename", path.join(session.directory, `v%v_segment_%05d.${mpegTs ? "ts" : "m4s"}`),
     path.join(session.directory, "v%v_index.m3u8"));
   }
+  if (session.diffusion) args.unshift("-progress", "pipe:1", "-stats_period", "1");
   const child = spawn(config.ffmpegPath, args, { cwd: session.directory, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+  if (session.diffusion) {
+    session.avancementPreparation = new AvancementPreparation(); session.blocageSignale = false;
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => { if (session.process === child) session.avancementPreparation?.recevoir(chunk); });
+  }
   session.process = child; child.stderr?.setEncoding("utf8");
   child.stderr?.on("data", (chunk: string) => { session.stderr = `${session.stderr}${chunk}`.slice(-5000); });
   child.once("error", (error) => { session.status = "failed"; session.stderr = error.message; session.error = friendlyTranscodeError(error.message); rememberTranscodeFailure(session); });
@@ -669,6 +678,7 @@ async function startAdaptiveFfmpegSession(session: InternalSession, filePath: st
     // ramène la session sur le processeur au lieu de la faire échouer. Ce repli manquait ici, si bien
     // qu'un pilote défaillant se traduisait par « le transcodage a échoué » sans seconde chance.
     if (!forceSoftware && session.status === "starting" && encoder.encoder !== "libx264") {
+      rememberTranscodeFailure(session);
       session.stderr = "";
       void (async () => {
         await rm(session.directory, { recursive: true, force: true });
@@ -1759,10 +1769,11 @@ async function startFfmpegSession(
   }
 
   // Désentrelacement puis tone mapping d'abord : les sous-titres sont composés ensuite, sur une image déjà convertie.
-  const videoFilters: string[] = [...colorPipeline.filters];
+  let videoFilters: string[] = [...colorPipeline.filters];
   if (decision.mode === "transcode" && decision.video) {
     const downscale = adaptive.width < source.width || adaptive.height < source.height;
-    videoFilters.push(transcodeScaleFilter(adaptive.width, adaptive.height, downscale));
+    videoFilters = filtresPreparationDiffusion(videoFilters, transcodeScaleFilter(adaptive.width, adaptive.height, downscale),
+      Boolean(session.diffusion && toneMapping && !colorPipeline.toneMappingHardware && downscale));
   }
 
   let complexVideoFilter: string | null = null;
@@ -1813,7 +1824,7 @@ async function startFfmpegSession(
   else {
     const chosenEncoder = encoder?.encoder ?? "libx264";
     args.push("-c:v", chosenEncoder, ...(encoder?.outputArgs ?? []));
-    args.push(...keyframeArgs(chosenEncoder));
+    args.push(...keyframeArgs(chosenEncoder, session.diffusion ? 2 : SEGMENT_SECONDS));
     args.push("-b:v", String(adaptive.videoBitrate), "-maxrate", String(Math.round(adaptive.videoBitrate * 1.08)), "-bufsize", String(adaptive.videoBitrate * 2));
     if (hdrEncoder) args.push(...hdrEncoderArguments(hdrEncoder.encoder, decision.video, colorPipeline), "-tag:v", "hvc1");
     else {
@@ -1852,12 +1863,18 @@ async function startFfmpegSession(
    * rapport entre image, son et sous-titres est conservé tel quel.
    */
   args.push("-sn", "-max_muxing_queue_size", "2048", "-avoid_negative_ts", "make_zero",
-    "-f", "hls", "-hls_time", String(SEGMENT_SECONDS), "-hls_list_size", "0",
+    "-f", "hls", "-hls_time", String(session.diffusion ? 2 : SEGMENT_SECONDS), "-hls_list_size", "0",
     "-hls_segment_type", mpegTs ? "mpegts" : "fmp4", "-hls_flags", "independent_segments+temp_file");
   if (!mpegTs) args.push("-hls_fmp4_init_filename", "init.mp4");
   args.push("-hls_segment_filename", segmentPath, manifestPath);
 
+  if (session.diffusion) args.unshift("-progress", "pipe:1", "-stats_period", "1");
   const child = spawn(config.ffmpegPath, args, { cwd: session.directory, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+  if (session.diffusion) {
+    session.avancementPreparation = new AvancementPreparation(); session.blocageSignale = false;
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => { if (session.process === child) session.avancementPreparation?.recevoir(chunk); });
+  }
   session.process = child;
   child.stderr?.setEncoding("utf8");
   child.stderr?.on("data", (chunk: string) => { session.stderr = `${session.stderr}${chunk}`.slice(-5000); });
@@ -1871,6 +1888,7 @@ async function startFfmpegSession(
       if (session.status !== "failed") session.status = "completed";
     } else if (!forceSoftware && session.status === "starting"
       && ((encoder && encoder.encoder !== "libx264") || colorPipeline.toneMappingHardware)) {
+      rememberTranscodeFailure(session);
       session.stderr = "";
       void (async () => {
         await rm(session.directory, { recursive: true, force: true });
@@ -1885,7 +1903,8 @@ async function startFfmpegSession(
   });
 }
 
-export async function createPlaybackSession(mediaId: string, capabilities: PlaybackCapabilities): Promise<PlaybackSession | null> {
+export async function createPlaybackSession(mediaId: string, capabilities: PlaybackCapabilities,
+  options: { essaiDirect?: boolean; diffusion?: boolean } = {}): Promise<PlaybackSession | null> {
   const row = mediaRow(mediaId);
   const info = await getPlaybackInfo(mediaId);
   if (!row || !info) return null;
@@ -1905,7 +1924,7 @@ export async function createPlaybackSession(mediaId: string, capabilities: Playb
   const capacitesReelles = plafonnerDefinition(capacitesAnnoncees, preferencesConversion().resolutionMax);
   const decision = decidePlayback(info, capacitesReelles, {
     codecsEnQuarantaine: quarantinedCodecs(capabilities.deviceId),
-    autoriserEssaiDirect: true,
+    autoriserEssaiDirect: options.essaiDirect ?? true,
     // Identité et non égalité : `plafonnerDefinition` rend l'objet reçu, tel quel, lorsque le réglage
     // ne s'applique pas. Deux objets distincts signifient donc qu'il a réellement abaissé le plafond,
     // et que ce plafond est une consigne — pas une annonce du client qu'on aurait le droit d'éprouver.
@@ -1939,7 +1958,7 @@ export async function createPlaybackSession(mediaId: string, capabilities: Playb
     };
   }
   await cleanupPlaybackSessions(config.transcodeCacheHours * 60 * 60 * 1000);
-  const cacheKey = JSON.stringify([mediaId, capabilities]);
+  const cacheKey = JSON.stringify([mediaId, capabilities, ...(options.diffusion ? ["diffusion"] : [])]);
   const cachedId = transcodeCache.get(cacheKey); const cached = cachedId ? sessions.get(cachedId) : null;
   if (cached && cached.status !== "failed") { cached.refCount += 1; cached.createdAt = Date.now(); cached.lastAccess = Date.now(); return publicSession(cached); }
   if (cachedId) transcodeCache.delete(cacheKey);
@@ -1987,7 +2006,7 @@ export async function createPlaybackSession(mediaId: string, capabilities: Playb
     decisionReasons: admission.degraded ? [...decision.reasons, admission.reason] : decision.reasons,
     deviceId: capabilities.deviceId?.trim() || null,
     directory, process: null, createdAt: Date.now(), lastAccess: Date.now(), stderr: "", cacheKey, refCount: 1,
-    arretDemande: false, blocageSignale: false,
+    arretDemande: false, blocageSignale: false, diffusion: options.diffusion,
     // En remux, la vidéo est **copiée** : le profil adaptatif est calculé pour l'admission, mais aucun
     // filtre d'échelle n'est posé et l'encodeur reste `copy`. Rapporter la définition de ce profil
     // faisait croire à un rabaissement qui n'a pas lieu — un film 4K servi tel quel s'annonçait
@@ -2014,7 +2033,7 @@ export async function createPlaybackSession(mediaId: string, capabilities: Playb
 
 function publicSession(session: InternalSession): PlaybackSession {
   const { directory: _directory, process: _process, createdAt: _createdAt, stderr: _stderr,
-    cacheKey: _cacheKey, refCount: _refCount, lastAccess: _lastAccess, ...result } = session;
+    cacheKey: _cacheKey, refCount: _refCount, lastAccess: _lastAccess, diffusion: _diffusion, avancementPreparation: _avancement, ...result } = session;
   return result;
 }
 
@@ -2068,7 +2087,8 @@ export async function getPlaybackSession(id: string): Promise<PlaybackSession | 
   // chaque interrogation — relevé trois fois pour une seule session dans le journal du NAS, ce qui
   // laisse croire à trois incidents là où il n'y en a qu'un.
   if (session.status === "starting" && session.process && !session.blocageSignale
-    && Date.now() - session.createdAt > DELAI_BLOCAGE_MS) {
+    && (session.avancementPreparation ? session.avancementPreparation.bloquee(DELAI_BLOCAGE_MS)
+      : Date.now() - session.createdAt > DELAI_BLOCAGE_MS)) {
     session.blocageSignale = true;
     // La sortie d'erreur est conservée avant d'être écrasée par la relance : c'est la seule trace de
     // ce qui a bloqué, et sans elle le diagnostic repart de zéro.

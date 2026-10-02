@@ -606,6 +606,12 @@ function ensureLiveUrlColumn(name: string, definition: string) {
 ensureLiveUrlColumn("hauteur", "INTEGER");
 ensureLiveUrlColumn("debit", "INTEGER");
 ensureLiveUrlColumn("sonde_le", "TEXT");
+db.exec(`CREATE TABLE IF NOT EXISTS live_stabilite (
+  chaine TEXT NOT NULL REFERENCES live_channels(id) ON DELETE CASCADE,
+  url TEXT NOT NULL, contexte TEXT NOT NULL, secondes INTEGER NOT NULL DEFAULT 0,
+  incidents INTEGER NOT NULL DEFAULT 0, repos_jusqua INTEGER NOT NULL DEFAULT 0,
+  mesure_le INTEGER NOT NULL, PRIMARY KEY (chaine,url,contexte)
+)`);
 /**
  * Ce que le dernier relevé des sondes dit de l'adresse : `1` joignable, `0` muette, rien si elle n'y
  * figure pas ou si le relevé manque. Écrit avec l'adresse, à chaque rafraîchissement.

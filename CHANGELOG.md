@@ -1,5 +1,284 @@
 # Journal des versions
 
+## 0.6.0.r6 — Qualité source et confirmation réelle du Cast
+
+<!-- release -->
+- **Qualité source essayée en premier.** Films, séries et vidéos Web tentent la lecture directe ou
+  la copie de la vidéo, jusqu'à 3840 × 2160, avant les conversions 1080p puis 720p de secours.
+  La première tentative ne lance pas de réencodage 4K. Les formats HDR compatibles avec ce parcours
+  restent préservés ; la réception dépend toujours du lecteur distant.
+- **Live TV sans réduction systématique à 720p.** Premier essai en copie vidéo dans du HLS fMP4,
+  qui conserve la définition et la cadence d'origine, puis conversion compatible si nécessaire.
+  Les fichiers d'initialisation et segments restent limités à la session et au profil autorisé.
+- **Fin des faux succès au démarrage.** Le Cast doit confirmer le bon média et une position qui
+  avance. Les états d'une ancienne session et un bref signal PLAYING ne suffisent plus.
+  Une session disparue ou une position figée sont signalées.
+- **Tampon initial des vidéos.** Les conversions préparent au moins six secondes, ou la totalité
+  d'un extrait plus court, avant l'envoi au récepteur.
+- **État et qualité visibles.** Android affiche le chargement, les erreurs distantes et la reprise ;
+  Android et Web indiquent la conservation source ou la conversion de secours utilisée.
+<!-- /release -->
+
+Le serveur NAS et les clients doivent être mis à jour pour disposer de toutes ces améliorations.
+[Essais et limites r6](docs/DIFFUSION_060_R6.md).
+
+## 0.6.0.r5 — Préparation des vidéos pour le cast
+
+<!-- release -->
+- **Conversion des sources HDR allégée.** Pour le cast, une source 4K destinée à une sortie
+  1080p/720p est réduite avant le tone mapping logiciel. Les segments de ces conversions durent
+  deux secondes pour produire plus tôt le premier morceau lisible.
+- **Démarrage suivi par son avancement réel.** Une conversion Cast qui continue de produire des
+  images ne se fait plus arrêter au seul motif qu'elle a dépassé vingt secondes. Une relance
+  logicielle reçoit son propre délai ; l'attente totale de préparation reste bornée.
+- **Second essai de préparation automatique.** Si la première conversion échoue, un essai
+  H.264/AAC en 720p est permis après libération de la tentative précédente. Le total reste limité
+  à deux essais, préparation et chargement confondus. Les refus de capacité ne sont pas contournés.
+- **Erreurs de préparation explicites.** Le motif retourné par le moteur est conservé, avec un code
+  distinguant refus, échec et délai. L'échec matériel est conservé dans le diagnostic avant le repli.
+- **Banc de conversion réel.** Vérification avec FFmpeg, accès HTTP aux manifestes et segments,
+  décodage H.264/AAC et révocation des URL de test ; données entièrement isolées.
+<!-- /release -->
+
+Le correctif se déploie sur le serveur NAS. Les améliorations de découverte r4 sont conservées.
+[Détails et limites des essais r5](docs/DIFFUSION_060_R5.md).
+
+## 0.6.0.r4 — Retour des appareils Google Cast sur NAS
+
+<!-- release -->
+- **Découverte Google Cast corrigée sous Linux/NAS.** La r3 liait l'écoute mDNS à l'adresse
+  unicast de chaque interface : les réponses multicast pouvaient alors ne jamais parvenir
+  au navigateur de services, laissant seulement les appareils DLNA dans la liste. L'écoute
+  utilise désormais toutes les adresses locales, tout en conservant une émission multicast
+  sur chaque interface privée et le dédoublonnage des appareils.
+- **Test de non-régression de la réception multicast.** La pile Bonjour réelle est exercée avec
+  une livraison UDP simulant le filtrage Linux. Le test échoue avec le code r3 et passe après
+  correction ; il couvre aussi les retraits sur plusieurs interfaces, le refus des adresses
+  publiques et la fermeture de la découverte.
+<!-- /release -->
+
+Le correctif est côté serveur : le NAS doit passer en r4. Les voies de lecture films, séries,
+Web et Live TV, le placement du bouton Cast et les moteurs vidéo Android/VLC restent identiques.
+[Détails et limites des essais r4](docs/DIFFUSION_060_R4.md).
+
+## 0.6.0.r3 — Connexion et découverte Google Cast
+
+<!-- release -->
+- **Blocage GET_STATUS corrigé dans le serveur.** Le volume envoyé par le récepteur avant la
+  création d’une lecture pouvait provoquer une exception, puis un faux délai d’attente. Cet état
+  précoce est maintenant accepté ; le test de non-régression reproduit cette séquence.
+- **Initialisation Cast renforcée.** Identifiant de plateforme standard, ouverture explicite du
+  canal avec les informations de l’émetteur et premier battement envoyé immédiatement.
+- **État du récepteur mieux reconnu.** Les notifications d’état sans numéro de requête, avec zéro
+  ou avec un numéro transmis en texte sont prises en compte. Une notification d’état ne valide
+  jamais à elle seule une commande de lecture ou de pause.
+- **Reconnexion complète.** Si TLS réussit mais que le récepteur reste silencieux à GET_STATUS,
+  une seconde liaison est essayée avant l’échec. Aucun média n’est préparé tant que le récepteur
+  n’a pas confirmé son état. Les erreurs indiquent les messages reçus lors du dernier essai.
+- **Découverte sur plusieurs interfaces.** Les recherches sont émises sur chaque interface réseau
+  privée, avec dédoublonnage des appareils. Une disparition sur une carte virtuelle ne retire pas
+  un récepteur encore visible sur le réseau local.
+- **Télécommande Web fiabilisée.** État de lecture séparé des modules d’interface pour éviter une
+  erreur de chargement asynchrone. Les réponses tardives ne réinscrivent plus un ancien profil
+  et ne lancent aucun contenu après fermeture du récepteur.
+- **Contrôle des réponses.** Les réponses appartenant à un autre canal ou à un autre émetteur
+  ne peuvent plus confirmer une commande en attente. Les échecs de connexion sont identifiés
+  dans le journal serveur, avant toute conversion.
+<!-- /release -->
+
+L’icône en haut à gauche, les téléphones et tablettes comme émetteurs, et Android TV comme
+récepteur sont conservés. Films, épisodes, vidéos Web et Live TV gardent leurs voies de diffusion.
+[Détails et limites des essais r3](docs/DIFFUSION_060_R3.md).
+
+## 0.6.0.r2 — Fiabilité du cast et erreurs exploitables
+
+<!-- release -->
+- **Commande Cast à gauche.** Icône dans le coin supérieur gauche de l’accueil et des lecteurs.
+  Sur Android TV, la commande d’envoi est masquée ; la réception et le pilotage depuis un
+  téléphone ou une tablette restent disponibles.
+- **Connexion Google Cast renforcée.** Vérification depuis le NAS avant toute conversion, deuxième
+  tentative après un échec de connexion, prise en compte des mises à jour d’adresse et de port après
+  une veille. Les adresses privées alternatives annoncées par le récepteur peuvent être essayées.
+- **Démarrage du récepteur mieux suivi.** Réutilisation du lecteur Google Cast déjà ouvert, attente
+  de sa disponibilité lorsqu’il démarre en plusieurs étapes, délais adaptés au chargement et gestion
+  des messages binaires sans interrompre la session média.
+- **Repli de format.** Si Google Cast ou DLNA refuse une vidéo, un second essai utilise une conversion
+  H.264/AAC SDR. Le refus d’une chaîne Live TV peut entraîner l’essai de ses sources suivantes,
+  dans une limite de trois sources et d’un budget de préparation de 45 secondes.
+- **Compatibilité DLNA améliorée.** Prise en compte des récepteurs imbriqués et de leur adresse de
+  base ; une commande de position indisponible ne fait plus échouer une lecture déjà confirmée.
+  Le déplacement initial attend que la lecture ait démarré.
+- **AirPlay mieux accompagné.** Erreur de lecture visible, possibilité de réessayer un média en
+  format compatible et annulation possible dès la préparation. L’accès précédent est révoqué.
+- **Diagnostic plus précis sur Android et les autres clients.** Les erreurs Cast indiquent leur étape
+  et leur code. L’absence de requête média du récepteur vers le NAS est signalée. Android laisse
+  aboutir les préparations avec repli sans allonger l’attente des simples commandes de suivi.
+<!-- /release -->
+
+La lecture locale attend toujours la confirmation du récepteur avant de se mettre en pause.
+Ces corrections ne garantissent pas la compatibilité d’un appareil hors ligne ou d’un format
+non accepté. [Détails et validation de la r2](docs/DIFFUSION_060_R2.md).
+
+## 0.6.0.r1 — Cast et télécommande du réseau local
+
+<!-- release -->
+- **Caster depuis FlixTunes.** Un nouveau bouton dans l’accueil et les lecteurs permet de choisir un
+  appareil Google Cast ou DLNA détecté par le NAS, ou un lecteur FlixTunes connecté au même profil.
+  Disponible sur le Web, Windows, Linux et Android, pour les films, épisodes, vidéos du rayon Web
+  et chaînes Live TV. La prise en charge effective des formats dépend du récepteur.
+- **Télécommande entre appareils.** Lecture, pause, reprise, arrêt, volume et déplacement dans les
+  vidéos compatibles depuis un autre appareil du réseau local. La progression des films et épisodes
+  diffusés est conservée. Le direct reste soumis au tampon et aux commandes du récepteur.
+- **Transfert confirmé.** La lecture locale ne se met en pause qu’après confirmation du démarrage
+  distant. Un échec de préparation ou un refus du téléviseur est affiché sans arrêter le lecteur local.
+- **AirPlay dans Safari compatible.** Préparation du média puis sélection du récepteur dans le menu
+  natif Apple, avec lecture/pause et arrêt. Cette voie nécessite Safari sur un appareil Apple.
+- **Accès limités au média.** Les récepteurs utilisent des adresses temporaires et révocables ; les
+  jetons du profil ne leur sont pas transmis. Les commandes restent sur le réseau local et les lecteurs
+  FlixTunes sont isolés par profil. La découverte ne lance aucune lecture automatiquement.
+- **Préservation des lecteurs existants.** Le cast utilise une sortie distincte et des conversions
+  indépendantes si nécessaire. Le moteur VLC intégré, ses commandes et les reprises Android TV
+  restent en place. Le panneau de cast est chargé à la demande dans le navigateur.
+<!-- /release -->
+
+Compatibilité, configuration réseau et limites : [Diffusion 0.6.0 r1](docs/DIFFUSION_060_R1.md).
+
+## 0.5.9.r6 — Live TV VLC et stabilité Android TV
+
+**0.5.9 Révision 6** — Regroupe les améliorations des révisions 5 et 6.
+
+<!-- release -->
+- **Live TV sur VLC intégré sous Windows et Linux.** La lecture utilise le moteur VLC lorsqu'il est
+  disponible, avec les commandes dans FlixTunes et un repli vers le lecteur Web en cas d'incompatibilité.
+- **Commandes harmonisées avec le thème.** Boutons, icônes, volume, survol et focus reprennent
+  l'apparence du lecteur. Le bouton plein écran suit aussi les changements effectués avec F11 ou Échap.
+- **Meilleure continuité du direct.** Un relais local authentifié auprès du NAS précharge les segments
+  HLS dans un cache limité à 64 Mio, avec jusqu'à 30 secondes de réserve supplémentaire lorsque le flux
+  le permet. Les segments trop volumineux restent lisibles sans être conservés dans le cache.
+- **Reprises et renouvellement des accès améliorés.** Les accès peuvent être renouvelés sans
+  redémarrer VLC lorsque la structure du flux le permet. Le classement de stabilité distingue
+  le lecteur VLC, les navigateurs et Android.
+- **Correctif du voile gris et des couleurs ternies après reprise sur Android TV.** Le décodeur
+  s'initialise sur la surface réellement affichée. Les changements de surface, de définition ou de
+  couleurs renouvellent sa configuration, en conservant les métadonnées colorimétriques d'origine.
+- **Bascule de secours vérifiée.** Une relève vidéo attend sa première image affichée avant de
+  libérer l'ancien lecteur ; si elle échoue, celui-ci est rattaché. Une simple mise en tampon
+  conserve la lecture et les protections mémoire restent actives.
+- **Retour à une meilleure qualité après stabilisation.** Android adapte la remontée de qualité
+  à la réserve et à la mémoire disponibles. Le remplissage initial ne provoque plus de baisse
+  immédiate et une nouvelle source n'hérite plus de la limite de débit imposée à la précédente.
+- **Diagnostic accessible à la télécommande.** Sur Android TV, Haut puis OK ouvre le diagnostic,
+  même avec une seule source ; Retour le ferme. Il affiche le modèle du téléviseur et le rendu
+  avant/après reprise. Les diagnostics distinguent le cache du tampon décodé, sans exposer les accès.
+<!-- /release -->
+
+Fonctionnement confirmé par retour utilisateur sous Windows et sur Android TV Philips.
+
+## 0.5.9.r4 — Correction de l’ouverture HTTP et des reprises Android
+
+<!-- release -->
+- Le lecteur Web s'ouvre à nouveau en HTTP sur l'adresse locale du NAS : la création de son
+  identifiant de session ne dépend plus de `crypto.randomUUID`.
+- Android adapte les tampons et le cache à la mémoire de l'appareil et refuse la préparation
+  d'un second lecteur lorsque les ressources sont insuffisantes.
+- Les reprises Android conservent la surface vidéo. Un échec de préparation garde le lecteur
+  courant ; les exceptions de reprise sont traitées sans quitter l'activité.
+- Le diagnostic Android peut indiquer la dernière cause d'arrêt anormal signalée par le système.
+<!-- /release -->
+
+## 0.5.9.r3 — Compatibilité et continuité du Live TV Web
+
+<!-- release -->
+- Le bandeau du direct et son diagnostic disparaissent après le dernier geste, même lorsque
+  la souris reste sur la vidéo ou qu'un bouton garde le focus. Le clavier les rappelle.
+- Android masque aussi les commandes après une mise en tampon et ne les réaffiche plus
+  à chaque reprise automatique. Les reprises HDR et les changements de colorimétrie réarment
+  la surface vidéo, comme le lecteur de films ; l'effet sur le voile gris reste à confirmer sur TV.
+- Le navigateur privilégie les playlists lisibles et les chemins déjà fonctionnels. Les observations
+  distinguent Chromium, Firefox, Safari, le relais et l'accès direct, sans dégrader le classement Android.
+- Une conversion de secours vers H.264/AAC peut prendre en charge les transports TS, DASH,
+  MP4 et les HLS incompatibles. Elle est limitée à une session par défaut et soumise à la capacité du NAS.
+  Chaque accès amont reste contrôlé ; les fichiers produits sont isolés par profil.
+- Le démarrage prépare une réserve adaptée à la fenêtre réelle. La surveillance vérifie les images
+  décodées, régule le retard et réévalue la lecture au retour d'un onglet masqué.
+- La relève vérifie son décodage et son raccord avant la bascule ; une source redevenue saine
+  conserve la main. Les connexions et manifestes du relais local ont des délais bornés.
+- Le diagnostic exportable contient réserve, retard, chemin, codecs, images perdues et identité
+  opaque de source, sans adresse fournisseur ni jeton.
+<!-- /release -->
+
+## 0.5.9.r2 — Reprise WAN, vignettes et fiabilité du serveur
+
+<!-- release -->
+- Les liens Live TV invalidés par un redémarrage sont renouvelés automatiquement. Android
+  suit aussi le retour du réseau ; l'authentification et les restrictions de profil restent actives.
+- Le lecteur HLS natif prépare une relève sans vider la réserve encore lisible. Web et Android
+  proposent un diagnostic de réserve, de retard, de qualité et de source, sans afficher les jetons.
+- Une chaîne YouTube corrigée manuellement, comme Joueur du Grenier, récupère sa vignette
+  manquante sans perdre son verrouillage. Les images distantes mises en cache conservent leur
+  origine côté serveur pour permettre la restauration de fichiers perdus.
+- Les recherches YouTube ont un budget distinct des lectures de métadonnées, avec réservation
+  avant l'appel et remise à zéro à minuit dans le fuseau de Los Angeles.
+- Le rayon Web propose une recherche et des pages de 60 chaînes ; les chaînes au-delà des
+  200 premières sont accessibles. Une correction recharge la fiche affichée.
+- Les sauvegardes SQLite sont asynchrones, mutualisent les demandes simultanées et ne deviennent
+  visibles qu'une fois leur copie terminée. La conservation des sauvegardes existantes reste active.
+<!-- /release -->
+
+## 0.5.9.r1 — Continuité de la télévision en direct
+
+<!-- release -->
+- Les lecteurs conservent leur tampon pendant la préparation d'une reprise ou d'une source
+  de secours. Les contrôles interviennent avant son épuisement, avec un retard limité à 60 secondes.
+- Android prépare un second lecteur et garde la dernière image pendant le changement de surface.
+  Les deux clients utilisent l'heure de programme pour raccorder deux sources différentes.
+- La qualité baisse lorsque la réserve diminue et remonte progressivement après une accalmie,
+  afin d'éviter les changements répétés de débit.
+- Le classement prend en compte les périodes de lecture continue et met temporairement en retrait
+  les sources en échec. Les observations de chaque profil WAN restent séparées du réseau local.
+- Les liens WAN sont renouvelés avant leur expiration, sans supprimer l'authentification,
+  les restrictions de profil ou les protections du relais contre les destinations privées.
+<!-- /release -->
+
+## 0.5.8.r19 — Live TV et Web à distance, vignettes et portraits
+
+<!-- release -->
+- Live TV et Web sont accessibles en WAN après connexion : grille, filtres, favoris,
+  dernière chaîne, navigation et lecture. Les réglages et imports restent réservés au réseau local.
+- Les flux et logos Live TV passent par le NAS avec des accès chiffrés, temporaires et liés
+  au profil. Le relais contrôle les adresses à chaque redirection et à la connexion DNS,
+  limite les requêtes simultanées et coupe le téléchargement quand le lecteur se déconnecte.
+- Android authentifie le relais sans envoyer les jetons aux fournisseurs de chaînes.
+  Le cache et les reprises R18 sont conservés, avec le plafond de retard de 60 secondes.
+- Les avatars des chaînes Web déjà identifiées sont récupérés en arrière-plan, sans réanalyser
+  les vidéos. Les images locales et les fiches verrouillées sont conservées.
+- Les photos des talents s'affichent aussi en WAN. Seuls les portraits de fiches accessibles
+  au profil peuvent être demandés ; le relais d'images arbitraires reste fermé.
+<!-- /release -->
+
+## 0.5.8.r18 — playlist vérifiée et reprise des chaînes instables
+
+<!-- release -->
+### Télévision en direct
+
+- Le catalogue des listes importe sa playlist locale `chaines_francaises.m3u`,
+  après contrôle de son empreinte SHA-256 et de sa date. Les anciennes listes qui
+  réintroduisaient des flux en panne sont remplacées ; les autres fournisseurs restent disponibles.
+- Le lecteur Web recharge le manifeste maître lorsqu'une image se bloque ou que la session
+  expire. Une seconde lecture prépare la reprise pendant que l'ancienne utilise son tampon.
+  Si cette préparation échoue, la même adresse est réellement réouverte avant le repli.
+- Les relances d'une adresse unique fonctionnent aussi lorsque son rang ne change pas.
+  Les reprises simultanées sont empêchées, les relances abandonnées sont annulées et les
+  compteurs se réarment après quinze secondes de lecture continue.
+- Web et Android conservent des segments complets en mémoire pour les reprises :
+  64 Mio maximum par lecteur, entrées réutilisables pendant 90 secondes. Les manifestes
+  et les clés sont rechargés. Android ne retient que les segments de taille connue.
+- Le retard automatique reste limité à 60 secondes et à la fenêtre réellement publiée.
+  Android recharge lui aussi la source complète et surveille les blocages prolongés.
+  Une pause volontaire reste une pause.
+
+<!-- /release -->
+
 ## 0.5.8.r17 — des chaînes regroupées, toutes leurs sources, et un direct qui tient
 
 <!-- release -->

@@ -31,5 +31,5 @@ fun avanceViseeMs(fenetreMs: Long, segmentMs: Long, fragile: Boolean): Long {
     val segment = segmentMs.coerceAtLeast(1_000L)
     val plafond = if (fragile) AVANCE_FRAGILE_MS else AVANCE_NORMALE_MS
     val souhaitee = minOf(plafond, maxOf(2 * segment, fenetreMs - MARGE_ARRIERE_AVANCE_MS))
-    return maxOf(segment, minOf(souhaitee, fenetreMs - segment))
+    return maxOf(0L, minOf(plafond, souhaitee, fenetreMs - minOf(segment, fenetreMs / 2)))
 }

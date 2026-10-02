@@ -1,6 +1,6 @@
 {
   "name": "@flixtunes/server",
-  "version": "0.5.8",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,6 +9,7 @@
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --no-file-parallelism",
+    "test:cast-media": "tsx integration/diffusion.integration.ts",
     "test:mdns": "tsx integration/mdns.integration.ts",
     "test:watcher": "tsx integration/watcher.integration.ts",
     "test:ffmpeg": "tsx integration/playback.integration.ts",
@@ -28,6 +29,7 @@
     "@flixtunes/contracts": "workspace:*",
     "bonjour-service": "^1.4.4",
     "chokidar": "^5.0.0",
+    "fast-xml-parser": "^5.11.1",
     "fastify": "^5.5.0",
     "mime-types": "^3.0.1",
     "zod": "^4.0.17"

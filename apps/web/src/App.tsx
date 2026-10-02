@@ -1,3 +1,4 @@
+import { CentreDiffusion, BoutonDiffusion, useCatalogueDiffusion } from "./Diffusion";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CatalogPerson, ChaineDirect, HomeResponse, LibraryFolder, MediaDetails, MediaItem, PersonDetails, Profile, ProfileGroup } from "@flixtunes/contracts";
 import { api } from "./api";
@@ -842,7 +843,8 @@ function DetailsModal({ details, demande, profile, onPlay, onOpen, onOpenPerson,
     </div></div></div>;
 }
 
-export function App() {
+export function App() { return <CentreDiffusion><Application /></CentreDiffusion>; }
+function Application() {
   const [introComplete, setIntroComplete] = useState(isTestDom);
   const [groups, setGroups] = useState<ProfileGroup[]>([]); const [group, setGroup] = useState<ProfileGroup | null>(null);
   const [groupOpen, setGroupOpen] = useState(true);
@@ -873,6 +875,7 @@ export function App() {
   const [directDisponible, setDirectDisponible] = useState(false);
   /** Le rayon Web n'existe que si un dossier a ete declare. Meme regle que le direct. */
   const [webDisponible, setWebDisponible] = useState(false);
+  const [webModifiable, setWebModifiable] = useState(false);
   const [chaineDirect, setChaineDirect] = useState<ChaineDirect | null>(null);
   /**
    * La chaîne quittée, pour y revenir sans repasser par la grille.
@@ -961,7 +964,8 @@ export function App() {
      * l'entrée absente, ce qui est le comportement voulu par défaut.
      */
     void api.etatLive().then((direct) => setDirectDisponible(direct.disponible)).catch(() => setDirectDisponible(false));
-    void api.etatWeb().then((web) => setWebDisponible(web.disponible)).catch(() => setWebDisponible(false));
+    void api.etatWeb().then((web) => { setWebDisponible(web.disponible); setWebModifiable(web.modifiable !== false); })
+      .catch(() => setWebDisponible(false));
     try { setHome(await api.home(active.id)); setError(null); } catch {
     if (active.protected && !api.hasProfileAccess(active.id)) { setHome(null); setProfile(null); setProfileToUnlock(active); setError(null); return; }
     setError("Impossible de joindre le serveur FlixTunes."); } };
@@ -1060,6 +1064,10 @@ export function App() {
   const startPlayback = (media: MediaItem) => { retourApresLecteur.current = media.catalogId; ouvrirLecteur(media.id); };
   /** Enchaînement depuis le lecteur : l'épisode suivant n'est connu que par son identifiant. */
   const playById = (mediaId: string) => ouvrirLecteur(mediaId);
+  useCatalogueDiffusion(groupOpen ? null : profile?.id ?? null, async (contenu) => {
+    if (contenu.genre === "direct") { fermerLecteur(); ouvrirChaine(await api.chaineLive(contenu.id)); }
+    else { setChaineDirect(null); playById(contenu.id); }
+  });
   /** Ouvre le lecteur et inscrit la lecture dans l'adresse, pour qu'elle survive à un rechargement. */
   const ouvrirLecteur = (mediaId: string) => { setPlaying(mediaId); window.location.hash = `lecture/${encodeURIComponent(mediaId)}`; };
   /** Quitte le lecteur et rend l'adresse à la vue courante. */
@@ -1127,10 +1135,10 @@ export function App() {
   if (groupOpen || !group) return <GroupPanel groups={groups} onSelect={(next) => void selectGroup(next)} onChanged={async () => { await refreshGroups(); }} />;
 
   const featured = home?.featured; const empty = home && !home.recentlyAdded.length;
-  return <div className="app-shell"><a className="skip-link" href="#main-content">Aller au contenu</a><header className="topbar"><a className="brand" href="#top" onClick={(event) => { event.preventDefault(); navigate("home"); }}><img src="/brand/flixtunes-logo.png" alt="" /><span>Flix<span>Tunes</span></span></a>
+  return <div className="app-shell"><a className="skip-link" href="#main-content">Aller au contenu</a><header className="topbar"><div className="top-brand">{profile && <BoutonDiffusion />}<a className="brand" href="#top" onClick={(event) => { event.preventDefault(); navigate("home"); }}><img src="/brand/flixtunes-logo.png" alt="" /><span>Flix<span>Tunes</span></span></a></div>
     <nav aria-label="Menu principal"><a className={view === "home" ? "active" : ""} href="#top" onClick={(event) => { event.preventDefault(); navigate("home"); }}><Icon name="home" />Accueil</a><a className={view === "movies" ? "active" : ""} href="#films" onClick={(event) => { event.preventDefault(); navigate("movies"); }}><Icon name="movie" />Films</a><a className={view === "shows" ? "active" : ""} href="#series" onClick={(event) => { event.preventDefault(); navigate("shows"); }}><Icon name="tv" />Séries TV</a>{webDisponible && <a className={view === "web" ? "active" : ""} href="#web" onClick={(event) => { event.preventDefault(); navigate("web"); }}><Icon name="web" />Web</a>}{directDisponible && <a className={view === "live" ? "active" : ""} href="#direct" onClick={(event) => { event.preventDefault(); navigate("live"); }}><Icon name="tv" />Live TV</a>}<a className={view === "history" ? "active" : ""} href="#historique" onClick={(event) => { event.preventDefault(); navigate("history"); }}><Icon name="history" />Historique</a></nav>
     <div className="top-actions"><button className="icon-button" onClick={() => setLibrariesOpen(true)} aria-label="Gérer les dossiers"><Icon name="settings" /></button><button className="icon-button" onClick={() => setSearchOpen((v) => !v)} aria-label="Rechercher"><Icon name="search" /></button>
-    {profile && <button className="profile" onClick={() => setProfileOpen(true)}><span style={{ background: profile.avatarColor }}>{profile.name[0]}</span><b>{profile.name}</b></button>}</div></header>
+    {profile && <><button className="profile" onClick={() => setProfileOpen(true)}><span style={{ background: profile.avatarColor }}>{profile.name[0]}</span><b>{profile.name}</b></button></>}</div></header>
     {searchOpen && <div className="search-panel"><Icon name="search" /><input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Titres, acteurs, réalisateurs, genres…" />{query && <div className="search-results">{results.length ? results.map((item) => <MediaCard key={item.id} item={item} onOpen={openDetails} onContext={openContext} />) : <p>Aucun résultat.</p>}</div>}</div>}
     <main id="main-content" tabIndex={-1}>{error && <div className="server-error"><b>Un problème est survenu</b><span>{error}</span><button onClick={() => void loadHome()}>Réessayer</button></div>}
       {!home && !error && <HomeSkeleton />}
@@ -1140,7 +1148,7 @@ export function App() {
       {home && profile && view === "movies" && <CatalogPage kind="movies" profileId={profile.id} total={home.movieTotal ?? home.movies.length} onOpen={openDetails} onContext={openContext} />}
       {home && profile && view === "shows" && <CatalogPage kind="shows" profileId={profile.id} total={home.showTotal ?? home.shows.length} onOpen={openDetails} onContext={openContext} />}
       {view === "web" && webDisponible && profile
-        && <Suspense fallback={<HomeSkeleton />}><RayonWeb profileId={profile.id} onPlay={startPlayback} /></Suspense>}
+        && <Suspense fallback={<HomeSkeleton />}><RayonWeb profileId={profile.id} onPlay={startPlayback} modifiable={webModifiable} /></Suspense>}
       {view === "live" && directDisponible && <Suspense fallback={<HomeSkeleton />}><LiveTv onPlay={ouvrirChaine} /></Suspense>}
       {home && view === "history" && <section className="catalog-page"><header className="catalog-header"><div><span className="eyebrow">Votre activité</span><h1>Historique</h1></div></header><Rail title="Déjà vus" items={home.completed} onOpen={openDetails} onContext={openContext} /><Rail title="Historique récent" items={home.watchedRecently} onOpen={openDetails} onContext={openContext} /></section>}
     </main><footer><span>FlixTunes</span><button onClick={() => setLibrariesOpen(true)}>Gérer les bibliothèques</button><small>Votre cinéma. Votre réseau.</small></footer>

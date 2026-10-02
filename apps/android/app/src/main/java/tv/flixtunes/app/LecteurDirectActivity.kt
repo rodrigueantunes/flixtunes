@@ -1,6 +1,17 @@
 package tv.flixtunes.app
 
+import tv.flixtunes.app.ui.BoutonCast
+import tv.flixtunes.app.playback.TelecommandeAndroid
+import tv.flixtunes.app.playback.etatDiffusionAndroid
+import tv.flixtunes.app.ui.ouvrirDialogueDiffusion
+
 import android.annotation.SuppressLint
+import android.app.ActivityManager
+import android.app.ApplicationExitInfo
+import android.content.ComponentCallbacks2
+import android.content.res.Configuration
+import android.media.MediaCodecList
+import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.WindowManager
@@ -33,6 +44,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.key
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -53,8 +65,17 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Format
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
+import tv.flixtunes.app.playback.DebitContinu
+import tv.flixtunes.app.playback.ErreurRelaisDirect
+import tv.flixtunes.app.playback.SurveillanceReseauDirect
+import tv.flixtunes.app.playback.doitPreparerSecours
+import tv.flixtunes.app.playback.positionDeRaccord
+import tv.flixtunes.app.playback.rearmerCouleursDirect
+import tv.flixtunes.app.playback.RenduDirectTv
 import androidx.media3.common.C
 import androidx.media3.exoplayer.DefaultLivePlaybackSpeedControl
 import androidx.media3.exoplayer.DefaultLoadControl
@@ -63,9 +84,13 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.exoplayer.source.LoadEventInfo
+import androidx.media3.exoplayer.source.MediaLoadData
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
@@ -77,7 +102,13 @@ import tv.flixtunes.app.data.ChaineDirect
 import tv.flixtunes.app.data.FlixTunesApi
 import tv.flixtunes.app.playback.AVANCE_FRAGILE_MS
 import tv.flixtunes.app.playback.COURSE_MAX
-import tv.flixtunes.app.playback.MARGE_ARRIERE_AVANCE_MS
+import tv.flixtunes.app.playback.CacheSegmentsDirect
+import tv.flixtunes.app.playback.budgetMemoireDirect
+import tv.flixtunes.app.playback.SourceDirectAvecCache
+import tv.flixtunes.app.playback.SourceDirectAuthentifie
+import tv.flixtunes.app.playback.estRelaisFlixTunes
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DefaultDataSource
 import tv.flixtunes.app.playback.avanceViseeMs
 import tv.flixtunes.app.playback.GroupeDeSources
 import tv.flixtunes.app.playback.debutDeVague
@@ -115,6 +146,45 @@ import tv.flixtunes.app.ui.ThemeFlixTunes
 @androidx.annotation.OptIn(markerClass = [UnstableApi::class])
 class LecteurDirectActivity : ComponentActivity() {
     private var lecteur: ExoPlayer? = null
+    private var vueLecteur: PlayerView? = null
+    private var generationSurface by mutableIntStateOf(0)
+    private var candidatAffiche by mutableStateOf<ExoPlayer?>(null)
+    private val premieresImages = mutableSetOf<ExoPlayer>()
+    private val renduTvProtege by lazy {
+        resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
+    }
+    private var renduAvantReprise = ""
+    private var renduCourant by mutableStateOf("")
+    private var secours: ExoPlayer? = null
+    private val decodeurs = mutableMapOf<ExoPlayer, String>()
+    private val instancesDecodeurs = mutableMapOf<String, Int>()
+    private var generationLecture = 0
+    private var debitContinu = DebitContinu()
+    private var stableDepuis = 0L
+    private var dernierChargement = 0L
+    private var renouvellementEnCours = false
+    private var dernierRenouvellement = 0L
+    private var surveillanceReseau: SurveillanceReseauDirect? = null
+    private var diagnosticOuvert by mutableStateOf(false)
+    private val dernierArretSysteme: String? by lazy {
+        if (Build.VERSION.SDK_INT < 30) null else runCatching {
+            val arret = (getSystemService(ACTIVITY_SERVICE) as ActivityManager)
+                .getHistoricalProcessExitReasons(packageName, 0, 1).firstOrNull()
+            val motif = when (arret?.reason) {
+                ApplicationExitInfo.REASON_LOW_MEMORY -> "mémoire insuffisante"
+                ApplicationExitInfo.REASON_CRASH -> "exception de l’application"
+                ApplicationExitInfo.REASON_CRASH_NATIVE -> "arrêt du moteur natif"
+                ApplicationExitInfo.REASON_ANR -> "application bloquée"
+                else -> null
+            }
+            motif?.takeIf { arret != null && System.currentTimeMillis() - arret.timestamp < 24 * 60 * 60_000L }
+                ?.let { "Dernier arrêt signalé par Android : $it" }
+        }.getOrNull()
+    }
+    private var reserveMs by mutableLongStateOf(0L)
+    private var derniereReprise = 0L
+    private var identites: Map<String, String> = emptyMap()
+    private val reposSources = mutableMapOf<String, Long>()
     private lateinit var api: FlixTunesApi
     private lateinit var profileId: String
 
@@ -174,7 +244,9 @@ class LecteurDirectActivity : ComponentActivity() {
      * toujours fait, fermer le lecteur.
      */
     private val fermerLeChoix = object : OnBackPressedCallback(false) {
-        override fun handleOnBackPressed() { montrerLesSources(false) }
+        override fun handleOnBackPressed() {
+            if (choixOuvert) montrerLesSources(false) else montrerDiagnostic(false)
+        }
     }
 
     /**
@@ -192,8 +264,14 @@ class LecteurDirectActivity : ComponentActivity() {
 
     private fun montrerLesSources(ouvert: Boolean) {
         choixOuvert = ouvert
-        fermerLeChoix.isEnabled = ouvert
+        fermerLeChoix.isEnabled = ouvert || diagnosticOuvert
         if (ouvert) commandesVisibles = true
+    }
+
+    private fun montrerDiagnostic(ouvert: Boolean) {
+        diagnosticOuvert = ouvert
+        fermerLeChoix.isEnabled = ouvert || choixOuvert
+        reveiller()
     }
     /**
      * Le retard de sécurité pris après des blocages répétés, en secondes.
@@ -236,6 +314,12 @@ class LecteurDirectActivity : ComponentActivity() {
     private var reprises = 0
     private var relancesLentes = 0
     private var repriseEnCours: Job? = null
+    private val budgetMemoire by lazy {
+        val gestionnaire = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+        budgetMemoireDirect(minOf(Runtime.getRuntime().maxMemory(), gestionnaire.memoryClass.toLong() * 1024 * 1024), gestionnaire.isLowRamDevice)
+    }
+    private val cacheSegments by lazy { CacheSegmentsDirect(maximum = budgetMemoire.cacheOctets) }
+    private var adresseRapportee: String? = null
     /** Ce qui a coupé, et au bout de combien de temps — dit à l'écran plutôt que deviné. */
     private var dernierIncident: String? = null
 
@@ -264,7 +348,7 @@ class LecteurDirectActivity : ComponentActivity() {
      * Une source fragile prend jusqu'à 60 s d'avance au lieu de 40 : ExoPlayer ralentit alors
      * imperceptiblement — 0,97× au plus — jusqu'à l'atteindre, sans jamais couper l'image.
      */
-    private val vitesseDirect = DefaultLivePlaybackSpeedControl.Builder().build()
+    private val vitesses = mutableMapOf<ExoPlayer, DefaultLivePlaybackSpeedControl>()
     /**
      * Les incidents de l'adresse en cours depuis qu'on la regarde — un blocage, une reprise. Un seul
      * suffit à la dire fragile.
@@ -282,6 +366,16 @@ class LecteurDirectActivity : ComponentActivity() {
         profileId = intent.getStringExtra(EXTRA_PROFILE_ID) ?: return finish()
         val chaineId = intent.getStringExtra(EXTRA_CHANNEL_ID) ?: return finish()
         api = FlixTunesApi(serveur, intent.getStringExtra(EXTRA_PROFILE_TOKEN))
+        TelecommandeAndroid.attacher(this, api, profileId, ::etatPourDiffusion) { c ->
+            val player = lecteur ?: error("Lecteur en préparation")
+            when (c.getString("type")) {
+                "pause" -> player.pause()
+                "reprendre" -> player.play()
+                "volume" -> player.volume = c.getDouble("valeur").toFloat()
+                "arreter" -> finish()
+                else -> error("Déplacement distant indisponible pour le direct")
+            }
+        }
         message = getString(R.string.direct_ouverture)
 
         /*
@@ -297,192 +391,9 @@ class LecteurDirectActivity : ComponentActivity() {
          * revenir à sa cible : il **glisse** vers elle au lieu de se figer puis de sauter. C'est le
          * mécanisme prévu pour exactement ce cas, et on ne le lui demandait pas.
          */
-        lecteur = ExoPlayer.Builder(this)
-            .setLivePlaybackSpeedControl(vitesseDirect)
-            /*
-             * **Six tentatives au lieu de trois, et pour une raison arithmétique.**
-             *
-             * Un direct ne se charge pas une fois : il redemande la playlist toutes les huit secondes,
-             * et un segment aussi souvent — environ **900 requêtes par heure**. La politique par
-             * défaut réessaie trois fois en trois secondes ; une coupure Wi-Fi de cinq secondes
-             * l'épuise. Sur neuf cents tirages, en rater un devient une certitude, et c'est là toute
-             * l'explication du « ça coupe au bout d'un moment » : plus on regarde longtemps, plus
-             * c'est sûr d'arriver.
-             *
-             * Six tentatives couvrent une quinzaine de secondes d'interruption. Le prix est qu'une
-             * source réellement morte met une quinzaine de secondes à être déclarée telle, au lieu de
-             * trois — un prix qu'on paie une fois, contre une coupure qu'on payait toutes les heures.
-             */
-            .setMediaSourceFactory(
-                DefaultMediaSourceFactory(this)
-                    .setLoadErrorHandlingPolicy(object : DefaultLoadErrorHandlingPolicy() {
-                        /*
-                         * Six tentatives — une quinzaine de secondes — **une fois le flux déclaré
-                         * stable** ; les trois d'origine avant. La patience est ce qui sauve une
-                         * image établie d'une seconde de réseau, et ce qui ralentirait la recherche
-                         * d'une source qui n'a encore rien prouvé.
-                         */
-                        override fun getMinimumLoadableRetryCount(dataType: Int): Int =
-                            if (fluxDeclareStable) REPRISES_INTERNES_STABLE else super.getMinimumLoadableRetryCount(dataType)
-                    }),
-            )
-            .setLoadControl(
-                DefaultLoadControl.Builder()
-                    /*
-                     * **Repartir avec cinq secondes de tampon garantissait de retomber.**
-                     *
-                     * `bufferForPlaybackAfterRebufferMs` valait 5 000 : après un blocage, ExoPlayer
-                     * relançait l'image dès qu'il avait cinq secondes d'avance — c'est-à-dire à un
-                     * souffle de la panne dont on sortait. Un réseau qui vient de faiblir refaiblit ;
-                     * on repartait donc pour retomber aussitôt, et c'est la mécanique même du
-                     * bégaiement en boucle. Vingt secondes : on ne redémarre qu'avec de quoi tenir.
-                     *
-                     * Le premier démarrage, lui, reste court — 2,5 s. Attendre vingt secondes avant la
-                     * première image ferait passer une ouverture normale pour une panne, et la marge
-                     * se constitue de toute façon dans les secondes qui suivent.
-                     */
-                    .setBufferDurationsMs(20_000, 60_000, 2_500, 20_000)
-                    .build(),
-            )
-            .build().apply {
-            playWhenReady = true
-            addListener(object : Player.Listener {
-                override fun onPlayerError(error: PlaybackException) {
-                    /*
-                     * Réparer avant d'abandonner.
-                     *
-                     * Deux pannes sur trois n'en sont pas. **Sortir de la fenêtre** arrive dès qu'on a
-                     * mis en pause un peu trop longtemps : la réponse est de rejoindre le direct, pas
-                     * de changer de source. Une **erreur de décodage** est un segment abîmé : on
-                     * reprépare la même adresse. Le reste — le réseau, le format — est une vraie
-                     * panne, et la suivante est déjà connue.
-                     */
-                    if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
-                        seekToDefaultPosition()
-                        prepare()
-                        return
-                    }
-                    if (error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED && reparations < 1) {
-                        reparations += 1
-                        prepare()
-                        return
-                    }
-                    /*
-                     * **Réessayer la même adresse avant de l'abandonner.**
-                     *
-                     * Le code portait cette phrase : « le reste — le réseau, le format — est une vraie
-                     * panne ». Elle est fausse, et c'est votre observation qui l'établit : vous
-                     * relancez la même chaîne, la même adresse, et elle repart **immédiatement**. Une
-                     * erreur réseau au milieu d'un direct n'accuse donc pas l'adresse, elle accuse une
-                     * seconde de réseau.
-                     *
-                     * On réessaie trois fois, espacées de 2, 5 puis 10 secondes — croissantes parce
-                     * qu'une coupure qui dure ne se répare pas en insistant vite. Le compteur repart à
-                     * zéro dès que l'image revient : ce qui condamne une source, c'est une série
-                     * d'échecs, pas un échec de temps en temps.
-                     */
-                    if (fluxDeclareStable && reprises < REPRISES_MAX) {
-                        reprises += 1
-                        incidents += 1
-                        dernierIncident = "réseau (${error.errorCodeName})"
-                        val attente = ATTENTES_REPRISE_MS[reprises - 1]
-                        if (reprises > 1) message = getString(R.string.direct_reprise, reprises, REPRISES_MAX)
-                        repriseEnCours?.cancel()
-                        repriseEnCours = lifecycleScope.launch {
-                            delay(attente)
-                            lecteur?.prepare()
-                        }
-                        return
-                    }
-                    suivante()
-                }
-
-                override fun onPlaybackStateChanged(etat: Int) {
-                    /*
-                     * Le rechargement du tampon n'est pas une panne, c'est un avertissement.
-                     *
-                     * Trois fois en deux minutes, il dit que cette source ne tient pas la cadence à
-                     * laquelle on la lit — et la réponse n'est pas d'en changer, c'est de **reculer**.
-                     * Seize secondes de plus derrière le bord, prises dans les 37 s de marge que la
-                     * fenêtre médiane laisse. On le paie une fois, et l'image tient.
-                     *
-                     * **Mais tout rechargement n'est pas un hoquet.** Ouvrir une chaîne, sauter dans
-                     * la fenêtre, reprendre après une pause : chacun de ces gestes remplit le tampon
-                     * et passe par le même état. Les compter revenait à se punir soi-même — relevé à
-                     * l'écran, l'image sautait alors qu'elle allait très bien, parce que trois
-                     * flèches en deux minutes suffisaient à déclencher le recul. On ignore donc ce
-                     * qui suit de près une action délibérée.
-                     */
-                    if (etat != Player.STATE_BUFFERING) { surveillanceBlocage?.cancel(); return }
-                    if (message != null) return
-                    // Une image figée trop longtemps n'attend pas d'être comptée.
-                    surveillerLeBlocage()
-                    val maintenant = System.currentTimeMillis()
-                    if (maintenant < silenceJusqua) return
-                    incidents += 1
-                    /*
-                     * **Les deux réactions n'ont pas le même prix, elles n'ont donc pas la même
-                     * patience.**
-                     *
-                     * Reculer ne coûte que du retard : c'est invisible, ça répare la plupart des
-                     * bégaiements, et ça doit donc arriver **vite** — trois rechargements suffisent,
-                     * rafale comprise. Changer de source coupe l'image : cela doit rester un dernier
-                     * mot, et se mériter.
-                     *
-                     * D'où deux comptages. Le premier prend tout ; le second n'accepte que des
-                     * incidents **espacés d'au moins dix secondes** — un mauvais passage de vingt
-                     * secondes produit six rechargements d'affilée, et les compter séparément
-                     * abandonnait une chaîne qui fonctionne pour une minute difficile.
-                     */
-                    /*
-                     * Le seuil qui séparait les deux comptages était « ai-je encore du retard à
-                     * acheter ». La marge étant désormais prise d'emblée, la question n'a plus de
-                     * sens ; celle qui la remplace est « ai-je encore de la qualité à céder ».
-                     */
-                    if (plafondDebit == Int.MAX_VALUE) {
-                        blocages = blocages.filter { maintenant - it < MEMOIRE_BLOCAGES_MS }.toMutableList()
-                        blocages.add(maintenant)
-                        if (blocages.size < BLOCAGES_AVANT_RECUL) return
-                        reagirALInstabilite()
-                        return
-                    }
-
-                    if (maintenant - (blocages.lastOrNull() ?: 0L) < INTERVALLE_MIN_BLOCAGE_MS) return
-                    blocages = blocages.filter { maintenant - it < MEMOIRE_BLOCAGES_MS }.toMutableList()
-                    blocages.add(maintenant)
-                    if (blocages.size < BLOCAGES_AVANT_RECUL) return
-                    // Jamais avant une minute sur la source : le repli doit rester un dernier mot.
-                    if (maintenant - depuisSource < TEMPS_MIN_SUR_SOURCE_MS) return
-                    /*
-                     * **Deuxième série de blocages : la source est en cause, pas la marge.**
-                     *
-                     * Reculer de seize secondes n'a pas suffi — relevé sur TF1, dont la première
-                     * adresse sautait de partout alors qu'elle répondait très bien. Une source qui
-                     * hoquette encore après qu'on lui a donné toute la marge disponible ne se
-                     * rattrapera pas ; la suivante, elle, est déjà connue et n'a pas été essayée.
-                     *
-                     * Elle n'est **pas** rapportée comme morte : elle ne l'est pas. Inscrire un échec
-                     * pour une source qui répond fausserait le classement avec une opinion.
-                     */
-                    reagirALInstabilite()
-                }
-
-                override fun onIsPlayingChanged(joue: Boolean) {
-                    if (!joue) return
-                    /*
-                     * L'accalmie commence quand l'image arrive, pas à la première touche.
-                     *
-                     * `reveiller` n'était appelé que depuis la télécommande : au doigt, sur mobile,
-                     * rien ne la touche jamais et la barre serait restée à l'écran pour toujours.
-                     */
-                    reveiller()
-                    message = null
-                    echeance?.cancel()
-                    val jouee = essai ?: return
-                    lifecycleScope.launch { runCatching { api.resultatChaineDirect(profileId, chaineId, jouee, true) } }
-                }
-            })
-        }
+        // Les jaquettes sont sur disque ; leur cache RAM ne doit pas concurrencer deux décodeurs.
+        coil3.SingletonImageLoader.get(this).memoryCache?.clear()
+        lecteur = creerLecteur()
 
         /*
          * Les barres du système n'ont rien à faire par-dessus une chaîne.
@@ -510,7 +421,146 @@ class LecteurDirectActivity : ComponentActivity() {
     }
 
     /** Charge une chaîne et lance sa première adresse. C'est aussi le chemin d'un changement de chaîne. */
+    private fun creerLecteur(): ExoPlayer {
+        val controleVitesse = DefaultLivePlaybackSpeedControl.Builder().build()
+        var dernierFormat: Format? = null
+        return ExoPlayer.Builder(this).apply {
+            if (renduTvProtege) setRenderersFactory(RenduDirectTv(this@LecteurDirectActivity))
+        }
+            .setLivePlaybackSpeedControl(controleVitesse)
+
+            .setMediaSourceFactory(
+                DefaultMediaSourceFactory(this)
+                    .setDataSourceFactory(DataSource.Factory {
+                        SourceDirectAvecCache(SourceDirectAuthentifie(api.serverUrl, DefaultDataSource.Factory(this)), cacheSegments)
+                    })
+                    .setLoadErrorHandlingPolicy(object : DefaultLoadErrorHandlingPolicy() {
+
+                        override fun getMinimumLoadableRetryCount(dataType: Int): Int =
+                            if (fluxDeclareStable) REPRISES_INTERNES_STABLE else super.getMinimumLoadableRetryCount(dataType)
+                    }),
+            )
+            .setLoadControl(
+                DefaultLoadControl.Builder()
+
+                    .setBufferDurationsMs(40_000, 70_000, 8_000, 8_000)
+                    .setTargetBufferBytes(budgetMemoire.tamponOctets)
+                    .setPrioritizeTimeOverSizeThresholds(false)
+                    .build(),
+            )
+            .build().apply {
+            val joueurObserve = this
+            vitesses[this] = controleVitesse
+            playWhenReady = true
+            addAnalyticsListener(object : AnalyticsListener {
+                override fun onRenderedFirstFrame(eventTime: AnalyticsListener.EventTime, output: Any, renderTimeMs: Long) {
+                    if (vitesses.containsKey(joueurObserve)) premieresImages.add(joueurObserve)
+                }
+                override fun onVideoDecoderInitialized(eventTime: AnalyticsListener.EventTime, decoderName: String,
+                    initializedTimestampMs: Long, initializationDurationMs: Long) {
+                    if (vitesses.containsKey(joueurObserve)) decodeurs[joueurObserve] = decoderName
+                }
+                override fun onVideoInputFormatChanged(eventTime: AnalyticsListener.EventTime, format: Format,
+                    decoderReuseEvaluation: androidx.media3.exoplayer.DecoderReuseEvaluation?) {
+                    val avant = dernierFormat
+                    dernierFormat = format
+                    if (lecteur === joueurObserve) {
+                        renduCourant = decrireRendu(format)
+                        if (avant != null && (avant.colorInfo != format.colorInfo || avant.sampleMimeType != format.sampleMimeType)
+                            && rearmerCouleursDirect(avant, format) && !renduTvProtege) {
+                            renduAvantReprise = decrireRendu(avant)
+                            renouvelerSurface()
+                        }
+                    }
+                }
+                override fun onLoadCompleted(eventTime: AnalyticsListener.EventTime, loadEventInfo: LoadEventInfo, mediaLoadData: MediaLoadData) {
+                    if (lecteur === joueurObserve && mediaLoadData.dataType == C.DATA_TYPE_MEDIA) dernierChargement = System.currentTimeMillis()
+                }
+            })
+            addListener(object : Player.Listener {
+                override fun onPlayerError(error: PlaybackException) {
+                    if (lecteur !== joueurObserve) return
+                    val erreurRelais = generateSequence<Throwable>(error) { it.cause }
+                        .filterIsInstance<ErreurRelaisDirect>().firstOrNull()
+                    if (erreurRelais?.statut in setOf(401, 403, 404) &&
+                        adresses.getOrNull(rang)?.let { estRelaisFlixTunes(it, api.serverUrl) } == true &&
+                        !renouvellementEnCours && System.currentTimeMillis() - dernierRenouvellement >= 30_000) {
+                        val generation = generationLecture
+                        lifecycleScope.launch {
+                            val avant = adresses.getOrNull(rang)
+                            renouvelerAdresses()
+                            if (generation == generationLecture && lecteur === joueurObserve && adresses.getOrNull(rang) == avant) {
+                                if (!relancerLaSource()) suivante()
+                            }
+                        }
+                        return
+                    }
+
+                    if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
+                        deplacerLecture(joueurObserve)
+                        prepare()
+                        return
+                    }
+                    if (error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED && reparations < 1) {
+                        reparations += 1
+                        jouerRang()
+                        return
+                    }
+
+                    dernierIncident = "réseau (${error.errorCodeName})"
+                    if (fluxDeclareStable && relancerLaSource()) return
+                    suivante()
+                }
+
+                override fun onPlaybackStateChanged(etat: Int) {
+                    if (lecteur !== joueurObserve) return
+
+                    if (etat != Player.STATE_BUFFERING) { surveillanceBlocage?.cancel(); return }
+                    // Une image figée trop longtemps n'attend pas d'être comptée.
+                    surveillerLeBlocage()
+                    val maintenant = System.currentTimeMillis()
+                    if (maintenant < silenceJusqua) return
+                    incidents += 1
+
+
+                    if (plafondDebit == Int.MAX_VALUE) {
+                        blocages = blocages.filter { maintenant - it < MEMOIRE_BLOCAGES_MS }.toMutableList()
+                        blocages.add(maintenant)
+                        if (blocages.size < BLOCAGES_AVANT_RECUL) return
+                        reagirALInstabilite()
+                        return
+                    }
+
+                    if (maintenant - (blocages.lastOrNull() ?: 0L) < INTERVALLE_MIN_BLOCAGE_MS) return
+                    blocages = blocages.filter { maintenant - it < MEMOIRE_BLOCAGES_MS }.toMutableList()
+                    blocages.add(maintenant)
+                    if (blocages.size < BLOCAGES_AVANT_RECUL) return
+                    // Jamais avant une minute sur la source : le repli doit rester un dernier mot.
+                    if (maintenant - depuisSource < TEMPS_MIN_SUR_SOURCE_MS) return
+
+                    reagirALInstabilite()
+                }
+
+                override fun onIsPlayingChanged(joue: Boolean) {
+                    if (lecteur !== joueurObserve) return
+                    if (!joue) { depuisLecture = 0L; return }
+
+                    // Une reprise automatique ne doit pas remettre les incrustations sur l'image.
+                    if (commandesVisibles) reveiller()
+                    message = null
+                    echeance?.cancel()
+
+                }
+            })
+        }
+    }
+
     private fun ouvrir(chaineId: String) = lifecycleScope.launch {
+        generationLecture += 1
+        repriseEnCours?.cancel()
+        lecteur?.stop()
+        cacheSegments.vider()
+        reposSources.clear()
         echeance?.cancel()
         essai = null
         rang = 0
@@ -524,6 +574,7 @@ class LecteurDirectActivity : ComponentActivity() {
         fluxDeclareStable = false
         dejaVuStable = false
         plafondDebit = Int.MAX_VALUE
+        lecteur?.let { it.trackSelectionParameters = it.trackSelectionParameters.buildUpon().setMaxVideoBitrate(Int.MAX_VALUE).build() }
         depuisLecture = 0L
         reprises = 0
         relancesLentes = 0
@@ -553,6 +604,7 @@ class LecteurDirectActivity : ComponentActivity() {
                 qualites = retenues.associate { it.url to (it.hauteur to it.debit) }
                 empreintes = retenues.associate { it.url to it.empreinte }
                 echecs = retenues.associate { it.url to it.echecs }
+                identites = retenues.associate { it.url to it.identifiant.ifEmpty { it.url } }
                 /*
                  * La course ne sonde que les douze premières, pas les soixante-dix.
                  *
@@ -582,7 +634,7 @@ class LecteurDirectActivity : ComponentActivity() {
      * exacte : c'est le code HTTP réel qui décide, et non une réponse opaque.
      */
     private suspend fun courirLesAdresses(candidates: List<String>): List<String> {
-        if (candidates.size <= 1) return candidates
+        if (candidates.size <= 1 || candidates.any { estRelaisFlixTunes(it, api.serverUrl) }) return candidates
         val arrivees = java.util.concurrent.ConcurrentLinkedQueue<String>()
         withContext(Dispatchers.IO) {
             withTimeoutOrNull(DELAI_COURSE_MS) {
@@ -605,20 +657,49 @@ class LecteurDirectActivity : ComponentActivity() {
             }
         }
         val repondues = arrivees.toList()
-        return repondues + candidates.filterNot { it in repondues }
+        return candidates.filter { it in repondues } + candidates.filterNot { it in repondues }
     }
 
     private fun jouerRang(reprendre: Boolean = true) {
+        generationLecture += 1
+        repriseEnCours?.cancel()
+        stableDepuis = 0L
+        debitContinu = DebitContinu()
+        dernierChargement = System.currentTimeMillis()
         val source = adresses.getOrNull(rang) ?: run { echec = true; message = getString(R.string.direct_aucune_source); return }
         if (reprendre) essai = source
         // Les incidents sont ceux de l'adresse : la même, relancée, garde les siens.
-        if (adresseDesIncidents != source) { adresseDesIncidents = source; incidents = 0 }
+        if (adresseDesIncidents != source) {
+            adresseDesIncidents = source
+            plafondDebit = Int.MAX_VALUE
+            incidents = 0
+            reprises = 0
+            fluxDeclareStable = false
+            adresseRapportee = null
+            cacheSegments.vider()
+        }
+        depuisLecture = 0L
         // Un nouveau média ramène ExoPlayer à la cible de sa configuration : la surveillance la réécrira.
         avanceDemandeeMs = C.TIME_UNSET
         // Préparer un flux remplit le tampon : c'est un geste, pas un hoquet.
         silenceJusqua = System.currentTimeMillis() + REPIT_APRES_GESTE_MS
         depuisSource = System.currentTimeMillis()
+        // Une relance complète repart avec un décodeur et une Surface ne portant pas les couleurs
+        // du flux précédent. Une simple mise en tampon ne passe jamais par ce chemin.
+        lecteur?.takeIf { it.mediaItemCount > 0 }?.let { ancien ->
+            renduAvantReprise = decrireRendu(ancien.videoFormat)
+            val volume = ancien.volume
+            val lire = ancien.playWhenReady
+            renouvelerSurface()
+            lecteur = null
+            vitesses.remove(ancien)
+            decodeurs.remove(ancien)
+            premieresImages.remove(ancien)
+            ancien.release()
+            lecteur = creerLecteur().also { it.volume = volume; it.playWhenReady = lire }
+        }
         lecteur?.apply {
+            trackSelectionParameters = trackSelectionParameters.buildUpon().setMaxVideoBitrate(plafondDebit).build()
             /*
              * La cible de retard : trois segments derrière le bord, comme le veut HLS, plus la
              * sécurité que les blocages ont fait gagner. C'est le seul levier réel — grossir le
@@ -640,31 +721,7 @@ class LecteurDirectActivity : ComponentActivity() {
              * fenêtre permet — c'est le mécanisme prévu pour cela, et il évite d'avoir à repréparer
              * le flux pour corriger une cible.
              */
-            val cible = CIBLE_MAX_S * 1_000L
-            setMediaItem(
-                MediaItem.Builder()
-                    .setUri(source)
-                    .setLiveConfiguration(
-                        MediaItem.LiveConfiguration.Builder()
-                            .setTargetOffsetMs(cible)
-                            .setMinOffsetMs(CIBLE_DIRECT_S * 1_000L)
-                            // Le plafond laisse la place à l'avance d'une source fragile, marge arrière comprise.
-                            .setMaxOffsetMs(AVANCE_FRAGILE_MS + MARGE_ARRIERE_AVANCE_MS)
-                            .setMinPlaybackSpeed(0.97f)
-                            /*
-                             * 1,06× et non 1,03× pour **revenir** vers la cible.
-                             *
-                             * C'est la vitesse à laquelle on rattrape un retard pris, et elle était
-                             * trop timide : à 1,03× il faut deux minutes pour reprendre 3,4 s, si
-                             * bien que la dérive gagnait plus vite qu'on ne la rattrapait. À 1,06×
-                             * une minute suffit, et cela ne s'entend pas — le rééchantillonnage
-                             * d'ExoPlayer conserve la hauteur du son.
-                             */
-                            .setMaxPlaybackSpeed(1.06f)
-                            .build(),
-                    )
-                    .build(),
-            )
+            setMediaItem(mediaDirect(source))
             prepare()
         }
         /*
@@ -697,7 +754,7 @@ class LecteurDirectActivity : ComponentActivity() {
          * stable : celle-là n'a rien prouvé, et son échec veut dire quelque chose.
          */
         val identifiant = chaine?.id
-        if (identifiant != null && !fluxDeclareStable) {
+        if (identifiant != null) {
             lifecycleScope.launch { runCatching { api.resultatChaineDirect(profileId, identifiant, morte, false) } }
         }
         // La déclaration porte sur l'adresse : celle qu'on prend n'a encore rien prouvé.
@@ -821,6 +878,10 @@ class LecteurDirectActivity : ComponentActivity() {
     override fun dispatchKeyEvent(evenement: KeyEvent): Boolean {
         if (evenement.action != KeyEvent.ACTION_DOWN) return super.dispatchKeyEvent(evenement)
         val code = evenement.keyCode
+        if (code == KeyEvent.KEYCODE_INFO || code == KeyEvent.KEYCODE_MENU) {
+            if (evenement.repeatCount == 0) montrerDiagnostic(!diagnosticOuvert)
+            return true
+        }
         val chiffre = when (code) {
             in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 -> code - KeyEvent.KEYCODE_0
             in KeyEvent.KEYCODE_NUMPAD_0..KeyEvent.KEYCODE_NUMPAD_9 -> code - KeyEvent.KEYCODE_NUMPAD_0
@@ -862,12 +923,15 @@ class LecteurDirectActivity : ComponentActivity() {
             when (code) {
                 KeyEvent.KEYCODE_DPAD_UP -> { choixIndex = (choixIndex - 1).coerceAtLeast(0); return true }
                 KeyEvent.KEYCODE_DPAD_DOWN -> {
-                    choixIndex = (choixIndex + 1).coerceAtMost(groupesDuMenu().lastIndex.coerceAtLeast(0))
+                    choixIndex = (choixIndex + 1).coerceAtMost(groupesDuMenu().size)
                     return true
                 }
                 KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
                     // Le curseur parcourt les lignes ; ce qu'on ouvre est le meilleur membre du groupe qui répond.
-                    groupesDuMenu().getOrNull(choixIndex)?.let { choisirSource(it.index) }
+                    if (choixIndex == groupesDuMenu().size) {
+                        montrerLesSources(false)
+                        montrerDiagnostic(true)
+                    } else groupesDuMenu().getOrNull(choixIndex)?.let { choisirSource(it.index) }
                     return true
                 }
                 // Le retour n'est pas écouté ici : il passe par `OnBackPressedDispatcher`, seul chemin
@@ -901,10 +965,8 @@ class LecteurDirectActivity : ComponentActivity() {
         if (code == KeyEvent.KEYCODE_CHANNEL_UP || code == KeyEvent.KEYCODE_PAGE_UP) { voisine(1); return true }
         if (code == KeyEvent.KEYCODE_CHANNEL_DOWN || code == KeyEvent.KEYCODE_PAGE_DOWN) { voisine(-1); return true }
         if (code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN) {
-            if (adresses.size > 1) {
-                choixIndex = ligneDuRang()
-                montrerLesSources(true)
-            }
+            choixIndex = if (code == KeyEvent.KEYCODE_DPAD_UP) groupesDuMenu().size else ligneDuRang()
+            montrerLesSources(true)
             return true
         }
         // Reculer et avancer : la croix horizontale et les touches de transport disent la même chose.
@@ -946,8 +1008,44 @@ class LecteurDirectActivity : ComponentActivity() {
         effacementCommandes?.cancel()
         effacementCommandes = lifecycleScope.launch {
             delay(REPOS_BARRE_MS)
-            if (lecteur?.isPlaying == true && !choixOuvert) commandesVisibles = false
+            // Une mise en tampon à l'échéance ne doit pas laisser les incrustations affichées.
+            while (commandesVisibles) {
+                if (lecteur?.isPlaying == true && !choixOuvert && !diagnosticOuvert) {
+                    commandesVisibles = false
+                    diagnosticOuvert = false
+                    break
+                }
+                delay(250)
+            }
         }
+    }
+
+    /** Une nouvelle vue détruit réellement la Surface, y compris sur Android 14 et suivants. */
+    private fun renouvelerSurface(candidat: ExoPlayer? = null) {
+        vueLecteur?.player = null
+        vueLecteur = null
+        candidatAffiche = candidat
+        generationSurface += 1
+    }
+
+    private fun decrireRendu(format: Format?): String {
+        val couleur = format?.colorInfo
+        return listOfNotNull(format?.height?.takeIf { it > 0 }?.let { "${it}p" },
+            format?.bitrate?.takeIf { it > 0 }?.let { "${it / 1000} kb/s" },
+            couleur?.let { "couleurs ${it.colorSpace}/${it.colorRange}/${it.colorTransfer}" }).joinToString(" · ")
+    }
+
+    private fun avecSurfaceDirect(avant: Format?, apres: Format?, action: () -> Unit) {
+        if (rearmerCouleursDirect(avant, apres)) renouvelerSurface()
+        action()
+    }
+
+    private fun deplacerLecture(joueur: ExoPlayer, positionMs: Long? = null, manuel: Boolean = false) {
+        val deplacer = {
+            if (positionMs == null) joueur.seekToDefaultPosition() else joueur.seekTo(positionMs)
+        }
+        // Les reprises automatiques conservent la surface ; sa destruction peut perturber le codec TV.
+        if (manuel) avecSurfaceDirect(joueur.videoFormat, joueur.videoFormat, deplacer) else deplacer()
     }
 
     /**
@@ -961,14 +1059,14 @@ class LecteurDirectActivity : ComponentActivity() {
         silenceJusqua = System.currentTimeMillis() + REPIT_APRES_GESTE_MS
         val duree = joueur.duration
         if (duree <= 0) return
-        joueur.seekTo(minOf(duree - 1_000, maxOf(2_000, joueur.currentPosition + deltaMs)))
+        deplacerLecture(joueur, minOf(duree - 1_000, maxOf(2_000, joueur.currentPosition + deltaMs)), manuel = true)
         reveiller()
     }
 
     /** Revenir au bord du flux — la seule position qui mérite le mot « direct ». */
     private fun rejoindreDirect() {
         silenceJusqua = System.currentTimeMillis() + REPIT_APRES_GESTE_MS
-        lecteur?.seekToDefaultPosition()
+        lecteur?.let { deplacerLecture(it, manuel = true) }
         // La position par défaut est l'avance de la configuration : celle d'une source fragile se réécrit.
         avanceDemandeeMs = C.TIME_UNSET
         lecteur?.play()
@@ -1015,37 +1113,202 @@ class LecteurDirectActivity : ComponentActivity() {
      * Un seul endroit décide, appelé par les deux chemins — les bégaiements comptés, et le blocage
      * prolongé qui n'attend pas d'être compté.
      */
+    private fun relancerLaSource(renouvellement: Boolean = false): Boolean {
+        if (repriseEnCours?.isActive == true) return true
+        val memoire = ActivityManager.MemoryInfo()
+        (getSystemService(ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(memoire)
+        val runtime = Runtime.getRuntime()
+        val disponible = runtime.maxMemory() - (runtime.totalMemory() - runtime.freeMemory())
+        val nomDecodeur = decodeurs[lecteur]
+        val mime = lecteur?.videoFormat?.sampleMimeType
+        val instances = if (nomDecodeur == null || mime == null) 1 else
+            instancesDecodeurs.getOrPut("$nomDecodeur/$mime") {
+                runCatching { MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos
+                    .firstOrNull { it.name == nomDecodeur }?.getCapabilitiesForType(mime)?.maxSupportedInstances ?: 1
+                }.getOrDefault(1)
+            }
+        if (!budgetMemoire.peutPreparer(disponible, memoire.lowMemory, instances)) {
+            cacheSegments.vider()
+            return false
+        }
+        if (reprises >= REPRISES_MAX) return false
+        if (System.currentTimeMillis() - derniereReprise < 5_000) return true
+        derniereReprise = System.currentTimeMillis()
+        val source = essai ?: return false
+        val identifiant = chaine?.id
+        val generation = generationLecture
+        reprises += 1
+        if (!renouvellement) incidents += 1
+        depuisLecture = 0L
+        echeance?.cancel()
+        repriseEnCours = lifecycleScope.launch {
+            try {
+                val principale = lecteur ?: return@launch
+                val candidats = listOf(rang) + adresses.indices.filter {
+                    it != rang && adresses[it] !in muettes
+                }.sortedBy { (reposSources[adresses[it]] ?: 0) > System.currentTimeMillis() }.take(2)
+                for (index in candidats) {
+                    if (generation != generationLecture || !principale.playWhenReady) return@launch
+                    val cible = adresses.getOrNull(index) ?: continue
+                    val memeSource = (identites[cible] ?: cible) == (identites[source] ?: source)
+                    val plafondCandidat = if (memeSource) plafondDebit else Int.MAX_VALUE
+                    val candidat = creerLecteur().also { secours = it; it.playWhenReady = false; it.volume = 0f }
+                    candidat.trackSelectionParameters = candidat.trackSelectionParameters.buildUpon()
+                        .setMaxVideoBitrate(plafondCandidat).build()
+                    var adopte = false
+                    try {
+                        candidat.setMediaItem(mediaDirect(cible))
+                        candidat.prepare()
+                        val pret = withTimeoutOrNull(12_000) {
+                            while (candidat.playerError == null && (candidat.playbackState != Player.STATE_READY || candidat.totalBufferedDuration < 6_000)) delay(100)
+                            candidat.playerError == null
+                        } == true
+                        if (!pret) { reposSources[cible] = System.currentTimeMillis() + 30_000; continue }
+                        val raccord = positionDeRaccord(debutProgramme(principale), principale.currentPosition,
+                            debutProgramme(candidat), candidat.duration)
+                        if (raccord != null) candidat.seekTo(raccord)
+                        else if (memeSource && principale.currentLiveOffset != C.TIME_UNSET && candidat.duration > 0)
+                            candidat.seekTo((candidat.duration - principale.currentLiveOffset).coerceAtLeast(0))
+                        else {
+                            // Aucune horloge commune : attendre la fin de la réserve avant la bascule.
+                            val necessaire = withTimeoutOrNull(30_000) {
+                                while (principale.totalBufferedDuration > 3_000 && principale.playWhenReady) delay(100)
+                                principale.playWhenReady
+                            } == true
+                            if (!necessaire) return@launch
+                        }
+                        // La relève avance en silence pendant le raccord, comme la lecture affichée.
+                        // La laisser en pause pendant le chargement répéterait ensuite ces secondes.
+                        candidat.play()
+                        val aligne = withTimeoutOrNull(4_000) {
+                            while (candidat.playerError == null && (candidat.playbackState != Player.STATE_READY || candidat.totalBufferedDuration < 3_000)) delay(50)
+                            candidat.playerError == null
+                        } == true
+                        if (!aligne || generation != generationLecture || !principale.playWhenReady) continue
+                        val raccordFinal = positionDeRaccord(debutProgramme(principale), principale.currentPosition,
+                            debutProgramme(candidat), candidat.duration)
+                        if (raccordFinal != null && kotlin.math.abs(raccordFinal - candidat.currentPosition) > 250) {
+                            if (raccordFinal + 1_000 >= candidat.bufferedPosition) continue
+                            candidat.seekTo(raccordFinal)
+                        } else if (candidat.currentLiveOffset != C.TIME_UNSET && candidat.currentLiveOffset > AVANCE_FRAGILE_MS) {
+                            candidat.seekToDefaultPosition()
+                        }
+                        val pretAFilmer = withTimeoutOrNull(1_000) {
+                            while (candidat.playbackState != Player.STATE_READY && candidat.playerError == null) delay(25)
+                            candidat.playerError == null
+                        } == true
+                        if (!pretAFilmer || generation != generationLecture || !principale.playWhenReady) continue
+                        if (!memeSource && principale.totalBufferedDuration > 15_000 && System.currentTimeMillis() - dernierChargement < 2_000) return@launch
+                        if (!memeSource && identifiant != null) {
+                            reposSources[source] = System.currentTimeMillis() + 120_000
+                            lifecycleScope.launch { runCatching { api.resultatChaineDirect(profileId, identifiant, source, false) } }
+                        }
+                        renduAvantReprise = decrireRendu(principale.videoFormat)
+                        premieresImages.remove(candidat)
+                        renouvelerSurface(candidat)
+                        candidat.play()
+                        // READY hors écran n'atteste pas du rendu. L'ancien lecteur reste disponible
+                        // tant que le nouveau n'a pas produit une image sur la vraie SurfaceView.
+                        val attendImage = candidat.currentTracks.isTypeSelected(C.TRACK_TYPE_VIDEO)
+                        val imageAffichee = withTimeoutOrNull(5_000) {
+                            while (attendImage && candidat !in premieresImages && candidat.playerError == null && generation == generationLecture) delay(25)
+                            (!attendImage || candidat in premieresImages) && candidat.playerError == null && generation == generationLecture
+                        } == true
+                        if (!imageAffichee || !principale.playWhenReady) continue
+                        candidat.volume = principale.volume
+                        principale.volume = 0f
+                        lecteur = candidat
+                        candidatAffiche = null
+                        plafondDebit = plafondCandidat
+                        renduCourant = decrireRendu(candidat.videoFormat)
+                        debitContinu = DebitContinu()
+                        adopte = true
+                        message = null
+                        rang = index
+                        essai = cible
+                        adresseDesIncidents = cible
+                        adresseRapportee = null
+                        fluxDeclareStable = false
+                        stableDepuis = 0L
+                        depuisLecture = 0L
+                        avanceDemandeeMs = C.TIME_UNSET
+                        silenceJusqua = System.currentTimeMillis() + REPIT_APRES_GESTE_MS
+                        dernierChargement = System.currentTimeMillis()
+                        vitesses.remove(principale)
+                        decodeurs.remove(principale)
+                        premieresImages.remove(principale)
+                        principale.release()
+                        return@launch
+                    } finally {
+                        if (secours === candidat) secours = null
+                        if (!adopte) {
+                            if (candidatAffiche === candidat) renouvelerSurface()
+                            vitesses.remove(candidat); decodeurs.remove(candidat); premieresImages.remove(candidat)
+                            candidat.release()
+                        }
+                    }
+                }
+                if (generation == generationLecture && principale.playWhenReady && principale.totalBufferedDuration <= 3_000) {
+                    repriseEnCours = null
+                    if (reprises >= REPRISES_MAX) suivante() else jouerRang()
+                }
+            } catch (annulation: CancellationException) {
+                throw annulation
+            } catch (erreur: Exception) {
+                // Un échec de préparation ne doit pas quitter l'activité et perdre le profil.
+                dernierIncident = "Reprise interrompue (${erreur.javaClass.simpleName})"
+                if (generation == generationLecture && lecteur?.totalBufferedDuration?.let { it <= 3_000 } == true) {
+                    repriseEnCours = null
+                    suivante()
+                }
+            } finally { if (generation == generationLecture) repriseEnCours = null }
+        }
+        return true
+    }
+
+    private fun debutProgramme(joueur: ExoPlayer): Long? {
+        if (joueur.currentTimeline.isEmpty) return null
+        return joueur.currentTimeline.getWindow(joueur.currentMediaItemIndex, Timeline.Window())
+            .windowStartTimeMs.takeIf { it != C.TIME_UNSET }
+    }
+
+    private fun mediaDirect(source: String): MediaItem = MediaItem.Builder()
+        .setUri(source)
+        .setMimeType(if (estRelaisFlixTunes(source, api.serverUrl)) when (android.net.Uri.parse(source).getQueryParameter("f")) {
+            "ts" -> "video/mp2t"
+            "mp4" -> "video/mp4"
+            "mpd" -> "application/dash+xml"
+            else -> "application/x-mpegURL"
+        } else null)
+        .setLiveConfiguration(MediaItem.LiveConfiguration.Builder()
+            .setTargetOffsetMs(if (incidents > 0 || (echecs[source] ?: 0) > 0) 55_000 else 40_000)
+            .setMinOffsetMs(2_000).setMaxOffsetMs(AVANCE_FRAGILE_MS)
+            .setMinPlaybackSpeed(0.97f).setMaxPlaybackSpeed(1.06f).build())
+        .build()
+
+    private suspend fun renouvelerAdresses() {
+        val id = chaine?.id ?: return
+        if (adresses.none { estRelaisFlixTunes(it, api.serverUrl) }) return
+        if (renouvellementEnCours || System.currentTimeMillis() - dernierRenouvellement < 30_000) return
+        renouvellementEnCours = true
+        dernierRenouvellement = System.currentTimeMillis()
+        try {
+        val nouvelles = runCatching { api.chaineDirect(profileId, id) }.getOrNull() ?: return
+        if (chaine?.id != id) return
+        val index = nouvelles.sources.filter { it.identifiant.isNotEmpty() }.associateBy { it.identifiant }
+        val avant = adresses.getOrNull(rang)
+        adresses = adresses.map { index[identites[it]]?.url ?: it }
+        identites = identites + nouvelles.sources.associate { it.url to it.identifiant.ifEmpty { it.url } }
+        if (adresses.getOrNull(rang) != avant && lecteur?.playWhenReady == true) relancerLaSource(renouvellement = true)
+        } finally { renouvellementEnCours = false }
+    }
+
     private fun reagirALInstabilite() {
+        val joueur = lecteur ?: return
+        if (!joueur.playWhenReady || echec) return
         blocages.clear()
-        incidents += 1
-        /*
-         * **Il n'y a plus de marge à acheter : elle est prise d'emblée.**
-         *
-         * Le recul existait parce que la latence de départ était petite — 24 s — et qu'on l'agrandissait
-         * après coup. On vise maintenant `CIBLE_MAX_S` dès l'ouverture ; il ne reste rien à gagner de
-         * ce côté, et insister ne ferait que sortir de la fenêtre par l'arrière.
-         *
-         * Le levier restant est le **débit**. On allège d'un cran, ce qui réduit immédiatement ce
-         * qu'il y a à télécharger, et l'on s'accorde un répit avant de juger de nouveau. La
-         * surveillance du tampon rendra la qualité d'elle-même dès que la marge sera refaite : on ne
-         * s'enferme pas dans une image dégradée pour un mauvais moment.
-         */
-        if (allegerLeDebit()) {
-            silenceJusqua = System.currentTimeMillis() + REPIT_APRES_RECUL_MS
-            return
-        }
-        // Le repli passe à la suivante qui répond ; la main, elle, va où elle veut.
-        val prochain = prochaineAdresse(adresses, rang, muettes)
-        if (prochain != null) {
-            message = getString(R.string.direct_source_instable, prochain + 1)
-            essai = null
-            reparations = 0
-            rang = prochain
-            securite = 0
-            // La nouvelle adresse n'a rien fait pour mériter un plafond : elle repart entière.
-            plafondDebit = Int.MAX_VALUE
-            jouerRang()
-        }
+        allegerLeDebit()
+        if (!relancerLaSource() && joueur.totalBufferedDuration <= 3_000) suivante()
     }
 
     /**
@@ -1063,13 +1326,14 @@ class LecteurDirectActivity : ComponentActivity() {
             // La durée de segment déclarée par la playlist, sinon la médiane du corpus.
             val segmentMs = (joueur.currentManifest as? HlsManifest)?.mediaPlaylist?.targetDurationUs
                 ?.div(1_000)?.takeIf { it > 0 } ?: 8_000L
-            maxOf(CIBLE_DIRECT_S * 1_000L, avanceViseeMs(fenetreMs, segmentMs, fragile = true))
+            avanceViseeMs(fenetreMs, segmentMs, fragile = true)
         }
         if (visee == avanceDemandeeMs) return
         if (visee != C.TIME_UNSET && avanceDemandeeMs != C.TIME_UNSET && kotlin.math.abs(visee - avanceDemandeeMs) < 1_000) return
         avanceDemandeeMs = visee
         val cibleUs = if (visee == C.TIME_UNSET) C.TIME_UNSET else visee * 1_000
-        joueur.createMessage { _, _ -> vitesseDirect.setTargetLiveOffsetOverrideUs(cibleUs) }
+        val controle = vitesses[joueur] ?: return
+        joueur.createMessage { _, _ -> controle.setTargetLiveOffsetOverrideUs(cibleUs) }
             .setLooper(joueur.playbackLooper)
             .send()
     }
@@ -1137,6 +1401,9 @@ class LecteurDirectActivity : ComponentActivity() {
     @Composable
     private fun Ecran() {
         val contexte = LocalContext.current
+        LaunchedEffect(Unit) {
+            while (true) { delay(15 * 60_000L); renouvelerAdresses() }
+        }
         /*
          * La fenêtre publiée, relevée quatre fois par seconde.
          *
@@ -1146,11 +1413,14 @@ class LecteurDirectActivity : ComponentActivity() {
          * promettrait un retour en arrière inexistant.
          */
         LaunchedEffect(Unit) {
+            var dernierePosition = 0L
+            var dernierProgres = System.currentTimeMillis()
             while (true) {
                 val joueur = lecteur
                 if (joueur != null) {
                     fenetreMs = joueur.duration.coerceAtLeast(0)
                     positionMs = joueur.currentPosition.coerceAtLeast(0)
+                    reserveMs = joueur.totalBufferedDuration.coerceAtLeast(0)
                     val decalage = joueur.currentLiveOffset
                     retardMs = if (decalage == androidx.media3.common.C.TIME_UNSET) {
                         (fenetreMs - positionMs).coerceAtLeast(0)
@@ -1164,6 +1434,14 @@ class LecteurDirectActivity : ComponentActivity() {
                      * qu'on a demandé au lecteur, et ne bouge que lorsqu'on le lui demande.
                      */
                     enPause = !joueur.playWhenReady
+                    val maintenant = System.currentTimeMillis()
+                    if (enPause || positionMs != dernierePosition) {
+                        dernierePosition = positionMs
+                        dernierProgres = maintenant
+                    } else if (!echec && maintenant > silenceJusqua && maintenant - dernierProgres > BLOCAGE_PROLONGE_MS) {
+                        dernierProgres = maintenant
+                        reagirALInstabilite()
+                    }
                     /*
                      * **L'avance suit la fiabilité.** Une source qui a déjà calé, ou que le serveur
                      * connaît pour ses échecs, vise jusqu'à 60 s derrière le bord au lieu de 40, dans la
@@ -1189,23 +1467,43 @@ class LecteurDirectActivity : ComponentActivity() {
                     if (joueur.isPlaying) {
                         val tamponMs = (joueur.bufferedPosition - joueur.currentPosition)
                             .coerceAtLeast(0)
-                        when {
-                            tamponMs < TAMPON_CRITIQUE_MS -> {
-                                // Une image moins fine vaut infiniment mieux qu'une image arrêtée.
-                                allegerLeDebit()
-                                allegerLeDebit()
-                            }
-                            tamponMs < TAMPON_BAS_MS -> allegerLeDebit()
-                            tamponMs >= TAMPON_RETABLI_MS -> rendreLeDebit()
+                        val segmentMs = (joueur.currentManifest as? HlsManifest)?.mediaPlaylist?.targetDurationUs?.div(1_000) ?: 8_000L
+                        val debit = joueur.videoFormat?.bitrate ?: 0
+                        val capaciteMemoire = if (debit > 0) budgetMemoire.tamponOctets.toLong() * 8_000 / (debit + 256_000L) else 40_000L
+                        val capacite = minOf(retardMs.takeIf { it > 0 } ?: 40_000L, capaciteMemoire)
+                        val vise = debitContinu.ajuster(tamponMs, debit, plafondDebit, maintenant,
+                            capacite, segmentMs, maintenant - dernierChargement < maxOf(12_000, segmentMs * 2),
+                            depuisLecture > 0 && maintenant - depuisLecture >= 8_000)
+                        if (vise != plafondDebit) {
+                            plafondDebit = vise
+                            joueur.trackSelectionParameters = joueur.trackSelectionParameters.buildUpon().setMaxVideoBitrate(vise).build()
+                        }
+                        if (fluxDeclareStable && doitPreparerSecours(tamponMs, maintenant - dernierChargement, segmentMs)) {
+                            relancerLaSource()
                         }
                     }
+                    if (!joueur.isPlaying) stableDepuis = 0L
                     if (joueur.isPlaying) {
+                        if (stableDepuis == 0L) stableDepuis = maintenant
+                        if (maintenant - stableDepuis >= 120_000) {
+                            stableDepuis = maintenant
+                            val id = chaine?.id
+                            val url = essai
+                            if (id != null && url != null) lifecycleScope.launch {
+                                runCatching { api.resultatChaineDirect(profileId, id, url, true, 120) }
+                            }
+                        }
                         if (depuisLecture == 0L) depuisLecture = System.currentTimeMillis()
-                        if (!fluxDeclareStable &&
-                            System.currentTimeMillis() - depuisLecture >= SEUIL_STABILITE_MS
+                        if (System.currentTimeMillis() - depuisLecture >= SEUIL_STABILITE_MS
                         ) {
                             fluxDeclareStable = true
                             dejaVuStable = true
+                            val id = chaine?.id
+                            val url = essai
+                            if (id != null && url != null && adresseRapportee != url) {
+                                adresseRapportee = url
+                                lifecycleScope.launch { runCatching { api.resultatChaineDirect(profileId, id, url, true) } }
+                            }
                             sonderLesAutres()
                             /*
                              * Les compteurs repartent **à la déclaration**, et non au retour de
@@ -1227,7 +1525,8 @@ class LecteurDirectActivity : ComponentActivity() {
                      * direct en le disant — ExoPlayer sait aussi le signaler lui-même, par
                      * `ERROR_CODE_BEHIND_LIVE_WINDOW`, mais l'attendre voudrait dire attendre l'erreur.
                      */
-                    if (fenetreMs > FENETRE_MINIMALE_MS && positionMs in 1 until FENETRE_MINIMALE_MS) {
+                    if (!enPause && fenetreMs > FENETRE_MINIMALE_MS &&
+                        (positionMs in 1 until FENETRE_MINIMALE_MS || retardMs > AVANCE_FRAGILE_MS)) {
                         /*
                          * **En silence.**
                          *
@@ -1241,7 +1540,7 @@ class LecteurDirectActivity : ComponentActivity() {
                          * avant, faisait de ces douze secondes la nouvelle cible d'ExoPlayer — un saut
                          * vaut consigne —, et la marge était perdue pour le reste de la soirée.
                          */
-                        joueur.seekToDefaultPosition()
+                        deplacerLecture(joueur)
                         // Le saut efface la cible écrite : la surveillance la réécrira si la source est fragile.
                         avanceDemandeeMs = C.TIME_UNSET
                         silenceJusqua = System.currentTimeMillis() + REPIT_APRES_GESTE_MS
@@ -1267,7 +1566,7 @@ class LecteurDirectActivity : ComponentActivity() {
                     if (commandesVisibles && lecteur?.isPlaying == true) commandesVisibles = false else reveiller()
                 },
         ) {
-            AndroidView(
+            key(generationSurface) { AndroidView(
                 /*
                  * `keepScreenOn` : le téléviseur s'endormait pendant qu'on regardait.
                  *
@@ -1281,12 +1580,22 @@ class LecteurDirectActivity : ComponentActivity() {
                 factory = {
                     PlayerView(contexte).apply {
                         useController = false
+                        setEnableComposeSurfaceSyncWorkaround(true)
                         keepScreenOn = true
-                        player = lecteur
+                        setBackgroundColor(android.graphics.Color.BLACK)
+                        setShutterBackgroundColor(android.graphics.Color.BLACK)
+                        setKeepContentOnPlayerReset(false)
+                        vueLecteur = this
+                        player = candidatAffiche ?: lecteur
                     }
                 },
+                update = { vue ->
+                    val affiche = candidatAffiche ?: lecteur
+                    if (vue.player !== affiche) vue.player = affiche
+                },
+                onRelease = { vue -> vue.player = null; if (vueLecteur === vue) vueLecteur = null },
                 modifier = Modifier.fillMaxSize(),
-            )
+            ) }
             /*
              * Le nom s'efface avec les commandes.
              *
@@ -1296,6 +1605,26 @@ class LecteurDirectActivity : ComponentActivity() {
              * à dire — il ne se retire pas, il disparaît quand la chaîne démarre.
              */
             if (commandesVisibles) Column(Modifier.align(Alignment.TopStart).padding(24.dp)) {
+                BoutonCast {
+                    reveiller()
+                    ouvrirDialogueDiffusion(this@LecteurDirectActivity, api, ::etatPourDiffusion) { lecteur?.pause() }
+                }
+                Text("Diagnostic de lecture · ↑ puis OK", Modifier.clickable {
+                    montrerDiagnostic(!diagnosticOuvert)
+                }, color = Muet, fontSize = 12.sp)
+                if (diagnosticOuvert) Text(
+                    "Réserve : ${reserveMs / 1000} s · Retard : ${retardMs / 1000} s\n" +
+                        "${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE}\n" +
+                        "Sortie : ${if (renduTvProtege) "surface TV protégée" else "standard"}\n" +
+                        "Source ${rang + 1}/${adresses.size} · ${lecteur?.videoFormat?.height?.takeIf { it > 0 }?.let { "${it}p" } ?: "Qualité automatique"}\n" +
+                        "Rendu : $renduCourant\n" +
+                        (if (renduAvantReprise.isNotEmpty()) "Avant reprise : $renduAvantReprise\n" else "") +
+                        "Plafond : ${if (plafondDebit == Int.MAX_VALUE) "automatique" else "${plafondDebit / 1000} kb/s"}\n" +
+                        listOfNotNull(dernierIncident ?: "Aucun incident", dernierArretSysteme).joinToString("\n") +
+                        "\nRetour pour fermer · ↑ puis OK pour rouvrir",
+                    Modifier.background(Color.Black.copy(alpha = 0.85f)).padding(10.dp),
+                    color = Color.White, fontSize = 15.sp,
+                )
                 val courante = chaine
                 Text(
                     listOfNotNull(courante?.numero?.toString(), courante?.nom).joinToString(" · "),
@@ -1430,7 +1759,7 @@ class LecteurDirectActivity : ComponentActivity() {
                     Modifier.align(Alignment.Center).clip(RoundedCornerShape(14.dp))
                         .background(Encre.copy(alpha = .95f)).padding(18.dp),
                 ) {
-                    Text(getString(R.string.direct_sources_titre), color = Muet, fontSize = 12.sp,
+                    Text("Sources et diagnostic · ↑ ↓ puis OK", color = Muet, fontSize = 12.sp,
                         fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(10.dp))
                     LazyColumn(state = etatListe, modifier = Modifier.heightIn(max = 300.dp)) {
@@ -1464,6 +1793,13 @@ class LecteurDirectActivity : ComponentActivity() {
                                 color = Muet, fontSize = 12.sp,
                             )
                         }
+                    }
+                    item {
+                        Text("Diagnostic de lecture", color = Color.White, fontSize = 15.sp,
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp))
+                                .background(if (choixIndex == groupesDuMenu().size) Color.White.copy(alpha = .12f) else Color.Transparent)
+                                .clickable { montrerLesSources(false); montrerDiagnostic(true) }
+                                .padding(horizontal = 14.dp, vertical = 12.dp))
                     }
                     }
                 }
@@ -1559,28 +1895,59 @@ class LecteurDirectActivity : ComponentActivity() {
      */
     private var jouaitAvantArret = false
 
+    @Suppress("DEPRECATION")
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            cacheSegments.vider()
+            repriseEnCours?.cancel()
+        }
+    }
+
     override fun onStop() {
         super.onStop()
+        surveillanceReseau?.arreter()
         jouaitAvantArret = lecteur?.playWhenReady == true
+        generationLecture += 1
+        repriseEnCours?.cancel()
+        repriseEnCours = null
         lecteur?.pause()
     }
 
     override fun onStart() {
         super.onStart()
+        if (surveillanceReseau == null) surveillanceReseau = SurveillanceReseauDirect(this) {
+            lifecycleScope.launch { if (::api.isInitialized) renouvelerAdresses() }
+        }
+        surveillanceReseau?.demarrer()
+        if (::api.isInitialized) lifecycleScope.launch { renouvelerAdresses() }
         if (jouaitAvantArret) {
             jouaitAvantArret = false
             // Rejoindre le bord : le flux a continué sans nous, reprendre où l'on s'était arrêté
             // ferait démarrer avec le retard de toute l'absence.
-            lecteur?.seekToDefaultPosition()
+            lecteur?.let { deplacerLecture(it) }
             lecteur?.play()
         }
     }
 
+    private fun etatPourDiffusion() = etatDiffusionAndroid(
+        if (chaine == null) null else "direct", chaine?.id ?: "", chaine?.nom ?: "FlixTunes",
+        if (lecteur?.isPlaying == true) "lecture" else if (lecteur?.playWhenReady == false) "pause" else "chargement",
+        volume = lecteur?.volume ?: 1f)
+
     override fun onDestroy() {
         super.onDestroy()
         echeance?.cancel()
+        repriseEnCours?.cancel()
+        vueLecteur?.player = null
+        vueLecteur = null
+        candidatAffiche = null
         lecteur?.release()
         lecteur = null
+        vitesses.clear()
+        decodeurs.clear()
+        premieresImages.clear()
+        cacheSegments.vider()
     }
 
     companion object {

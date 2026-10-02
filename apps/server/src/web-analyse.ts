@@ -7,7 +7,7 @@ import { cleDuPalier, episodeDepuisLeWeb, libelleDuPalier } from "./web-catalogu
 import { lireCheminWeb, type CheminWeb, type RefusChemin } from "./web-chemins.js";
 import { fusionnerIdentites, lireAnnexeDuDisque, lireBalisesWeb, type IdentiteWeb } from "./web-identite.js";
 import {
-  chercherYoutube, empechementYoutube, identifierChaineYoutube, resoudreParOEmbed, resoudreYoutube,
+  avatarChaineYoutubeParId, chercherYoutube, empechementYoutube, identifierChaineYoutube, resoudreParOEmbed, resoudreYoutube,
 } from "./web-fournisseurs.js";
 import { cacheRemoteArtwork } from "./artwork.js";
 
@@ -121,7 +121,10 @@ async function identiteDeLaChaine(
     `SELECT external_id FROM catalog_items
      WHERE library_id = ? AND kind = 'show' AND source_folder = ? AND external_provider = 'youtube'`,
   ).get(library.id, cle) as { external_id: string | null } | undefined;
-  if (enregistree?.external_id) return { identifiant: enregistree.external_id, avatar: null };
+  if (enregistree?.external_id) {
+    const connue = chainesConnues.get(cle);
+    return connue?.identifiant === enregistree.external_id ? connue : { identifiant: enregistree.external_id, avatar: null };
+  }
 
   const deja = chainesConnues.get(cle);
   if (deja) return deja;
@@ -158,6 +161,7 @@ async function identiteDeLaChaine(
 /** Oublier les chaînes retenues. À appeler quand les clés changent : la précédente n'a plus cours. */
 export function oublierLesChainesConnues(): void {
   chainesConnues.clear();
+  tentativesAvatar.clear();
 }
 
 /** Retenir sur la fiche de la chaîne son identifiant de plateforme, pour ne plus le chercher. */
@@ -325,7 +329,7 @@ async function completerParLaPlateforme(
       if (!chaine) return null;
       // Sans clé ni budget, on ne cherche pas — et surtout on ne retient rien : ce n'est pas la
       // plateforme qui a répondu « introuvable », c'est la recherche qui n'est pas partie.
-      const empechement = empechementYoutube(100);
+      const empechement = empechementYoutube(1, undefined, "recherche");
       if (empechement) {
         journalWeb("recherche-empechee", { terme: locale.titre ?? chemin.titre, motif: empechement });
         return null;
@@ -547,15 +551,53 @@ export async function illustrerVideoWeb(args: {
     if (args.chemin.plateforme === "youtube" && !dejaIllustree(args.chaineId)) {
       // La même résolution sert l'avatar et l'identifiant : une recherche, deux réponses. Retenir
       // l'identifiant sur la fiche évite de la refaire au prochain fichier de cette chaîne.
-      const chaine = await identiteDeLaChaine(args.library, args.chemin);
-      if (chaine) {
-        if (chaine.avatar) {
-          retenirIllustration(args.chaineId,
-            await cacheRemoteArtwork(args.chaineId, "poster", chaine.avatar, args.langue, "youtube"));
-        }
-      }
+      if (connue) await illustrerChaineConnue(args.chaineId, connue.identifiant, connue.avatar, args.langue);
     }
   } catch { /* idem pour la chaine */ }
+}
+
+const tentativesAvatar = new Map<string, number>();
+export async function illustrerChaineConnue(id: string, identifiant: string, avatar: string | null, langue: string,
+  reessayer = false): Promise<void> {
+  if (dejaIllustree(id) || (!reessayer && (tentativesAvatar.get(id) ?? 0) > Date.now())) return;
+  const fiche = db.prepare(`SELECT poster_url, metadata_locked, match_status, external_provider, external_id
+    FROM catalog_items WHERE id = ?`).get(id) as { poster_url: string | null; metadata_locked: number;
+      match_status: string; external_provider: string | null; external_id: string | null } | undefined;
+  if (!fiche || fiche.external_provider !== "youtube" || fiche.external_id !== identifiant) return;
+  // Le verrou d'une correction protège l'identité choisie. Une image absente peut être complétée
+  // pour cette identité exacte ; toute image déjà choisie reste intacte, même si elle est distante.
+  if (fiche.metadata_locked && (fiche.match_status !== "manual" || fiche.poster_url)) return;
+  // Une panne n'engendre pas une requête par vidéo ; une nouvelle tentative reste possible.
+  if (tentativesAvatar.size > 5_000) tentativesAvatar.clear();
+  tentativesAvatar.set(id, Date.now() + 15 * 60_000);
+  const url = avatar ?? await avatarChaineYoutubeParId(identifiant);
+  if (!url) return;
+  const adresse = await cacheRemoteArtwork(id, "poster", url, langue, "youtube");
+  if (!adresse) return;
+  // Une correction ou une image choisie pendant le téléchargement a priorité sur cette réponse.
+  db.prepare(`UPDATE catalog_items SET poster_url = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND external_provider = 'youtube' AND external_id = ? AND poster_url IS ?
+      AND (metadata_locked = 0 OR (match_status = 'manual' AND NULLIF(poster_url, '') IS NULL))`)
+    .run(adresse, id, identifiant, fiche.poster_url);
+}
+
+/** Répare les chaînes déjà analysées sans relancer l'analyse de leurs fichiers. */
+export async function reparerAvatarsWeb(): Promise<number> {
+  const chaines = db.prepare(`SELECT c.id, c.external_id FROM catalog_items c
+    JOIN library_folders l ON l.id = c.library_id
+    WHERE l.kind = 'web' AND l.enabled = 1 AND c.kind = 'show'
+      AND (c.metadata_locked = 0 OR (c.match_status = 'manual' AND NULLIF(c.poster_url, '') IS NULL))
+      AND c.external_provider = 'youtube' AND c.external_id IS NOT NULL
+      AND (c.poster_url IS NULL OR c.poster_url NOT LIKE '/api/artwork/%')
+    ORDER BY c.id LIMIT 200`).all() as Array<{ id: string; external_id: string }>;
+  let reparees = 0;
+  for (const chaine of chaines) {
+    try {
+      await illustrerChaineConnue(chaine.id, chaine.external_id, null, "fr");
+      if (dejaIllustree(chaine.id)) reparees++;
+    } catch { /* La prochaine passe reprendra les images encore manquantes. */ }
+  }
+  return reparees;
 }
 
 /**

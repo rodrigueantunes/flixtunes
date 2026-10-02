@@ -41,6 +41,7 @@ class FlixTunesApi(
         set(value) { field = value; JetonSession.compteDistant = value }
 
     init {
+        JetonSession.serveur = serverUrl
         // On ne publie que ce que l'on possède : une instance sans jeton ne doit jamais effacer celui
         // d'une autre. C'est exactement ce qui rendait la lecture impossible à distance.
         initialProfileToken?.let { JetonSession.profil = it }
@@ -111,6 +112,8 @@ class FlixTunesApi(
 
     fun clearProfileAccess() { profileToken = null }
     fun profileAccessToken(): String? = profileToken
+    suspend fun diffusion(chemin: String, corps: JSONObject? = null): JSONObject =
+        request("/diffusion/$chemin", if (corps == null) "GET" else "POST", corps)
     fun remoteAccessToken(): String? = remoteToken
     // Le réseau travaille déjà sur IO, mais JSONObject et les centaines de modèles qui en sortent
     // s'exécutaient ensuite sur viewModelScope/Main. Une page TV de 120 fiches pouvait ainsi bloquer
@@ -347,12 +350,13 @@ class FlixTunesApi(
             sources = (0 until sources.length()).map {
                 val source = sources.getJSONObject(it)
                 SourceChaine(
-                    source.optString("url"), source.optInt("succes"), source.optInt("echecs"),
+                    absolute(source.optString("url")) ?: source.optString("url"), source.optInt("succes"), source.optInt("echecs"),
                     // Absentes tant que le serveur n'a pas sondé la chaîne : `null`, et non zéro, qui
                     // se lirait comme « mesurée à rien ».
                     source.optInt("hauteur").takeIf { source.has("hauteur") && !source.isNull("hauteur") },
                     source.optInt("debit").takeIf { source.has("debit") && !source.isNull("debit") },
                     source.optString("empreinte"),
+                    source.optString("identifiant"),
                 )
             },
         )
@@ -364,9 +368,11 @@ class FlixTunesApi(
      * C'est ainsi que l'ordre d'essai s'améliore tout seul. L'échec de cet appel n'a aucune
      * conséquence pour la personne qui regarde : il est avalé par l'appelant.
      */
-    suspend fun resultatChaineDirect(profileId: String, id: String, url: String, ok: Boolean) {
+    suspend fun resultatChaineDirect(profileId: String, id: String, url: String, ok: Boolean, secondesStables: Int? = null) {
         requestRaw("/live/channels/${encode(id)}/resultat?profileId=${encode(profileId)}", "POST",
-            JSONObject().put("url", url).put("ok", ok))
+            JSONObject().put("url", url).put("ok", ok).apply {
+                if (secondesStables != null) put("secondesStables", secondesStables)
+            })
     }
 
     /**
@@ -379,7 +385,7 @@ class FlixTunesApi(
         val reponse = request("/live/channels/${encode(id)}/sondes?profileId=${encode(profileId)}", "POST",
             JSONObject().put("enCours", enCours))
         val muettes = reponse.optJSONArray("muettes") ?: return emptySet()
-        return (0 until muettes.length()).mapTo(mutableSetOf()) { muettes.getString(it) }
+        return (0 until muettes.length()).mapTo(mutableSetOf()) { absolute(muettes.getString(it)) ?: muettes.getString(it) }
     }
 
     /**
@@ -463,7 +469,8 @@ class FlixTunesApi(
         try {
             connection.requestMethod = method
             connection.connectTimeout = 8_000
-            connection.readTimeout = 45_000
+            connection.readTimeout = if (path.startsWith("/diffusion/") && (path.endsWith("/commande") || path == "/diffusion/airplay")) 600_000
+                else if (path.startsWith("/diffusion/")) 15_000 else 45_000
             connection.setRequestProperty("Accept", "application/json")
             profileToken?.let { connection.setRequestProperty("X-FlixTunes-Profile-Token", it) }
             remoteToken?.let { connection.setRequestProperty("X-FlixTunes-Remote-Token", it) }

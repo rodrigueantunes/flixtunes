@@ -72,6 +72,8 @@ export const ETAT_INITIAL: EtatLecteur = {
 
 /** Les pistes que le client Web veut entendre et voir, désignées par l'index qu'en donne le serveur. */
 export interface PistesVoulues {
+  /** Paramètre interne de la coque ; jamais une option VLC libre envoyée par la page. */
+  direct?: boolean;
   audio?: number | null;
   /** `-1` ou absent : aucun sous-titre. C'est le lecteur qui dessine ceux qui sont du texte. */
   sousTitre?: number | null;
@@ -311,6 +313,7 @@ export class Lecteur {
      * canaux et 224 kb/s que le serveur annonce à l'index 3.
      */
     const options: Array<[string, string]> = [["input", uri]];
+    if (pistes.direct) options.push(["option", ":network-caching=10000"]);
     if (pistes.audio != null) options.push(["option", `:audio-track-id=${Math.trunc(pistes.audio)}`]);
     options.push(["option", `:sub-track-id=${Math.trunc(pistes.sousTitre ?? -1)}`]);
     await this.commander("in_play", options);
@@ -535,6 +538,7 @@ export class Lecteur {
     const adresse = `http://127.0.0.1:${this.port}/requests/status.json${requete ? `?${requete}` : ""}`;
     try {
       const reponse = await fetch(adresse, {
+        signal: AbortSignal.timeout(2_500),
         headers: { Authorization: `Basic ${Buffer.from(`:${this.motDePasse}`).toString("base64")}` },
       });
       if (!reponse.ok) return null;

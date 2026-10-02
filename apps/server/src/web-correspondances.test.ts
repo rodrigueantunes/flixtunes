@@ -184,7 +184,7 @@ describe("candidats proposés", () => {
     const etat = quotaDuJour();
     db.prepare(`INSERT INTO server_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
-      .run("web_quota_youtube", JSON.stringify({ date: etat.date, depense: etat.plafond - 1 }));
+      .run("web_quota_youtube", JSON.stringify({ version: 2, date: etat.date, depense: 0, recherches: 100 }));
 
     const { candidats, motif } = await candidatsPourFicheWeb(chaineId);
 

@@ -1,5 +1,7 @@
 package tv.flixtunes.app.ui.ecrans
 
+import tv.flixtunes.app.ui.BoutonCast
+
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -98,6 +100,7 @@ import tv.flixtunes.app.ui.tv.NavigationTelevision
     focusRestaure: () -> Unit,
     ouvrirReglages: () -> Unit,
     ouvrirMenu: (Media) -> Unit,
+    ouvrirCast: () -> Unit = {},
     changerSection: (String) -> Unit,
 ) {
     val gabarit = LocalGabarit.current
@@ -128,10 +131,14 @@ import tv.flixtunes.app.ui.tv.NavigationTelevision
                     Modifier.fillMaxWidth().padding(horizontal = edge, vertical = if (compact) 10.dp else 18.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                MarqueFlixTunes(
-                    taillePolice = if (compact) 18 else 21,
-                    tailleLogo = if (compact) 36.dp else 46.dp,
-                )
+                BoutonCast(ouvrirCast)
+                Column(if (compact) Modifier.weight(1f) else Modifier) {
+                    MarqueFlixTunes(
+                        taillePolice = if (compact) 18 else 21,
+                        tailleLogo = if (compact) 36.dp else 46.dp,
+                    )
+                    if (compact && section == "home") PuceVersion(BuildConfig.VERSION_NAME, taillePolice = 11)
+                }
                 /*
                  * La version, contre l'enseigne, et sur l'accueil seulement.
                  *
@@ -140,7 +147,7 @@ import tv.flixtunes.app.ui.tv.NavigationTelevision
                  * section et les filtres, où elle n'a rien à dire : une mention utile une fois par
                  * ouverture n'a pas à occuper la barre en permanence.
                  */
-                if (section == "home") PuceVersion(
+                if (!compact && section == "home") PuceVersion(
                     BuildConfig.VERSION_NAME,
                     Modifier.padding(start = if (compact) 8.dp else 12.dp),
                     taillePolice = if (compact) 11 else 13,
@@ -168,7 +175,7 @@ import tv.flixtunes.app.ui.tv.NavigationTelevision
                             model.search("")
                         }
                     }
-                } else {
+                } else if (!compact) {
                     Spacer(Modifier.weight(1f))
                 }
                 /*

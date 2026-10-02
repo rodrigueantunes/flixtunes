@@ -78,6 +78,12 @@ export interface PontLecteur {
 }
 
 export interface PontBureau {
+  readonly direct?: {
+    renouveler(uri: string): Promise<boolean>;
+    ouvrir(uri: string): Promise<{ ok: boolean; message?: string }>;
+    fermer(): Promise<void>;
+    diagnostic(): Promise<{ cacheOctets: number; reserveCacheSecondes: number; incident: string } | null>;
+  };
   /** Version du pont, pour qu'une évolution soit reconnaissable côté Web. */
   readonly version: string;
   /** L'adresse du serveur actuellement retenue, ou `null` au premier démarrage. */
@@ -137,7 +143,7 @@ const lecteur: PontLecteur = {
 const vlcPresent = ipcRenderer.sendSync("flixtunes:vlc-present") === true;
 
 const pont: PontBureau = {
-  version: "3",
+  version: "4",
   serveur: () => ipcRenderer.invoke("flixtunes:serveur") as Promise<string | null>,
   definirServeur: (adresse) =>
     ipcRenderer.invoke("flixtunes:definir-serveur", adresse) as Promise<{ ok: boolean; adresse?: string; message?: string }>,
@@ -149,6 +155,12 @@ const pont: PontBureau = {
     return () => { ipcRenderer.removeListener(CANAL_PLEIN_ECRAN, ecouteur); };
   },
   ...(vlcPresent ? { lecteur } : {}),
+  ...(vlcPresent ? { direct: {
+    renouveler: (uri: string) => ipcRenderer.invoke("flixtunes:direct-renouveler", uri),
+    ouvrir: (uri: string) => ipcRenderer.invoke("flixtunes:direct-ouvrir", uri),
+    fermer: () => ipcRenderer.invoke("flixtunes:direct-fermer"),
+    diagnostic: () => ipcRenderer.invoke("flixtunes:direct-diagnostic"),
+  } } : {}),
 };
 
 contextBridge.exposeInMainWorld("flixtunesBureau", pont);

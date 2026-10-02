@@ -1,7 +1,7 @@
 services:
   flixtunes:
     build: .
-    image: flixtunes:0.5.8
+    image: flixtunes:0.6.0
     container_name: flixtunes
     restart: unless-stopped
     network_mode: host
@@ -15,6 +15,7 @@ services:
       FLIXTUNES_BACKUP_INTERVAL_HOURS: "${FLIXTUNES_BACKUP_INTERVAL_HOURS:-24}"
       FLIXTUNES_BACKUP_RETENTION: "${FLIXTUNES_BACKUP_RETENTION:-7}"
       FLIXTUNES_API_TOKEN: "${FLIXTUNES_API_TOKEN:-}"
+      FLIXTUNES_CAST_BASE_URL: "${FLIXTUNES_CAST_BASE_URL:-}"
     volumes:
       - "${FLIXTUNES_DATA_ROOT:-./data}:/app/data"
       - "${FLIXTUNES_MEDIA_ROOT:-./media}:/media:ro"

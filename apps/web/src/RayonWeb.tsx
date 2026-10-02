@@ -70,12 +70,12 @@ function trier(videos: MediaItem[], tri: TriWeb): MediaItem[] {
 
 /** Une vignette, ou l'initiale à sa place : une image cassée vaut moins qu'une lettre. */
 function Vignette({ url, nom, classe }: { url: string | null; nom: string; classe: string }) {
-  const [echouee, setEchouee] = useState(false);
-  if (!url || echouee) {
+  const [echouee, setEchouee] = useState<string | null>(null);
+  if (!url || echouee === url) {
     return <span className={`${classe} web-initiale`} aria-hidden="true">{nom.charAt(0).toUpperCase()}</span>;
   }
   return <img className={classe} src={url} alt="" loading="lazy" referrerPolicy="no-referrer"
-    onError={() => setEchouee(true)} />;
+    onError={() => setEchouee(url)} />;
 }
 
 /**
@@ -145,7 +145,7 @@ function CorrectionWeb({ profileId, item, genre, onCorrige }: {
       <input value={recherche} onChange={(event) => setRecherche(event.target.value)}
         placeholder={genre === "chaine" ? "Nom de la chaîne" : "Titre de la vidéo"}
         aria-label={genre === "chaine" ? "Chercher une chaîne" : "Chercher une vidéo"} />
-      <button type="button" className="secondary" disabled={occupe} onClick={() => void chercher()}>Chercher (100 unités)</button>
+      <button type="button" className="secondary" disabled={occupe} onClick={() => void chercher()}>Chercher</button>
     </div>
     {candidats.map((candidat) => <button key={candidat.identifiant ?? candidat.url} type="button"
       className="web-candidat" disabled={occupe || !candidat.identifiant}
@@ -165,7 +165,7 @@ function CorrectionWeb({ profileId, item, genre, onCorrige }: {
   </div>;
 }
 
-export function RayonWeb({ profileId, onPlay }: { profileId: string; onPlay: (item: MediaItem) => void }) {
+export function RayonWeb({ profileId, onPlay, modifiable = true }: { profileId: string; onPlay: (item: MediaItem) => void; modifiable?: boolean }) {
   const [chaines, setChaines] = useState<MediaItem[]>([]);
   /*
    * La position se relit au montage, et se réécrit à chaque pas.
@@ -183,16 +183,22 @@ export function RayonWeb({ profileId, onPlay }: { profileId: string; onPlay: (it
   useEffect(() => { retenirSouvenirWeb({ chaine, chemin, tri }); }, [chaine, chemin, tri]);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState<string | null>(null);
+  const [rechercheChaine, setRechercheChaine] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [total, setTotal] = useState(0);
+  const [revision, setRevision] = useState(0);
+  const taillePage = 60;
 
   useEffect(() => {
     let vivant = true;
     setChargement(true);
-    api.catalogPage(profileId, { kind: "web", limit: 200 })
-      .then((page) => { if (vivant) { setChaines(page.items); setErreur(null); } })
+    const timer = window.setTimeout(() => { void api.catalogPage(profileId,
+      { kind: "web", limit: taillePage, offset, query: rechercheChaine.trim() || undefined })
+      .then((page) => { if (vivant) { setChaines(page.items); setTotal(page.total); setErreur(null); } })
       .catch(() => { if (vivant) setErreur("Le rayon Web n'a pas pu être chargé."); })
-      .finally(() => { if (vivant) setChargement(false); });
-    return () => { vivant = false; };
-  }, [profileId]);
+      .finally(() => { if (vivant) setChargement(false); }); }, rechercheChaine ? 250 : 0);
+    return () => { vivant = false; window.clearTimeout(timer); };
+  }, [profileId, offset, rechercheChaine, revision]);
 
   useEffect(() => {
     if (!chaine?.catalogId) { setDetails(null); return; }
@@ -203,7 +209,7 @@ export function RayonWeb({ profileId, onPlay }: { profileId: string; onPlay: (it
       .catch(() => { if (vivant) setErreur("Cette chaîne n'a pas pu être ouverte."); })
       .finally(() => { if (vivant) setChargement(false); });
     return () => { vivant = false; };
-  }, [chaine?.catalogId, profileId]);
+  }, [chaine?.catalogId, profileId, revision]);
 
   /** L'arbre au niveau courant : les dossiers qu'on peut ouvrir, et les vidéos qui sont ici. */
   const niveau = useMemo(() => {
@@ -242,11 +248,16 @@ export function RayonWeb({ profileId, onPlay }: { profileId: string; onPlay: (it
     return <section className="catalog-page" aria-labelledby="web-titre">
       <header className="catalog-header">
         <div><span className="eyebrow">Vos chaînes</span><h1 id="web-titre">Web</h1>
-          <p>{chaines.length} {chaines.length > 1 ? "chaînes" : "chaîne"}</p></div>
+          <p>{total} {total > 1 ? "chaînes" : "chaîne"}</p></div>
+        <label className="sort-control">Rechercher une chaîne
+          <input type="search" value={rechercheChaine} maxLength={120} aria-label="Rechercher une chaîne"
+            onChange={(event) => { setRechercheChaine(event.target.value); setOffset(0); }} />
+        </label>
       </header>
       {erreur && <p className="live-vide">{erreur}</p>}
       {!erreur && !chargement && !chaines.length
-        && <p className="live-vide">Aucune chaîne pour l'instant. Déclarez un dossier Web et lancez une analyse.</p>}
+        && <p className="live-vide">{rechercheChaine ? "Aucune chaîne ne correspond à cette recherche."
+          : "Aucune chaîne pour l'instant. Déclarez un dossier Web et lancez une analyse."}</p>}
       <div className="web-grille web-grille-chaines">
         {chaines.map((item) => <button key={item.id} type="button" className="web-carte web-carte-chaine"
           onClick={() => { setChaine(item); setChemin([]); }}>
@@ -254,6 +265,11 @@ export function RayonWeb({ profileId, onPlay }: { profileId: string; onPlay: (it
           <span className="web-nom">{item.showTitle ?? item.title}</span>
         </button>)}
       </div>
+      {total > taillePage && <nav className="catalog-controls" aria-label="Pages des chaînes">
+        <button type="button" disabled={chargement || offset === 0} onClick={() => setOffset(Math.max(0, offset - taillePage))}>Page précédente</button>
+        <span aria-live="polite">Page {Math.floor(offset / taillePage) + 1} sur {Math.ceil(total / taillePage)}</span>
+        <button type="button" disabled={chargement || offset + taillePage >= total} onClick={() => setOffset(offset + taillePage)}>Page suivante</button>
+      </nav>}
     </section>;
   }
 
@@ -278,8 +294,8 @@ export function RayonWeb({ profileId, onPlay }: { profileId: string; onPlay: (it
         </nav>
       </div>
       <div className="catalog-controls">
-        <CorrectionWeb profileId={profileId} item={chaine} genre="chaine"
-          onCorrige={() => setChaine({ ...chaine })} />
+        {modifiable && <CorrectionWeb profileId={profileId} item={chaine} genre="chaine"
+          onCorrige={() => setRevision((r) => r + 1)} />}
         <label className="sort-control"><span>Trier par</span>
           <select value={tri} onChange={(event) => setTri(event.target.value as TriWeb)} aria-label="Trier les vidéos">
             <option value="recent">Plus récentes d'abord</option>
@@ -333,8 +349,8 @@ export function RayonWeb({ profileId, onPlay }: { profileId: string; onPlay: (it
         * La correction est un bouton distinct, comme l'étoile de la grille du direct : cliquer une
         * carte lance la vidéo, et rien ne doit rendre ce geste hésitant.
         */}
-      <CorrectionWeb profileId={profileId} item={video} genre="video"
-        onCorrige={() => { if (chaine?.catalogId) void api.details(chaine.catalogId, profileId).then(setDetails); }} />
+      {modifiable && <CorrectionWeb profileId={profileId} item={video} genre="video"
+        onCorrige={() => { if (chaine?.catalogId) void api.details(chaine.catalogId, profileId).then(setDetails); }} />}
       <button type="button" className="web-carte web-carte-video"
         disabled={!video.playableMediaId}
         onClick={() => video.playableMediaId && onPlay({ ...video, id: video.playableMediaId })}>

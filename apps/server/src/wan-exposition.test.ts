@@ -23,16 +23,7 @@ const REFUS_ASSUMES = new Set([
   // passe qui décode pendant des heures est un geste sur la machine, pas sur la médiathèque.
   "POST /api/system/generiques", "POST /api/system/generiques/arret",
   "POST /api/system/generiques/passe",
-  // La télévision en direct, étape 1 : **tout est refusé, y compris la grille**, et les deux cas
-  // n'ont pas la même durée de vie.
-  //
-  // Les réglages resteront fermés : désigner un dossier du NAS, cocher cinq cents listes ou lancer un
-  // téléchargement de quarante mégaoctets sont des gestes sur la machine.
-  //
-  // La grille — `GET /api/live/channels` et `/api/live/groupes` — est en revanche une lecture, et elle
-  // a vocation à rejoindre les lectures autorisées **quand son écran existera** et aura été éprouvé.
-  // L'ouvrir maintenant exposerait une route dont personne ne se sert encore : ce serait ouvrir sans
-  // décider, ce que ce registre existe précisément pour empêcher.
+  // Les réglages et imports du direct restent réservés au réseau local.
   "GET /api/system/live", "PUT /api/system/live",
   "POST /api/system/live/rafraichir", "POST /api/system/live/arret",
   "POST /api/system/live/jeton", "DELETE /api/system/live/jeton",
@@ -41,21 +32,6 @@ const REFUS_ASSUMES = new Set([
   "POST /api/live/rafraichissement",
   "GET /api/system/live/listes",
   "GET /api/system/live/sources", "POST /api/system/live/sources", "DELETE /api/system/live/sources/:id",
-  "GET /api/live", "GET /api/live/listes", "GET /api/live/pays", "GET /api/live/fiabilites",
-  "GET /api/live/channels",
-  "GET /api/live/channels/:id", "POST /api/live/channels/:id/resultat", "GET /api/live/numero",
-  // La sonde des autres sources suit la lecture : elle part du NAS vers des hébergeurs d'Internet.
-  "POST /api/live/channels/:id/sondes",
-  // L'étoile et la dernière chaîne suivront la grille : elles n'ont de sens que devant une grille
-  // qu'on affiche, et la grille elle-même attend encore d'être éprouvée à distance.
-  "PUT /api/live/channels/:id/favori", "DELETE /api/live/channels/:id/favori", "GET /api/live/derniere",
-  // Le relais suivra la grille : il n'a de sens que pour un navigateur qui affiche déjà des chaînes.
-  "GET /api/live/relais",
-  // Le rayon Web suit la meme regle que la grille du direct : le drapeau qui decide de son entree de
-  // navigation reste ferme tant que son ecran n'existe pas et n'a pas ete eprouve a distance.
-  // L'ouvrir maintenant exposerait une route dont personne ne se sert encore — ouvrir sans decider,
-  // ce que ce registre existe pour empecher.
-  "GET /api/web",
   // Les correspondances web suivent la meme regle : corriger une fiche est un geste
   // d'administration, qui reste sur le reseau local comme les corrections du catalogue.
   "GET /api/web/correspondances", "GET /api/web/correspondances/:id/candidats",
@@ -68,8 +44,6 @@ const REFUS_ASSUMES = new Set([
   "POST /api/catalog/:id/match", "DELETE /api/catalog/:id/match",
   "GET /api/metadata/review", "GET /api/metadata/search",
   "GET /api/metadata/providers", "PATCH /api/metadata/providers",
-  // Sort du NAS vers TMDB avec un chemin fourni par le client : relais d'images ouvert.
-  "GET /api/metadata/image/:size/:name",
   // Diagnostic et exploitation.
   "GET /api/system/status", "GET /api/system/metrics", "GET /api/system/capacity",
   "POST /api/system/capacity/recalibrate", "GET /api/system/playback",
@@ -141,6 +115,10 @@ describe("exposition WAN", () => {
   });
 
   it("exige une session sur les lectures comme sur le flux vidéo", () => {
+    for (const route of ["/api/web", "/api/live", "/api/live/channels", "/api/live/channels/:id",
+      "/api/live/relais", "/api/live/derniere", "/api/metadata/image/:size/:name"]) {
+      expect(verdictWan("GET", route)).toEqual({ autorise: true, sessionRequise: true });
+    }
     expect(verdictWan("GET", "/api/catalog")).toEqual({ autorise: true, sessionRequise: true });
     expect(verdictWan("GET", "/api/media/:id/stream")).toEqual({ autorise: true, sessionRequise: true });
     expect(verdictWan("GET", "/api/artwork/:id")).toEqual({ autorise: true, sessionRequise: true });

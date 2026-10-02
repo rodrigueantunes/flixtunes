@@ -6,6 +6,15 @@ import { avanceVisee, segmentsDAvance } from "./avance-direct";
  * chaîne publie. Les fenêtres ci-dessous sont celles qu'on rencontre dans le corpus.
  */
 describe("l'avance derrière le direct", () => {
+  it("reste dans une fenêtre incomplète ou un segment de plus d'une minute", () => {
+    for (const fenetre of [0, 1, 5, 15, 100, 600]) {
+      for (const segment of [1, 8, 20, 90]) {
+        const avance = avanceVisee(fenetre, segment, true);
+        expect(avance).toBeGreaterThanOrEqual(0);
+        expect(avance).toBeLessThanOrEqual(Math.min(60, fenetre));
+      }
+    }
+  });
   it("reste à 40 s pour une source qui n'a jamais calé, et monte à 60 s pour une fragile", () => {
     // Une fenêtre de cinq minutes, en segments de 9 s : CNews, mesurée.
     expect(avanceVisee(300, 9, false)).toBe(40);

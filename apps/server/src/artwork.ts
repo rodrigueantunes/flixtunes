@@ -1,17 +1,96 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { access, copyFile, mkdir, readdir, stat, unlink, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import mime from "mime-types";
 import { config } from "./config.js";
 import { db } from "./database.js";
-import { fetchWithTimeout } from "./resilience.js";
 
 export type ArtworkRole = "poster" | "backdrop" | "still";
 
 const artworkDirectory = path.join(config.dataDir, "artwork");
 const execFileAsync = promisify(execFile);
+
+// L'origine reste côté serveur ; elle permet de restaurer un fichier perdu sans réapparier sa fiche.
+db.exec(`CREATE TABLE IF NOT EXISTS artwork_origins (
+  asset_id TEXT PRIMARY KEY REFERENCES artwork_assets(id) ON DELETE CASCADE,
+  source_url TEXT NOT NULL)`);
+let repairCursor = "";
+let repairRunning = false;
+
+export async function repairMissingArtwork(limit = 200): Promise<{ checked: number; repaired: number; missing: number }> {
+  const result = { checked: 0, repaired: 0, missing: 0 };
+  if (repairRunning) return result;
+  repairRunning = true;
+  try {
+    const assets = db.prepare(`SELECT a.id, a.local_path, a.source, a.catalog_id, o.source_url
+      FROM artwork_assets a LEFT JOIN artwork_origins o ON o.asset_id = a.id
+      WHERE a.id > ? ORDER BY a.id LIMIT ?`).all(repairCursor, Math.max(1, Math.min(500, limit))) as
+      Array<{ id: string; local_path: string; source: string; catalog_id: string; source_url: string | null }>;
+    let downloads = 0;
+    for (const asset of assets) {
+      repairCursor = asset.id; result.checked++;
+      try { if ((await stat(asset.local_path)).size > 0) continue; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") continue; }
+      result.missing++;
+      const retrouverAvatar = () => {
+        if (asset.source !== "youtube") return;
+        db.prepare(`UPDATE catalog_items SET poster_url = NULL WHERE id = ? AND kind = 'show'
+          AND external_provider = 'youtube' AND external_id IS NOT NULL AND poster_url = ?`)
+          .run(asset.catalog_id, apiUrl(asset.id));
+      };
+      if (asset.source_url && downloads < 10 && path.dirname(path.resolve(asset.local_path)) === path.resolve(artworkDirectory)) {
+        downloads++;
+        const temporary = `${asset.local_path}.${randomUUID()}.partial`;
+        try {
+          const { bytes } = await downloadArtwork(asset.source_url);
+          await mkdir(artworkDirectory, { recursive: true });
+          await writeFile(temporary, bytes);
+          await rename(temporary, asset.local_path);
+          result.repaired++;
+        } catch { retrouverAvatar(); /* Une ancienne URL YouTube peut avoir expiré. */ }
+        finally { await unlink(temporary).catch(() => undefined); }
+      } else if (!asset.source_url && asset.source === "youtube") {
+        // Anciennes versions : l'origine n'était pas conservée. Une chaîne connue sait la retrouver.
+        retrouverAvatar();
+      }
+    }
+    if (assets.length < Math.max(1, Math.min(500, limit))) repairCursor = "";
+    return result;
+  } finally { repairRunning = false; }
+}
+
+/** Le délai et la limite couvrent aussi le corps HTTP, même sans Content-Length. */
+async function downloadArtwork(url: string): Promise<{ bytes: Uint8Array; contentType: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20_000);
+  try {
+    const response = await fetch(url, { headers: { Accept: "image/*" }, signal: controller.signal });
+    const contentType = response.headers.get("content-type")?.split(";")[0] || "image/jpeg";
+    if (!response.ok || !contentType.startsWith("image/") || !response.body) {
+      await response.body?.cancel();
+      throw new Error(`Image distante indisponible (${response.status})`);
+    }
+    const maximum = 20 * 1024 * 1024;
+    if (Number(response.headers.get("content-length")) > maximum) {
+      await response.body.cancel(); throw new Error("Image distante trop volumineuse");
+    }
+    const lecteur = response.body.getReader(), morceaux: Uint8Array[] = [];
+    let taille = 0;
+    try {
+      while (true) {
+        const partie = await lecteur.read();
+        if (partie.done) break;
+        taille += partie.value.byteLength;
+        if (taille > maximum) throw new Error("Image distante trop volumineuse");
+        morceaux.push(partie.value);
+      }
+    } finally { await lecteur.cancel().catch(() => undefined); }
+    if (!taille) throw new Error("Image distante vide");
+    return { bytes: Buffer.concat(morceaux, taille), contentType };
+  } finally { clearTimeout(timer); }
+}
 
 function apiUrl(id: string): string {
   return `/api/artwork/${id}`;
@@ -72,20 +151,20 @@ export async function cacheRemoteArtwork(
   if (!sourceUrl) return null;
   const sourceKey = createHash("sha256").update(sourceUrl).digest("hex");
   const existing = await existingAsset(catalogId, role, sourceKey);
-  if (existing) return existing;
+  if (existing) {
+    db.prepare("INSERT OR IGNORE INTO artwork_origins(asset_id, source_url) VALUES (?, ?)")
+      .run(existing.slice("/api/artwork/".length), sourceUrl);
+    return existing;
+  }
 
-  const response = await fetchWithTimeout(sourceUrl, { headers: { Accept: "image/*" } }, 20_000);
-  if (!response.ok) throw new Error(`Téléchargement de jaquette impossible (${response.status})`);
-  const contentLength = Number(response.headers.get("content-length") ?? 0);
-  if (contentLength > 20 * 1024 * 1024) throw new Error("Image distante trop volumineuse");
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength > 20 * 1024 * 1024) throw new Error("Image distante trop volumineuse");
-  const contentType = response.headers.get("content-type")?.split(";")[0] || "image/jpeg";
+  const { bytes, contentType } = await downloadArtwork(sourceUrl);
   const id = randomUUID();
   const localPath = path.join(artworkDirectory, `${id}${extensionFor(contentType, sourceUrl)}`);
   await mkdir(artworkDirectory, { recursive: true });
   await writeFile(localPath, bytes);
-  return registerAsset({ id, catalogId, role, language, source, sourceKey, localPath, mimeType: contentType });
+  const adresse = registerAsset({ id, catalogId, role, language, source, sourceKey, localPath, mimeType: contentType });
+  db.prepare("INSERT INTO artwork_origins(asset_id, source_url) VALUES (?, ?)").run(id, sourceUrl);
+  return adresse;
 }
 
 export async function cacheLocalArtwork(

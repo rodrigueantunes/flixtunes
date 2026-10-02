@@ -15,27 +15,17 @@ import { decoderEntitesHtml, normaliseDate, type IdentiteWeb } from "./web-ident
  * Deux voies, et elles n'ont pas le même prix :
  *
  * - **par identifiant** — le nom du fichier le porte, ou son annexe. C'est exact, et c'est bon marché ;
- * - **par titre** — il faut chercher. C'est approximatif, et sur YouTube c'est **cent fois** plus cher.
+ * - **par titre** — il faut chercher. Le budget de recherches est séparé et bien plus limité.
  *
  * Toute la prudence de ce module tient dans cet écart.
  */
 
-/** Ce que YouTube facture, en unités de quota, pour chaque appel. Publié par Google. */
-const COUT = { videos: 1, search: 100, channels: 1 } as const;
-
-/**
- * Ce qu'on s'autorise à dépenser par jour.
- *
- * Le quota gratuit est de 10 000 unités. On s'arrête avant, pour deux raisons : l'épuiser rend la clé
- * inutilisable jusqu'au lendemain — y compris pour les résolutions à une unité, qui sont pourtant ce
- * qui marche le mieux —, et il vaut mieux qu'une analyse s'arrête en le disant qu'elle échoue en
- * silence sur ses dernières centaines de fichiers.
- *
- * L'ordre de grandeur mérite d'être connu : **une résolution par identifiant coûte 1, une recherche
- * par titre coûte 100.** Avec ce plafond, cela fait environ 9 000 vidéos par jour dans le premier cas,
- * et 90 dans le second. C'est pourquoi l'identifiant, quand il est là, ne se discute pas.
- */
+/** Budgets distincts depuis septembre 2026 : 100 recherches, 10 000 unités de lecture.
+ * On garde une marge sur les lectures ; les limites réelles du projet restent celles de Google. */
+const COUT = { videos: 1, search: 1, channels: 1 } as const;
 const PLAFOND_QUOTIDIEN = 9_000;
+const PLAFOND_RECHERCHES = 100;
+type CategorieQuota = "lecture" | "recherche";
 
 const disjoncteur = new CircuitBreaker(4, 60_000);
 
@@ -58,61 +48,60 @@ export interface OptionsFournisseur {
 
 const CLE_QUOTA = "web_quota_youtube";
 
-function aujourdhui(): string {
-  return new Date().toISOString().slice(0, 10);
+export function jourQuotaYoutube(date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles",
+    year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(date);
+  const champ = (type: string) => parts.find((p) => p.type === type)!.value;
+  return `${champ("year")}-${champ("month")}-${champ("day")}`;
 }
 
-/** Ce qui a déjà été dépensé aujourd'hui. Le compteur se réinitialise en changeant de date. */
-export function quotaDuJour(): { date: string; depense: number; plafond: number } {
+export function quotaDuJour(): { date: string; depense: number; plafond: number; recherches: number } {
   const ligne = db.prepare("SELECT value FROM server_settings WHERE key = ?").get(CLE_QUOTA) as
     { value: string } | undefined;
-  const date = aujourdhui();
-  if (!ligne) return { date, depense: 0, plafond: PLAFOND_QUOTIDIEN };
+  const date = jourQuotaYoutube();
+  const vide = { date, depense: 0, plafond: PLAFOND_QUOTIDIEN, recherches: 0 };
+  if (!ligne) return vide;
   try {
-    const lu = JSON.parse(ligne.value) as { date?: string; depense?: number };
-    if (lu.date !== date) return { date, depense: 0, plafond: PLAFOND_QUOTIDIEN };
-    return { date, depense: Math.max(0, lu.depense ?? 0), plafond: PLAFOND_QUOTIDIEN };
-  } catch {
-    return { date, depense: 0, plafond: PLAFOND_QUOTIDIEN };
-  }
+    const lu = JSON.parse(ligne.value) as { version?: number; date?: string; depense?: number; recherches?: number };
+    // L'ancien compteur était en UTC et mélangeait les appels. Le jour de migration seulement,
+    // conserver une estimation prudente évite d'offrir artificiellement une seconde journée.
+    if (lu.date !== date && !(lu.version !== 2 && lu.date === new Date().toISOString().slice(0, 10))) return vide;
+    const nombre = (n: unknown) => typeof n === "number" && Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+    const depense = nombre(lu.depense);
+    return { ...vide, depense, recherches: lu.version === 2 ? nombre(lu.recherches) : Math.min(100, Math.ceil(depense / 100)) };
+  } catch { return vide; }
 }
 
-function depenser(unites: number): void {
+function depenser(unites: number, categorie: CategorieQuota): void {
   const etat = quotaDuJour();
   db.prepare(`INSERT INTO server_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`)
-    .run(CLE_QUOTA, JSON.stringify({ date: etat.date, depense: etat.depense + unites }));
+    .run(CLE_QUOTA, JSON.stringify({ version: 2, date: etat.date,
+      depense: etat.depense + (categorie === "lecture" ? unites : 0),
+      recherches: etat.recherches + (categorie === "recherche" ? unites : 0) }));
 }
 
-/**
- * Pourquoi une recherche ne partira pas, ou `null` si rien ne l'empêche.
- *
- * Sans cela, un refus de budget et une chaîne réellement introuvable rendent la même réponse — et
- * l'écran annonçait « Aucune chaîne trouvée pour ce nom » alors que la chaîne existe et compte quatre
- * millions d'abonnés. Un message faux coûte plus cher qu'un message absent : on cherche le défaut là
- * où il n'est pas.
- */
-export function empechementYoutube(cout: number, cleExplicite?: string | null): string | null {
+export function empechementYoutube(cout: number, cleExplicite?: string | null,
+  categorie: CategorieQuota = "lecture"): string | null {
   const cle = cleExplicite !== undefined ? cleExplicite : getProviderConfiguration().youtubeApiKey;
   if (!cle) return "Aucune clé YouTube n'est enregistrée : ajoutez-la dans l'écran des fournisseurs.";
-  const etat = quotaDuJour();
-  if (etat.depense + cout > etat.plafond) {
-    return `Budget YouTube épuisé pour aujourd'hui (${etat.depense} sur ${etat.plafond} unités).`
-      + " Il se réinitialise à minuit heure du Pacifique, soit 9 h en France.";
+  if (!quotaDisponible(cout, categorie)) {
+    return `Budget YouTube épuisé pour ${categorie === "recherche" ? "les recherches" : "les lectures de métadonnées"}.`
+      + " Nouvelle disponibilité à minuit, heure du Pacifique (Los Angeles).";
   }
   return null;
 }
 
-/** Ce qu'il reste à dépenser aujourd'hui, pour l'afficher. */
-export function budgetYoutube(): { depense: number; plafond: number; reste: number } {
+export function budgetYoutube() {
   const etat = quotaDuJour();
-  return { depense: etat.depense, plafond: etat.plafond, reste: Math.max(0, etat.plafond - etat.depense) };
+  return { depense: etat.depense, plafond: etat.plafond, reste: Math.max(0, etat.plafond - etat.depense),
+    recherches: { depense: etat.recherches, plafond: PLAFOND_RECHERCHES,
+      reste: Math.max(0, PLAFOND_RECHERCHES - etat.recherches) }, fuseau: "America/Los_Angeles" };
 }
 
-/** Reste-t-il de quoi payer cet appel ? */
-export function quotaDisponible(cout: number): boolean {
+export function quotaDisponible(cout: number, categorie: CategorieQuota = "lecture"): boolean {
   const etat = quotaDuJour();
-  return etat.depense + cout <= etat.plafond;
+  return categorie === "recherche" ? etat.recherches + cout <= PLAFOND_RECHERCHES : etat.depense + cout <= etat.plafond;
 }
 
 /* ------------------------------------------------------------------------------------------------
@@ -128,6 +117,12 @@ function cleYoutube(options: OptionsFournisseur): string | null {
 async function lireJson(url: string, options: OptionsFournisseur): Promise<Record<string, unknown> | null> {
   const recuperer = options.recuperer ?? parDefaut;
   return disjoncteur.run(async () => {
+    if (options.comptabiliser !== false && new URL(url).hostname === "www.googleapis.com") {
+      const categorie = new URL(url).pathname.endsWith("/search") ? "recherche" : "lecture";
+      if (!quotaDisponible(1, categorie)) throw new Error("Budget YouTube épuisé");
+      // Réserver avant le réseau : les appels simultanés et les réponses en erreur comptent aussi.
+      depenser(1, categorie);
+    }
     const reponse = await recuperer(url);
     if (!reponse.ok) throw new Error(`Réponse ${reponse.status}`);
     const charge = await reponse.json() as unknown;
@@ -200,7 +195,6 @@ export async function resoudreYoutube(identifiant: string, options: OptionsFourn
   const url = "https://www.googleapis.com/youtube/v3/videos"
     + `?part=snippet,contentDetails&id=${encodeURIComponent(identifiant)}&key=${encodeURIComponent(cle)}`;
   const charge = await lireJson(url, options);
-  if (options.comptabiliser !== false) depenser(COUT.videos);
 
   const premier = Array.isArray(charge?.["items"]) ? (charge["items"] as unknown[])[0] : null;
   if (!premier || typeof premier !== "object") return null;
@@ -225,7 +219,7 @@ export async function resoudreYoutube(identifiant: string, options: OptionsFourn
 }
 
 /**
- * Chercher une vidéo par son titre — cent unités de quota.
+ * Chercher une vidéo par son titre — une requête du budget de recherches.
  *
  * C'est la voie que vous avez demandée quand l'identifiant manque, et elle fonctionne. Mais son prix
  * impose une règle : **on ne cherche que ce qu'on ne peut pas résoudre**, et on s'arrête net dès que
@@ -234,7 +228,7 @@ export async function resoudreYoutube(identifiant: string, options: OptionsFourn
  * La recherche est **restreinte à la chaîne**, par son identifiant de plateforme. Joindre son nom à
  * la requête ne suffisait pas : la recherche restait mondiale, et une « Rétrospective 2024 » publiée
  * par n'importe qui pouvait être retenue. Sans chaîne identifiée, on ne cherche pas du tout —
- * c'est aussi ce qui évite de dépenser cent unités pour une réponse dont on ne pourrait rien faire.
+ * c'est aussi ce qui évite de dépenser une recherche pour une réponse dont on ne pourrait rien faire.
  */
 export async function chercherYoutube(
   chaineId: string,
@@ -246,13 +240,12 @@ export async function chercherYoutube(
   // Sans chaine identifiee, on ne cherche pas : une recherche non restreinte trouverait la video
   // d'une autre chaine au titre voisin, et la donnerait pour certaine.
   if (!chaineId) return null;
-  if (options.comptabiliser !== false && !quotaDisponible(COUT.search)) return null;
+  if (options.comptabiliser !== false && !quotaDisponible(COUT.search, "recherche")) return null;
 
   const url = "https://www.googleapis.com/youtube/v3/search"
     + `?part=snippet&type=video&maxResults=1&channelId=${encodeURIComponent(chaineId)}`
     + `&q=${encodeURIComponent(titre)}&key=${encodeURIComponent(cle)}`;
   const charge = await lireJson(url, options);
-  if (options.comptabiliser !== false) depenser(COUT.search);
 
   const premier = Array.isArray(charge?.["items"]) ? (charge["items"] as unknown[])[0] : null;
   if (!premier || typeof premier !== "object") return null;
@@ -283,7 +276,7 @@ export async function chercherYoutube(
  * **de quelle chaîne** il s'agit, chercher le titre d'une vidéo revient à le chercher dans le monde
  * entier : deux chaînes publient couramment une « Rétrospective 2024 », et rien ne les départage.
  *
- * Elle coûte cent unités, comme toute recherche — mais **une seule fois par chaîne**, son résultat
+ * Elle consomme une requête du budget de recherches — mais **une seule fois par chaîne**, son résultat
  * étant retenu sur la fiche. Les vidéos, elles, s'y appuient ensuite gratuitement.
  */
 export async function identifierChaineYoutube(
@@ -292,12 +285,11 @@ export async function identifierChaineYoutube(
 ): Promise<{ identifiant: string; avatar: string | null } | null> {
   const cle = cleYoutube(options);
   if (!cle) return null;
-  if (options.comptabiliser !== false && !quotaDisponible(COUT.search)) return null;
+  if (options.comptabiliser !== false && !quotaDisponible(COUT.search, "recherche")) return null;
 
   const url = "https://www.googleapis.com/youtube/v3/search"
     + `?part=snippet&type=channel&maxResults=1&q=${encodeURIComponent(nom)}&key=${encodeURIComponent(cle)}`;
   const charge = await lireJson(url, options);
-  if (options.comptabiliser !== false) depenser(COUT.search);
 
   const premier = Array.isArray(charge?.["items"]) ? (charge["items"] as unknown[])[0] : null;
   if (!premier || typeof premier !== "object") return null;
@@ -313,18 +305,27 @@ export async function identifierChaineYoutube(
  * L'avatar d'une chaîne.
  *
  * Il n'est dans aucun fichier : c'est la seule information de cet écran qui ne puisse venir que de la
- * plateforme. Une recherche de chaîne coûte cent unités, comme toute recherche — mais elle n'a lieu
+ * plateforme. Une recherche de chaîne consomme le budget de recherches — mais elle n'a lieu
  * qu'**une fois par chaîne**, et l'image est ensuite mise en cache localement, donc figée.
  */
+export async function avatarChaineYoutubeParId(id: string, options: OptionsFournisseur = {}): Promise<string | null> {
+  const cle = cleYoutube(options);
+  if (!cle || !id || (options.comptabiliser !== false && !quotaDisponible(COUT.channels))) return null;
+  const charge = await lireJson("https://www.googleapis.com/youtube/v3/channels"
+    + `?part=snippet&id=${encodeURIComponent(id)}&key=${encodeURIComponent(cle)}`, options);
+  const premier = Array.isArray(charge?.["items"]) ? (charge["items"] as unknown[])[0] : null;
+  if (!premier || typeof premier !== "object") return null;
+  return meilleureVignette(((premier as Record<string, unknown>)["snippet"] as Record<string, unknown> | undefined)?.["thumbnails"]);
+}
+
 export async function avatarDeChaineYoutube(nom: string, options: OptionsFournisseur = {}): Promise<string | null> {
   const cle = cleYoutube(options);
   if (!cle) return null;
-  if (options.comptabiliser !== false && !quotaDisponible(COUT.search)) return null;
+  if (options.comptabiliser !== false && !quotaDisponible(COUT.search, "recherche")) return null;
 
   const url = "https://www.googleapis.com/youtube/v3/search"
     + `?part=snippet&type=channel&maxResults=1&q=${encodeURIComponent(nom)}&key=${encodeURIComponent(cle)}`;
   const charge = await lireJson(url, options);
-  if (options.comptabiliser !== false) depenser(COUT.search);
 
   const premier = Array.isArray(charge?.["items"]) ? (charge["items"] as unknown[])[0] : null;
   if (!premier || typeof premier !== "object") return null;

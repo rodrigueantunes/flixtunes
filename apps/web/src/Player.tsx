@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { BoutonDiffusion, useSurfaceDiffusion } from "./Diffusion";
+import { progressionLocaleSuspendue } from "./diffusion-utilitaires";
 import type { MediaItem, MediaStream, PlaybackCapabilities, PlaybackInfo, PlaybackNeighbors, PlaybackSession, Profile, SubtitlePreference } from "@flixtunes/contracts";
 import type Hls from "hls.js";
 import { api } from "./api";
@@ -890,6 +892,7 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
       else { video.currentTime = target; void video.play().catch(() => undefined); }
     };
     const persist = () => {
+      if (progressionLocaleSuspendue()) return;
       const reference = trueDurationRef.current;
       if (reference > 0) void api.saveProgress(media.id, profile.id, startOffsetRef.current + video.currentTime, reference);
     };
@@ -1342,6 +1345,26 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
   // Les répliques du moment, calculées sur la position **dans le flux** : c'est l'échelle du fichier
   // WebVTT, que le serveur a déjà décalé du début de session.
   const repliquesVisibles = surfaceVlc ? repliquesA(repliquesBureau, currentTime - startOffsetRef.current) : [];
+  const volumeDistant = useRef(1);
+  useSurfaceDiffusion({
+    etat: () => { const v = videoRef.current; return {
+      contenu: { genre: "media", id: media.id, titre: media.title },
+      lecture: !v || (elementVideoRef.current && elementVideoRef.current.readyState < 2) ? "chargement" : v.paused ? "pause" : "lecture",
+      position: Math.max(0, startOffsetRef.current + (v?.currentTime || 0)), duree: Math.max(0, timelineDuration || 0),
+      volume: elementVideoRef.current?.volume ?? volumeDistant.current, navigation: true, erreur: null,
+    }; },
+    commander: async (c) => {
+      const v = videoRef.current; if (!v) throw new Error("Lecteur en préparation");
+      if (c.type === "pause") v.pause();
+      else if (c.type === "reprendre") await v.play();
+      else if (c.type === "position") seekTo(c.valeur);
+      else if (c.type === "arreter") onClose();
+      else if (c.type === "volume") { volumeDistant.current = c.valeur;
+        if (elementVideoRef.current) elementVideoRef.current.volume = c.valeur;
+        else await pontBureau()?.lecteur?.volume(c.valeur);
+      }
+    },
+  });
   const habillageSousTitres = `subtitles-${subtitleSize} subtitles-${subtitlePosition} subtitles-font-${subtitleFont} subtitles-color-${subtitleColor}${subtitleBackground ? " subtitles-background" : ""}`;
 
   return (
@@ -1359,6 +1382,7 @@ function LecteurCharge({ media, profile, onClose, onPlayMedia }: {
         </div>
       )}
       <div className="player-top">
+        <BoutonDiffusion />
         <button className="player-icon-button" onClick={onClose} aria-label="Fermer le lecteur">←</button>
         {/*
           * Une video de plateforme porte le nom de sa chaine en titre et le sien en sous-titre — sans

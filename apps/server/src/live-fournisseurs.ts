@@ -1,5 +1,6 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
+import path from "node:path";
 import { db, getSetting, setSetting } from "./database.js";
 import { decryptProviderSecret, encryptProviderSecret } from "./provider-settings.js";
 import { lireCatalogueM3U, type ClassementListe } from "./m3u.js";
@@ -32,6 +33,41 @@ export interface SourceDirect {
   activee: boolean;
   rafraichieLe: string | null;
   dernierMessage: string | null;
+}
+
+export interface ListeSource {
+  nom: string;
+  url: string;
+  classement: ClassementListe;
+  pourcentage?: number | null;
+  /** Snapshot lu avec le catalogue : aucune requête vers les listes d'origine. */
+  contenu?: string;
+}
+
+export class CatalogueVerifieInvalide extends Error {}
+
+async function listeVerifiee(json: string, emplacement: string): Promise<ListeSource[] | null> {
+  const catalogue = JSON.parse(json) as Record<string, unknown> | null;
+  if (!catalogue || catalogue.version !== 2 || !("playlist_verifiee" in catalogue)) return null;
+  const info = catalogue.playlist_verifiee as { fichier?: unknown; sha256?: unknown; genere_le?: unknown } | null;
+  if (!info || info.fichier !== "chaines_francaises.m3u" || typeof info.sha256 !== "string"
+      || !/^[a-f0-9]{64}$/.test(info.sha256) || info.genere_le !== catalogue.genere_le) {
+    throw new CatalogueVerifieInvalide("La référence de la playlist vérifiée est invalide.");
+  }
+  try {
+    // Seul ce fichier voisin est accepté, sans chemin fourni par le catalogue.
+    const fichier = path.join(path.dirname(emplacement), "chaines_francaises.m3u");
+    const infos = await stat(fichier);
+    if (!infos.isFile() || infos.size > 8 * 1024 * 1024) throw new Error();
+    const octets = await readFile(fichier);
+    if (createHash("sha256").update(octets).digest("hex") !== info.sha256) throw new Error();
+    const contenu = octets.toString("utf8");
+    if (!contenu.replace(/^\uFEFF/, "").startsWith("#EXTM3U")) throw new Error();
+    return [{ nom: "Chaînes françaises et francophones vérifiées", url: "flixtunes-local:playlist-verifiee",
+      classement: "bonne", pourcentage: 100, contenu }];
+  } catch {
+    throw new CatalogueVerifieInvalide("Playlist vérifiée absente ou incohérente : recopiez le JSON et sa playlist ensemble.");
+  }
 }
 
 /**
@@ -157,7 +193,7 @@ export function retirerSource(id: string): boolean {
  * numérotation — est commun, et c'est ce qui fait qu'ajouter un fournisseur ne touche à rien d'autre.
  */
 export async function listesDeLaSource(source: SourceDirect, tailleMax: number):
-Promise<Array<{ nom: string; url: string; classement: ClassementListe }>> {
+Promise<ListeSource[]> {
   if (source.type === "fast") {
     return LISTES_FAST.map((liste) => ({ ...liste, classement: "inconnue" as ClassementListe }));
   }
@@ -170,7 +206,10 @@ Promise<Array<{ nom: string; url: string; classement: ClassementListe }>> {
   const infos = await stat(source.emplacement).catch(() => null);
   if (!infos?.isFile()) throw new Error(`Fichier introuvable : ${source.emplacement}`);
   if (infos.size > tailleMax) throw new Error("Le fichier de listes dépasse deux mégaoctets.");
-  const listes = lireCatalogueM3U(await readFile(source.emplacement, "utf8"));
+  const json = await readFile(source.emplacement, "utf8");
+  const verifiees = await listeVerifiee(json, source.emplacement);
+  if (verifiees) return verifiees;
+  const listes = lireCatalogueM3U(json);
   if (!listes.length) throw new Error("Aucune liste utilisable dans le fichier.");
   return listes;
 }

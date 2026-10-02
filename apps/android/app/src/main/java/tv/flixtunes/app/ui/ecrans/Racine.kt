@@ -38,6 +38,7 @@ import tv.flixtunes.app.ui.MemoireTv
     discovered: List<DiscoveredServer>,
     play: (Media) -> Unit,
     jouerChaine: (ChaineDirect) -> Unit,
+    ouvrirCast: () -> Unit = {},
 ) {
     val state = model.state
     val gabarit = LocalGabarit.current
@@ -137,6 +138,7 @@ import tv.flixtunes.app.ui.MemoireTv
                 ouvrirMedia = { media -> focusARestaurer = media.catalogId ?: media.id; model.open(media) },
                 focusARestaurer = focusARestaurer, focusRestaure = { focusARestaurer = null },
                 ouvrirReglages = { reglagesOuverts = true }, ouvrirMenu = { menuMedia = it },
+                ouvrirCast = ouvrirCast,
             ) { section = it }
         }
         if (state.loading && state.startup == null) LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp))

@@ -55,3 +55,4 @@ foreach ($cible in $cibles) {
 if ($divergents.Count -eq 0) { Write-Output "Versions cohérentes : $version (pnpm $pnpm)."; exit 0 }
 if ($Verifier) { Write-Error "$($divergents.Count) fichier(s) divergent de la version $version."; exit 1 }
 Write-Output "Version propagée : $version (pnpm $pnpm)."
+exit 0

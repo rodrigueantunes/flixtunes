@@ -1,5 +1,7 @@
 package tv.flixtunes.app.ui.lecteur
 
+import tv.flixtunes.app.ui.BoutonCast
+
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateDpAsState
@@ -372,6 +374,7 @@ private fun BandeauHaut(etat: EtatLecteur, actions: ActionsLecteur) {
             ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+        BoutonCast { actions.reveiller(); actions.caster() }
         BoutonLecteur("←", actions.fermer, actions.reveiller,
             description = stringResource(R.string.lecteur_retour))
         Column(Modifier.padding(start = 14.dp).weight(1f)) {

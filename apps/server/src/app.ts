@@ -13,6 +13,7 @@ import { jetonDeLaRequete, sessionDuJeton } from "./sessions-profil.js";
 import { compteDuJeton, jetonCompteDeLaRequete } from "./comptes-distants.js";
 import { journaliserAccesWan } from "./wan-journal.js";
 import { parametresWan } from "./wan-parametres.js";
+import { routesDiffusion } from "./diffusion-routes.js";
 
 function isTrustedOrigin(origin: string): boolean {
   try {
@@ -68,7 +69,10 @@ export interface OptionsApp {
 
 export async function buildApp(options: OptionsApp = {}) {
   const distant = options.exposition === "wan";
-  const app = Fastify({ logger: process.env.NODE_ENV === "test" ? false : { redact: ["req.headers.authorization", "req.headers.x-flixtunes-token", "req.headers.cookie"] }, bodyLimit: 1024 * 1024,
+  const app = Fastify({ logger: process.env.NODE_ENV === "test" ? false : {
+    serializers: { req: (req: { method?: string; url?: string }) => ({ method: req.method,
+      url: req.url?.replace(/(\/api\/diffusion\/flux\/)[^/]+/g, "$1[masqué]") }) },
+    redact: ["req.headers.authorization", "req.headers.x-flixtunes-token", "req.headers.x-flixtunes-profile-token", "req.headers.x-flixtunes-remote-token", "req.headers.cookie"] }, bodyLimit: 1024 * 1024,
     trustProxy: distant ? config.wan.proxies : false,
     requestTimeout: 30_000, keepAliveTimeout: 72_000, maxRequestsPerSocket: 1000 });
   await app.register(helmet, { contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: "cross-origin" } });
@@ -79,9 +83,13 @@ export async function buildApp(options: OptionsApp = {}) {
     ? { max: 600, timeWindow: "1 minute" }
     : { max: 600, timeWindow: "1 minute", allowList: (request) => /\/api\/(media|playback|artwork)\//.test(request.url) });
   await app.register(cors, {
-    origin: (origin, callback) => callback(null, !origin || (distant ? isWanOrigin(origin) : isTrustedOrigin(origin))),
-    methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    credentials: distant,
+    delegator: (req, callback) => {
+      const fluxCast = !distant && /^\/api\/diffusion\/flux\/[a-f0-9]{64}\/[\w.-]+(?:\?|$)/.test(req.url);
+      callback(null, fluxCast ? { origin: "*", methods: ["GET", "HEAD", "OPTIONS"], allowedHeaders: ["Range", "Content-Type"],
+        exposedHeaders: ["Content-Length", "Content-Range", "Accept-Ranges"], credentials: false }
+        : { origin: (origin, done) => done(null, !origin || (distant ? isWanOrigin(origin) : isTrustedOrigin(origin))),
+          methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], credentials: distant });
+    },
   });
   const requestStarts = new WeakMap<object, bigint>();
   app.addHook("onRequest", async (request) => { requestStarts.set(request, process.hrtime.bigint()); });
@@ -146,13 +154,14 @@ export async function buildApp(options: OptionsApp = {}) {
       // simplement `profileId` dans la chaîne de requête.
       request.profilImpose = session.profileId;
 
-      if (request.method === "POST" && motif === "/api/media/:id/playback" && quotaSessionDepasse(session.profileId)) {
+      if (request.method === "POST" && ["/api/media/:id/playback", "/api/live/channels/:id/compat"].includes(motif ?? "") && quotaSessionDepasse(session.profileId)) {
         return reply.code(429).send({ message: "Trop de lectures ouvertes en peu de temps. Patientez quelques minutes." });
       }
     });
   }
 
   await registerRoutes(app);
+  await routesDiffusion(app);
   if (existsSync(config.webDistDir)) {
     await app.register(fastifyStatic, { root: config.webDistDir, prefix: "/", wildcard: false });
     app.setNotFoundHandler((request, reply) => request.url.startsWith("/api/")

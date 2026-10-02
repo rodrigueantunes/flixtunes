@@ -52,6 +52,12 @@ export interface PontLecteur {
 }
 
 export interface PontBureau {
+  readonly direct?: {
+    renouveler(uri: string): Promise<boolean>;
+    ouvrir(uri: string): Promise<{ ok: boolean; message?: string }>;
+    fermer(): Promise<void>;
+    diagnostic(): Promise<{ cacheOctets: number; reserveCacheSecondes: number; incident: string } | null>;
+  };
   readonly version: string;
   serveur(): Promise<string | null>;
   definirServeur(adresse: string): Promise<{ ok: boolean; adresse?: string; message?: string }>;

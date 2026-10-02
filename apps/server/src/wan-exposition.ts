@@ -57,12 +57,16 @@ const SANS_COMPTE = new Set([
  * - `/api/system/status`, `/api/system/metrics`, `/api/system/capacity` : version, mémoire,
  *   température et santé de la base ne regardent pas Internet, et une version exacte sert surtout à
  *   cibler un défaut connu ;
- * - `/api/metadata/image/:size/:name` : cette route **sort** vers TMDB avec un chemin fourni par le
- *   client. L'exposer transformerait le NAS en relais d'images pour qui le trouve ;
  * - `/api/filesystem/directories` : elle cartographie les volumes du NAS ;
  * - `/api/system/backups/:name` : elle rend la base entière en un seul GET.
  */
 const LECTURES = new Set([
+  cle("GET", "/api/live/compat/:id/:file"),
+  // À distance, cette route ne sert que les portraits des fiches autorisées pour le profil.
+  cle("GET", "/api/metadata/image/:size/:name"),
+  cle("GET", "/api/web"),
+  ...["", "/listes", "/pays", "/fiabilites", "/channels", "/channels/:id", "/numero", "/derniere", "/relais"]
+    .map((suffixe) => cle("GET", `/api/live${suffixe}`)),
   cle("GET", "/api/home"),
   cle("GET", "/api/system/generiques"),
   cle("GET", "/api/catalog"),
@@ -101,6 +105,12 @@ const LECTURES = new Set([
  * sa contribution.
  */
 const ECRITURES = new Set([
+  cle("POST", "/api/live/channels/:id/compat"),
+  cle("DELETE", "/api/live/compat/:id"),
+  cle("PUT", "/api/live/channels/:id/favori"),
+  cle("DELETE", "/api/live/channels/:id/favori"),
+  cle("POST", "/api/live/channels/:id/resultat"),
+  cle("POST", "/api/live/channels/:id/sondes"),
   cle("POST", "/api/media/:id/playback"),
   cle("DELETE", "/api/playback/:id"),
   cle("PUT", "/api/media/:id/progress"),

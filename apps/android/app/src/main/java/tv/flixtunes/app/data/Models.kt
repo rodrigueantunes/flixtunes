@@ -378,6 +378,7 @@ data class SourceChaine(
      * empreinte d'affichage, pas d'équivalence : le repli parcourt toujours chaque adresse.
      */
     val empreinte: String = "",
+    val identifiant: String = "",
 )
 
 data class ChaineDetaillee(val chaine: ChaineDirect, val sources: List<SourceChaine>)

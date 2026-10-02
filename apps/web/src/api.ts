@@ -1,3 +1,4 @@
+import { familleLecteur } from "./pilotage-direct";
 import type {
   CatalogItem,
   CatalogPage,
@@ -111,7 +112,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers,
   });
   if (!response.ok) {
-    if (profileId && token && [401, 403, 404].includes(response.status)) clearProfileToken(profileId);
+    if (profileId && token && [401, 403, 404].includes(response.status) && !path.startsWith("/diffusion/")) clearProfileToken(profileId);
     const payload = await response.json().catch(() => null) as { message?: string } | null;
     throw new Error(payload?.message ?? `Erreur du serveur (${response.status})`);
   }
@@ -161,7 +162,7 @@ export interface CorrespondanceWeb {
 }
 
 /** Ce qu'il reste à dépenser aujourd'hui sur l'API de la plateforme. */
-export interface BudgetWeb { depense: number; plafond: number; reste: number }
+export interface BudgetWeb { depense: number; plafond: number; reste: number; recherches?: { depense: number; plafond: number; reste: number }; fuseau?: string }
 
 /** Un candidat de plateforme. Jamais un film ni une série : les deux mondes ne se croisent pas. */
 export interface CandidatWeb {
@@ -174,6 +175,9 @@ export interface CandidatWeb {
 }
 
 export const api = {
+  diffusion: <T,>(profileId: string, path: string, body?: unknown): Promise<T> => request<T>(
+    `/diffusion/${path}${path.includes("?") ? "&" : "?"}profileId=${encodeURIComponent(profileId)}`,
+    body === undefined ? undefined : { method: "POST", body: JSON.stringify(body) }),
   remoteSession: () => request<SessionDistante>("/remote/session"),
   remoteLogin: (username: string, password: string) => request<{ token: string; account: string; expiresAt: string }>(
     "/remote/login", { method: "POST", body: JSON.stringify({ username, password }) },
@@ -352,7 +356,7 @@ export const api = {
    */
   etatLive: () => request<{ disponible: boolean; chaines: number; rafraichieLe: string | null }>("/live"),
   /** Le rayon Web existe-t-il ? Même règle que le direct : pas d'entrée vers une page vide. */
-  etatWeb: () => request<{ disponible: boolean; bibliotheques: number; chaines: number }>("/web"),
+  etatWeb: () => request<{ disponible: boolean; bibliotheques: number; chaines: number; modifiable?: boolean }>("/web"),
   /**
    * Les correspondances des bibliothèques web.
    *
@@ -389,12 +393,17 @@ export const api = {
    * Les adresses d'une chaîne, dans l'ordre où il faut les essayer : celles qui ont déjà marché
    * d'abord, celles qui ont échoué en dernier. C'est ce qui rend le repli utile plutôt qu'aléatoire.
    */
-  chaineLive: (id: string) => request<ChaineDirectDetaillee>(
-    `/live/channels/${encodeURIComponent(id)}`,
+  chaineLive: (id: string, lecteur = familleLecteur(), signal?: AbortSignal) => request<ChaineDirectDetaillee>(
+    `/live/channels/${encodeURIComponent(id)}?lecteur=${encodeURIComponent(lecteur)}`, { signal },
   ),
-  resultatChaineLive: (id: string, url: string, ok: boolean) => request<void>(
-    `/live/channels/${encodeURIComponent(id)}/resultat`, { method: "POST", body: JSON.stringify({ url, ok }) },
+  resultatChaineLive: (id: string, url: string, ok: boolean, secondesStables?: number, chemin: "direct" | "relais" = "direct", lecteur = familleLecteur()) => request<void>(
+    `/live/channels/${encodeURIComponent(id)}/resultat`, { method: "POST", body: JSON.stringify({ url, ok, secondesStables, lecteur, chemin }) },
   ),
+  analyserSourceLive: (id: string, url: string, lecture: string) => request<{ format: string }>(
+    `/live/channels/${encodeURIComponent(id)}/compat`, { method: "POST", body: JSON.stringify({ url, lecture, analyser: true }), signal: AbortSignal.timeout(8_000) }),
+  convertirSourceLive: (id: string, url: string, lecture: string) => request<{ id: string; url: string }>(
+    `/live/channels/${encodeURIComponent(id)}/compat`, { method: "POST", body: JSON.stringify({ url, lecture }), signal: AbortSignal.timeout(45_000) }),
+  arreterConversionLive: (id: string) => request<void>(`/live/compat/${encodeURIComponent(id)}`, { method: "DELETE" }),
   sondesChaineLive: (id: string, enCours: string) => request<{ muettes: string[] }>(
     `/live/channels/${encodeURIComponent(id)}/sondes`, { method: "POST", body: JSON.stringify({ enCours }) },
   ),

@@ -35,7 +35,7 @@ export function avanceVisee(largeurFenetreS: number, segmentS: number, fragile: 
   const segment = Math.max(1, segmentS);
   const plafond = fragile ? AVANCE_FRAGILE_S : AVANCE_NORMALE_S;
   const souhaitee = Math.min(plafond, Math.max(2 * segment, largeurFenetreS - MARGE_ARRIERE_S));
-  return Math.max(segment, Math.min(souhaitee, largeurFenetreS - segment));
+  return Math.max(0, Math.min(plafond, souhaitee, largeurFenetreS - Math.min(segment, largeurFenetreS / 2)));
 }
 
 /** La même avance, comptée en segments — l'unité que hls.js attend. */

@@ -489,6 +489,9 @@ try {
   $contractsManifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $deployedContractsManifest | ConvertFrom-Json
   $contractsManifest.main = "./dist/index.js"
   $contractsManifest.types = "./dist/index.d.ts"
+  # pnpm peut partager ce fichier avec les sources par un lien physique.
+  # Remplacer le lien avant l'ecriture preserve le manifeste des archives de sources.
+  Remove-Item -LiteralPath $deployedContractsManifest -Force
   Write-Utf8NoBom $deployedContractsManifest (($contractsManifest | ConvertTo-Json -Depth 8) + "`n")
 
   foreach ($architecture in $Architectures) {

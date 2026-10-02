@@ -49,6 +49,11 @@ export async function courirLesAdresses<T extends AdresseCourue>(
   delaiMs = DELAI_MS,
 ): Promise<T[]> {
   if (adresses.length <= 1) return adresses;
+  // En WAN, ces accès passent déjà par le NAS : conserver son classement sans lancer N lectures.
+  if (adresses.some(({ url }) => {
+    try { const cible = new URL(url, "https://flixtunes.invalid"); return cible.pathname === "/api/live/relais" && cible.searchParams.has("t"); }
+    catch { return false; }
+  })) return adresses;
 
   const controleur = new AbortController();
   const arrivees: T[] = [];

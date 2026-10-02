@@ -4,7 +4,7 @@ import {
   budgetYoutube, chercherYoutube, empechementYoutube, identifierChaineYoutube, resoudreYoutube,
 } from "./web-fournisseurs.js";
 import { identifiantDepuisUrl, type IdentiteWeb } from "./web-identite.js";
-import { retenirIllustration } from "./web-analyse.js";
+import { illustrerChaineConnue, retenirIllustration } from "./web-analyse.js";
 
 /**
  * Corriger à la main la correspondance d'une chaîne ou d'une vidéo.
@@ -49,7 +49,7 @@ export interface CorrespondanceWeb {
 }
 
 /** L'état du budget YouTube, joint à la liste pour que l'écran le montre avant toute dépense. */
-export function budgetDesCorrespondancesWeb(): { depense: number; plafond: number; reste: number } {
+export function budgetDesCorrespondancesWeb(): ReturnType<typeof budgetYoutube> {
   return budgetYoutube();
 }
 
@@ -141,7 +141,7 @@ export async function candidatsPourFicheWeb(catalogId: string, requete?: string)
 
   // Une recherche coute cent unites : dire pourquoi elle ne partira pas vaut mieux que de rendre une
   // liste vide, que l'ecran traduirait en « rien trouve » — ce qui serait faux.
-  const empechement = empechementYoutube(100);
+  const empechement = empechementYoutube(1, undefined, "recherche");
   if (empechement) return { candidats: [], motif: empechement };
 
   if (fiche.kind === "show") {
@@ -200,11 +200,15 @@ export async function appliquerCorrespondanceWeb(
   }
 
   if (fiche.kind === "show") {
-    // Une chaîne se corrige par son identifiant : on ne redemande pas son avatar ici, l'analyse
-    // suivante s'en chargera si la fiche n'en a pas — et si elle en a un, il reste figé.
+    // Compléter la vignette manquante dès la correction, en conservant le verrou de l'identité.
     db.prepare(`UPDATE catalog_items SET external_provider = 'youtube', external_id = ?,
       match_status = 'manual', match_confidence = 1, metadata_locked = 1, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?`).run(identifiant, catalogId);
+    await illustrerChaineConnue(catalogId, identifiant, null, langue, true).catch(() => undefined);
+    const image = db.prepare("SELECT poster_url FROM catalog_items WHERE id = ?").get(catalogId) as
+      { poster_url: string | null } | undefined;
+    if (!image?.poster_url) return { applique: true,
+      message: "Chaîne corrigée et verrouillée, mais sa vignette n'a pas pu être téléchargée : relancez la correction pour réessayer." };
     return { applique: true, message: "Chaîne corrigée et verrouillée." };
   }
 

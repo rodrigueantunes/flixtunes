@@ -1,4 +1,7 @@
 package tv.flixtunes.app
+import tv.flixtunes.app.playback.TelecommandeAndroid
+import tv.flixtunes.app.playback.etatDiffusionAndroid
+import tv.flixtunes.app.ui.ouvrirDialogueDiffusion
 
 import android.content.ComponentName
 import android.app.AlertDialog
@@ -121,6 +124,7 @@ class PlayerActivity : ComponentActivity() {
     private var playbackSessionId: String? = null
     private lateinit var api: FlixTunesApi
     private lateinit var mediaId: String
+    private var lectureDiffusee = false
     private lateinit var profileId: String
     private var compatibilityRetry = false
     private var initialSeekApplied = false
@@ -251,6 +255,17 @@ class PlayerActivity : ComponentActivity() {
         mediaId = intent.getStringExtra(EXTRA_MEDIA_ID) ?: return finish()
         profileId = intent.getStringExtra(EXTRA_PROFILE_ID) ?: return finish()
         api = FlixTunesApi(server, intent.getStringExtra(EXTRA_PROFILE_TOKEN))
+        TelecommandeAndroid.attacher(this, api, profileId, ::etatPourDiffusion) { c ->
+            val player = controller ?: error("Lecteur en préparation")
+            when (c.getString("type")) {
+                "pause" -> player.pause()
+                "reprendre" -> player.play()
+                "position" -> naviguerA(c.getDouble("valeur"))
+                "volume" -> player.volume = c.getDouble("valeur").toFloat()
+                "arreter" -> finish()
+                else -> error("Commande inconnue")
+            }
+        }
         val preferencesSousTitres = getSharedPreferences("subtitle-style", MODE_PRIVATE)
         etatLecteur = etatLecteur.copy(
             tailleSousTitres = preferencesSousTitres.getString("size:$profileId", "normal") ?: "normal",
@@ -728,6 +743,7 @@ class PlayerActivity : ComponentActivity() {
     /** Les commandes du bas, reliées à ce que l'activité sait déjà faire. */
     private val actionsLecteur by lazy {
         ActionsLecteur(
+            caster = { ouvrirDialogueDiffusion(this, api, ::etatPourDiffusion) { lectureDiffusee = true; controller?.pause() } },
             basculerLecture = {
                 controller?.let {
                     if (it.isPlaying) it.pause() else {
@@ -1509,6 +1525,8 @@ class PlayerActivity : ComponentActivity() {
 
     private fun persistProgress() {
         val player = controller ?: return
+        if (lectureDiffusee && !player.isPlaying) return
+        lectureDiffusee = false
         val reference = referenceDurationMs(player.duration)
         if (reference > 0) lifecycleScope.launch {
             val positionFilm = tempsFilm(player.currentPosition / 1000.0, fenetre)
@@ -1724,6 +1742,9 @@ class PlayerActivity : ComponentActivity() {
     }
 
     override fun onPause() { persistProgress(); super.onPause() }
+    private fun etatPourDiffusion() = etatDiffusionAndroid("media", mediaId, etatLecteur.titre,
+        if (etatLecteur.chargement) "chargement" else if (controller?.isPlaying == true) "lecture" else "pause",
+        etatLecteur.positionSecondes, etatLecteur.dureeSecondes, controller?.volume ?: 1f)
     override fun onDestroy() {
         annulerEnchainement(remettreCompteur = false)
         rappelReseau?.let { rappel ->

@@ -3,10 +3,10 @@ import { isIP } from "node:net";
 import { lookup } from "node:dns/promises";
 
 /**
- * Le relais du navigateur — et **seulement** du navigateur.
+ * Le relais du navigateur et du lecteur VLC intégré au bureau.
  *
- * Android et le client de bureau lisent les chaînes en direct : c'est le chemin normal, et il ne
- * coûte rien au NAS. Un navigateur, lui, bute sur deux murs que rien côté client ne peut lever :
+ * Android peut lire les sources directement. Le bureau passe par ce relais pour garder les accès
+ * NAS dans sa session authentifiée. Un navigateur, lui, bute sur deux obstacles côté fournisseur :
  *
  * 1. **CORS.** `hls.js` va chercher les segments en XHR, ce qui exige un en-tête
  *    `Access-Control-Allow-Origin` de l'hébergeur. Neuf sur dix l'envoient — mesuré sur 220 chaînes
@@ -69,9 +69,11 @@ export function lireAdresseRelayee(u: string): string | null {
  * d'inventer une adresse ; elle n'empêche pas qu'une liste en contienne une. D'où ce second verrou.
  */
 export function adressePrivee(adresse: string): boolean {
+  adresse = adresse.replace(/^\[|\]$/g, "");
   if (isIP(adresse) === 6) {
-    const reduite = adresse.toLowerCase();
-    return reduite === "::1" || reduite.startsWith("fe80:") || reduite.startsWith("fc") || reduite.startsWith("fd")
+    const reduite = new URL(`http://[${adresse}]/`).hostname.slice(1, -1).toLowerCase();
+    return reduite.startsWith("::") || /^fe[89ab]/.test(reduite) || reduite.startsWith("ff")
+      || reduite.startsWith("2001:db8:") || reduite.startsWith("fc") || reduite.startsWith("fd")
       // IPv4 encapsulée : ::ffff:127.0.0.1 doit être jugée sur sa partie IPv4.
       || (reduite.startsWith("::ffff:") && adressePrivee(reduite.slice("::ffff:".length)));
   }
@@ -172,11 +174,13 @@ export async function recupererSansSortirDuPublic(
     if (!(await autorise(hote))) return null;
 
     // `manual` est le cœur de l'affaire : sans lui, `fetch` suivrait sans nous consulter.
+    if (!["http:", "https:"].includes(new URL(courante).protocol)) return null;
     const reponse = await recuperer(courante, { ...init, redirect: "manual" });
     if (![301, 302, 303, 307, 308].includes(reponse.status)) return { reponse, url: courante };
 
     const destination = reponse.headers.get("location");
     if (!destination) return { reponse, url: courante };
+    await reponse.body?.cancel();
     try { courante = new URL(destination, courante).href; } catch { return null; }
   }
   return null;

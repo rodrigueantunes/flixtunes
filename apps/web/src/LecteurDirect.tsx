@@ -1,11 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { BoutonDiffusion, useSurfaceDiffusion } from "./Diffusion";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { pontBureau } from "./bureau";
+import type { PropsDirect } from "./LecteurDirectBureau";
+const DirectBureau = lazy(() => import("./LecteurDirectBureau").then((m) => ({ default: m.LecteurDirectBureau })));
+import { identifiantLectureDirect } from "./pilotage-direct";
+import { budgetCacheDirect, formatAdresse, imagesPresentees, JournalDirect, prefereRelais, reserveDeDepart, retenirRelais, vitesseContinue } from "./pilotage-direct";
 import type Hls from "hls.js";
 import type { ErrorData, LevelDetails } from "hls.js";
 import type { ChaineDirect } from "@flixtunes/contracts";
 import { api } from "./api";
+import { CacheSegmentsDirect, chargeurAvecCache } from "./cache-segments-direct";
+import { QualiteContinue, doitPreparerSecours, raccordAutorise, lienDirectARenouveler } from "./continuite-direct";
 import { courirLesAdresses } from "./course-adresses";
 import { COURSE_MAX, debutDeVague, premiereAdresse, prochaineAdresse, regrouperLesSources } from "./sources-direct";
-import { AVANCE_FRAGILE_S, segmentsDAvance } from "./avance-direct";
+import { AVANCE_FRAGILE_S, avanceVisee as calculerAvance } from "./avance-direct";
 import { ecartEntre, repereDansLaPlaylist, tempsPourRepere, type SegmentRepere } from "./releve-direct";
 
 /**
@@ -27,6 +35,8 @@ import { ecartEntre, repereDansLaPlaylist, tempsPourRepere, type SegmentRepere }
 /** Une adresse, son doublon relayé et ce que le serveur sait d'elle. */
 interface SourceLisible {
   url: string; relais: string | null; hauteur: number | null; debit: number | null;
+  identifiant?: string;
+  cheminPrefere?: "relais";
   /** Les échecs que le serveur connaît pour cette adresse : une source qui en traîne est fragile d'emblée. */
   echecs: number;
   /** Ce qui distingue deux adresses pour l'œil : l'hôte et le chemin, sans la requête. */
@@ -138,11 +148,9 @@ const ATTENTES_REPRISE_MS = [2_000, 5_000, 10_000];
  * remplir trois secondes de tampon. Au-delà, la reprise en place d'avant prend le relais. La relève
  * démarre trois secondes en avant du point de lecture, le temps qu'elle charge, puis se cale exactement.
  */
-const RELEVES_MAX = 3;
-const ATTENTE_RELEVE_MS = 8_000;
-const ATTENTE_TAMPON_RELEVE_MS = 12_000;
-const TAMPON_DE_RELEVE_S = 3;
-const AVANCE_DE_CHARGEMENT_S = 3;
+const ATTENTE_RELEVE_MS = 4_000;
+const ATTENTE_TAMPON_RELEVE_MS = 8_000;
+const TAMPON_DE_RELEVE_S = 6;
 
 /**
  * **La déclaration de flux stable**, et pourquoi tout en dépend.
@@ -199,9 +207,6 @@ const SEUIL_STABILITE_MS = 15_000;
  * disponible — à ce stade, une image moins fine vaut infiniment mieux qu'une image arrêtée. Et dès
  * que le tampon est refait, le plafond est retiré : la qualité maximale revient d'elle-même.
  */
-const TAMPON_BAS_S = 10;
-const TAMPON_CRITIQUE_S = 5;
-const TAMPON_RETABLI_S = 18;
 
 /**
  * L'insistance quand plus rien ne répond : six relances, dix secondes d'écart.
@@ -246,7 +251,20 @@ interface Fenetre {
   avance: number;
 }
 
-export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
+export function LecteurDirect(props: PropsDirect) {
+  return <ChoisirLecteurDirect key={props.chaine.id} {...props} />;
+}
+function ChoisirLecteurDirect(props: PropsDirect) {
+  const [repli, setRepli] = useState(false);
+  const auRepli = useCallback(() => setRepli(true), []);
+  const pont = pontBureau();
+  return !repli && pont?.direct && pont.lecteur
+    ? <Suspense fallback={<div className="lecteur-direct" role="status">Ouverture de la chaîne…</div>}>
+        <DirectBureau {...props} onRepli={auRepli} />
+      </Suspense>
+    : <LecteurDirectWeb {...props} />;
+}
+function LecteurDirectWeb({ chaine, precedente, onChaine, onClose }: {
   chaine: ChaineDirect;
   /** La chaîne quittée, ou `null` la première fois. */
   precedente: ChaineDirect | null;
@@ -264,6 +282,19 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
   const videos = useRef<[HTMLVideoElement | null, HTMLVideoElement | null]>([null, null]);
   const ecranRef = useRef(0);
   const [ecran, setEcran] = useState(0);
+  const cheminRef = useRef<"direct" | "relais">("direct");
+  const journal = useRef(new JournalDirect());
+  const reculManuel = useRef(false);
+  const trame = useRef({ element: null as HTMLVideoElement | null, instant: 0 });
+  const conversions = useRef(new Map<string, { id: string; url: string }>());
+  const renouvellementsCompat = useRef(new Map<string, number>());
+  const demandesCompat = useRef(new Set<string>());
+  const essaisCompat = useRef(new Set<string>());
+  const lectureCompat = useRef("");
+  if (!lectureCompat.current) lectureCompat.current = identifiantLectureDirect();
+  const conversionActive = useRef(false);
+  const rapporter = (id: string, url: string, ok: boolean, secondes?: number) =>
+    conversionActive.current ? Promise.resolve() : api.resultatChaineLive(id, url, ok, secondes, cheminRef.current);
   const brancherVideo0 = useCallback((noeud: HTMLVideoElement | null) => {
     videos.current[0] = noeud;
     if (ecranRef.current === 0) videoRef.current = noeud;
@@ -284,6 +315,19 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
    */
   const [parRelais, setParRelais] = useState(false);
   const [rang, setRang] = useState(0);
+  const [rangAffiche, setRangAffiche] = useState(0);
+  const [diagnosticOuvert, setDiagnosticOuvert] = useState(false);
+  const [diagnostic, setDiagnostic] = useState({ tampon: 0, retard: 0, source: 1, mode: "", incident: "Aucun", qualite: "Automatique" });
+  const actualisees = useRef(new Map<string, SourceLisible>());
+  const reposSources = useRef(new Map<string, number>());
+  const renouvelerLecture = useRef<() => Promise<void>>(async () => {});
+  const qualiteContinue = useRef(new QualiteContinue());
+  const stableDepuis = useRef(0);
+  const [ouverture, setOuverture] = useState(0);
+  const relanceDifferee = useRef<number | undefined>(undefined);
+  const cacheSegments = useRef(new CacheSegmentsDirect(budgetCacheDirect()));
+  const lectureAvance = useRef(() => {});
+  const dernierSegment = useRef(0);
   const rangRef = useRef(0);
   const [message, setMessage] = useState<string | null>("Ouverture de la chaîne…");
   const [echec, setEchec] = useState(false);
@@ -303,6 +347,11 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
   /** La même, lisible depuis les rappels de hls.js, qui ne revoient pas le rendu. */
   const fenetreRef = useRef<Fenetre | null>(null);
   const [barreVisible, setBarreVisible] = useState(true);
+  const dernierGeste = useRef(Date.now());
+  const reveillerCommandes = useCallback(() => {
+    dernierGeste.current = Date.now();
+    setBarreVisible(true);
+  }, []);
   const [choixOuvert, setChoixOuvert] = useState(false);
   /**
    * Les adresses que le serveur n'a pas pu joindre, sondées une fois qu'une autre joue.
@@ -359,9 +408,23 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
     reprises.current = 0;
     relancesLentes.current = 0;
     dernierIncident.current = null;
+    journal.current.vider();
+    reculManuel.current = false;
+    demandesCompat.current.clear(); essaisCompat.current.clear();
     window.clearTimeout(declaration.current);
     declaration.current = undefined;
-    return () => window.clearTimeout(declaration.current);
+    cacheSegments.current.vider();
+    actualisees.current.clear();
+    reposSources.current.clear();
+    stableDepuis.current = 0;
+    qualiteContinue.current = new QualiteContinue();
+    return () => {
+      window.clearTimeout(declaration.current);
+      window.clearTimeout(relanceDifferee.current);
+      cacheSegments.current.vider();
+      for (const c of conversions.current.values()) void api.arreterConversionLive(c.id).catch(() => undefined);
+      conversions.current.clear();
+    };
   }, [chaine.id]);
 
   useEffect(() => {
@@ -378,6 +441,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
           url: source.url, relais: source.relais ?? null,
           hauteur: source.hauteur ?? null, debit: source.debit ?? null, echecs: source.echecs,
           empreinte: source.empreinte ?? source.url,
+          identifiant: source.identifiant, cheminPrefere: source.cheminPrefere,
         }));
         /*
          * La course, avant d'ouvrir quoi que ce soit.
@@ -390,13 +454,17 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
          * Une seule adresse ne se court pas contre elle-même : la fonction rend la liste telle quelle.
          */
         const ordonnees = [
-          ...await courirLesAdresses(declarees.slice(0, COURSE_MAX)),
+          ...await courirLesAdresses(declarees.slice(0, COURSE_MAX).map((s) => ({ ...s,
+            url: prefereRelais(s) && s.relais ? s.relais : s.url, origine: s.url })))
+            .then((sources) => sources.map(({ origine, ...s }) => ({ ...s, url: origine }))),
           ...declarees.slice(COURSE_MAX),
-        ];
+        ].sort((a, b) => Number(["ts", "dash", "mp4"].includes(formatAdresse(a.url)))
+          - Number(["ts", "dash", "mp4"].includes(formatAdresse(b.url))));
         if (annule) return;
         rangRef.current = 0;
         setRang(0);
-        setParRelais(false);
+        setRangAffiche(0);
+        setParRelais(prefereRelais(ordonnees[0] ?? {}));
         adressesRef.current = ordonnees;
         setAdresses(ordonnees);
       } catch {
@@ -440,6 +508,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
       setParRelais(false);
       setMessage(`Source ${index + 1} sur ${adressesRef.current.length}…`);
       setRang(index);
+      setRangAffiche(index);
     };
     const vague = debutDeVague(prochain);
     if (vaguesCourues.current.has(vague)) { annoncer(prochain); return; }
@@ -483,7 +552,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
      * inscrirait un échec qui n'en est pas un dans le classement des adresses.
      */
     const courante = adresses[rangRef.current];
-    if (!parRelais && courante?.relais) {
+    if (cheminRef.current === "direct" && courante?.relais) {
       setParRelais(true);
       // `parRelais` figure dans les dépendances de l'effet de lecture : le changer relance la même
       // adresse, cette fois relayée. `essai` reste vide jusque-là, ce qui empêche une seconde erreur
@@ -500,7 +569,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
      * désormais que l'adresse qui n'a **jamais** tenu l'image trente secondes : celle-là n'a rien
      * prouvé, et son échec veut dire quelque chose.
      */
-    if (!fluxDeclareStable.current) void api.resultatChaineLive(chaine.id, morte, false).catch(() => undefined);
+    void rapporter(chaine.id, morte, false).catch(() => undefined);
     // La déclaration porte sur l'adresse : celle qu'on prend n'a encore rien prouvé.
     window.clearTimeout(declaration.current);
     declaration.current = undefined;
@@ -531,11 +600,13 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
       if (relancesLentes.current < plafond) {
         relancesLentes.current += 1;
         setMessage(`Plus aucune source ne répond, nouvelle tentative (${relancesLentes.current}/${plafond})…`);
-        window.setTimeout(() => {
+        relanceDifferee.current = window.setTimeout(() => {
           const premiere = premiereAdresse(adressesRef.current.map((adresse) => adresse.url), muettesRef.current);
           rangRef.current = premiere;
           setParRelais(false);
           setRang(premiere);
+          setRangAffiche(premiere);
+          setOuverture((valeur) => valeur + 1);
         }, INTERVALLE_RELANCE_MS);
         return;
       }
@@ -563,27 +634,36 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
    */
   const choisirSource = useCallback((index: number) => {
     setChoixOuvert(false);
-    if (index === rangRef.current && !parRelais) return;
+    window.clearTimeout(relanceDifferee.current);
+    setOuverture((valeur) => valeur + 1);
     essai.current = null;
     rangRef.current = index;
     setParRelais(false);
     setEchec(false);
     setMessage(`Source ${index + 1}…`);
     setRang(index);
+    setRangAffiche(index);
   }, [parRelais]);
 
   useEffect(() => {
     const element = videoRef.current;
-    const entree = adresses[rang];
-    if (!element || !entree || echec) return;
+    const choisie = adresses[rang];
+    if (!element || !choisie || echec) return;
+    let entree: SourceLisible = actualisees.current.get(choisie.identifiant ?? choisie.url) ?? choisie;
     /*
      * Le contenu mixte se voit d'avance, lui : une page HTTPS ne demandera même pas une adresse en
      * `http` nu. Inutile d'attendre un échec que le navigateur annonce déjà — on part relayé.
      */
     const mixte = window.location.protocol === "https:" && entree.url.startsWith("http:");
-    const relayer = (parRelais || mixte) && entree.relais;
-    const source = relayer ? entree.relais! : entree.url;
+    const relayer = (parRelais || mixte || prefereRelais(entree)) && entree.relais;
+    let source = conversions.current.get(entree.identifiant ?? entree.url)?.url ?? (relayer ? entree.relais! : entree.url);
+    conversionActive.current = conversions.current.has(entree.identifiant ?? entree.url);
+    const cleSource = (s: SourceLisible) => s.identifiant ?? s.url;
+    const recente = (s: SourceLisible) => actualisees.current.get(cleSource(s)) ?? s;
+    const adresseLecture = (s: SourceLisible) => conversions.current.get(cleSource(s))?.url ?? (
+      (parRelais || prefereRelais(s) || (window.location.protocol === "https:" && s.url.startsWith("http:"))) && s.relais ? s.relais : s.url);
     essai.current = entree.url;
+    cheminRef.current = relayer || source.includes("/api/live/relais?") ? "relais" : "direct";
     // Les incidents sont ceux de l'adresse : la même, relancée ou relayée, garde les siens.
     if (adresseDesIncidents.current !== entree.url) {
       adresseDesIncidents.current = entree.url;
@@ -594,9 +674,18 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
     depuisSource.current = Date.now();
     let annule = false;
     let minuteur = 0;
+    let demarrage = 0;
     let reparations = 0;
+    let repriseEnPreparation = false;
+    let derniereReprise = 0;
+    let renouvellementEnCours = false;
+    let compatEnCours = false;
+    let dernierRenouvellement = 0;
+    stableDepuis.current = 0;
+    dernierSegment.current = Date.now();
     /** Les relèves en préparation : elles partent avec la lecture qu'elles devaient remplacer. */
     const relevesEnCours = new Set<Hls>();
+    const nettoyerNatif: Array<() => void> = [];
 
     const reussi = () => {
       if (annule) return;
@@ -614,9 +703,12 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
        * compteurs à neuf — pas le simple retour de l'image. Un flux qui revient deux secondes puis
        * retombe n'a rien prouvé ; l'absoudre lui offrirait une série d'échecs sans fin.
        */
-      if (!fluxDeclareStable.current && declaration.current === undefined) {
+      if ((!fluxDeclareStable.current || reprises.current > 0 || relancesLentes.current > 0) && !repriseEnPreparation && declaration.current === undefined) {
         declaration.current = window.setTimeout(() => {
+          declaration.current = undefined;
           fluxDeclareStable.current = true;
+          if (cheminRef.current === "relais") retenirRelais(entree.identifiant);
+          void rapporter(chaine.id, entree.url, true).catch(() => undefined);
           dejaVuStable.current = true;
           reprises.current = 0;
           relancesLentes.current = 0;
@@ -640,26 +732,46 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
            */
           const courant = hlsRef.current;
           if (courant) {
-            courant.config.levelLoadingMaxRetry = 6;
-            courant.config.fragLoadingMaxRetry = 6;
-            courant.config.manifestLoadingMaxRetry = 4;
+            // Les anciens champs *LoadingMaxRetry ne sont lus qu'à la construction de hls.js.
+            for (const politique of [courant.config.playlistLoadPolicy, courant.config.fragLoadPolicy,
+              courant.config.manifestLoadPolicy]) {
+              if (politique?.default.errorRetry) politique.default.errorRetry.maxNumRetry = 6;
+              if (politique?.default.timeoutRetry) politique.default.timeoutRetry.maxNumRetry = 6;
+            }
           }
         }, SEUIL_STABILITE_MS);
       }
       // C'est l'adresse d'origine qu'on note, jamais celle du relais : le classement porte sur la
       // source, et le relais n'est qu'un chemin pour y aller.
-      void api.resultatChaineLive(chaine.id, entree.url, true).catch(() => undefined);
-    };
+      };
+    lectureAvance.current = reussi;
 
     void (async () => {
       hlsRef.current?.destroy();
       hlsRef.current = null;
+      const format = formatAdresse(entree.url);
+      if (!conversionActive.current && (demandesCompat.current.has(cleSource(entree)) || ["dash", "ts", "mp4"].includes(format))) {
+        if (essaisCompat.current.has(cleSource(entree))) { suivante(); return; }
+        essaisCompat.current.add(cleSource(entree));
+        setMessage("Préparation d’une lecture compatible…");
+        try {
+          for (const c of conversions.current.values()) await api.arreterConversionLive(c.id).catch(() => undefined);
+          conversions.current.clear();
+          const c = await api.convertirSourceLive(chaine.id, entree.url, lectureCompat.current);
+          if (annule) { void api.arreterConversionLive(c.id).catch(() => undefined); return; }
+          conversions.current.set(cleSource(entree), c);
+          source = c.url; conversionActive.current = true;
+        } catch {
+          if (!annule) { dernierIncident.current = "Format non lisible sur ce navigateur"; suivante(); }
+          return;
+        }
+      }
       /*
        * Un direct qui ne démarre pas ne le dit pas toujours : un hébergeur peut accepter la connexion
        * puis ne rien envoyer. Sans cette échéance, la chaîne resterait noire indéfiniment au lieu de
        * basculer sur son secours.
        */
-      minuteur = window.setTimeout(() => { if (!annule) suivante(); }, 12_000);
+      minuteur = window.setTimeout(() => { if (!annule) suivante(); }, 18_000);
 
       const natif = element.canPlayType("application/vnd.apple.mpegurl");
       const HlsClass = "MediaSource" in window ? (await import("hls.js")).default : null;
@@ -681,7 +793,8 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
          * segments à l'hébergeur.
          */
         const hls = new HlsClass({
-          enableWorker: true, lowLatencyMode: false, backBufferLength: 60,
+          enableWorker: true, lowLatencyMode: false, backBufferLength: 20,
+          capLevelOnFPSDrop: true, useMediaCapabilities: true,
           /*
            * `maxBufferLength` doit **dépasser** la latence visée, sans quoi il la borne.
            *
@@ -690,8 +803,12 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
            * plafond de 60 s d'une source fragile, pour que ce soit la latence — ce qu'on maîtrise —
            * qui décide de la marge, et non un plafond oublié.
            */
-          maxBufferLength: AVANCE_FRAGILE_S + 10, liveSyncDurationCount: 3, capLevelToPlayerSize: false,
-          maxLiveSyncPlaybackRate: RATTRAPAGE_MAX,
+          maxBufferLength: AVANCE_FRAGILE_S, maxMaxBufferLength: AVANCE_FRAGILE_S + 10,
+          maxBufferSize: budgetCacheDirect(),
+          fLoader: chargeurAvecCache(HlsClass, cacheSegments.current),
+          liveSyncDuration: incidents.current > 0 || entree.echecs > 0 ? 55 : 40,
+          liveMaxLatencyDuration: AVANCE_FRAGILE_S, liveSyncOnStallIncrease: 0, capLevelToPlayerSize: false,
+          maxLiveSyncPlaybackRate: 1,
           /*
            * **L'adaptation de débit, réglée pour tenir plutôt que pour briller.**
            *
@@ -733,57 +850,27 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
          * cas —, changer de source ensuite, et jamais l'inverse.
          */
         reagirALInstabilite.current = () => {
+          if (annule || videoRef.current?.paused || repriseEnPreparation) return;
           blocages.current = [];
-          incidents.current += 1;
-          /*
-           * **Reculer, mais jamais plus loin que la fenêtre ne le permet.**
-           *
-           * Le recul était fixe : cinq segments, quelle que soit la chaîne. Sur la fenêtre médiane il
-           * laissait 21 s de marge ; sur une fenêtre de 30 s il plaçait le point de lecture derrière
-           * le bord arrière, c'est-à-dire dans le vide. On calcule donc le recul que cette chaîne-ci
-           * peut payer, et l'on ne recule pas si elle ne peut rien payer du tout — mieux vaut une
-           * source un peu instable qu'une source qu'on vient de faire sortir de sa propre fenêtre.
-           */
-          /*
-           * **Il n'y a plus de marge à acheter : elle est déjà maximale.**
-           *
-           * Ce recul-ci existait parce que la latence de départ était petite — 24 s — et qu'on
-           * l'agrandissait après coup. Le relevé la prend maintenant d'emblée à tout ce que la fenêtre
-           * permet ; il ne reste donc rien à gagner de ce côté, et insister ne ferait que sortir de la
-           * fenêtre par l'arrière.
-           *
-           * Le levier restant est le **débit**. On plafonne la qualité d'un cran, ce qui allège
-           * immédiatement le téléchargement, et l'on s'accorde un répit avant de juger de nouveau. La
-           * surveillance du tampon lèvera ce plafond d'elle-même dès que la marge sera refaite : on
-           * ne s'enferme pas dans une image dégradée pour un mauvais moment.
-           */
-          // La lecture à l'écran, qui n'est plus forcément la première : une relève a pu la remplacer.
           const courant = hlsRef.current;
-          const niveaux = courant?.levels?.length ?? 0;
-          const plafond = courant?.autoLevelCapping ?? -1;
-          if (courant && niveaux > 1 && plafond !== 0) {
-            courant.autoLevelCapping = Math.max(0, (plafond === -1 ? niveaux - 1 : plafond) - 1);
-            silenceJusqua.current = Date.now() + REPIT_APRES_RECUL_MS;
-            setSecurite(0);
-            return;
-          }
-          const prochain = prochaineAdresse(adresses.map((adresse) => adresse.url), rangRef.current, muettesRef.current);
-          if (prochain === null) return;
-          /*
-           * Elle n'est **pas** rapportée comme morte : elle ne l'est pas. Inscrire un échec pour une
-           * source qui répond fausserait le classement avec une opinion.
-           */
-          essai.current = null;
-          rangRef.current = prochain;
-          setSecurite(0);
-          setParRelais(false);
-          setMessage(`Source instable, passage à la ${prochain + 1}…`);
-          setRang(prochain);
+          if (courant && courant.levels.length > 1) courant.autoLevelCapping = 0;
+          void recuperer();
         };
         hls.loadSource(source);
         hls.attachMedia(element);
-        hls.on(HlsClass.Events.MANIFEST_PARSED, () => { void element.play().catch(() => undefined); });
-        hls.on(HlsClass.Events.FRAG_BUFFERED, reussi);
+        hls.on(HlsClass.Events.MANIFEST_PARSED, () => {
+          const limite = Date.now() + 8_000;
+          const demarrer = () => {
+            if (annule || hlsRef.current !== hls) return;
+            const largeur = element.seekable.length ? element.seekable.end(element.seekable.length - 1) - element.seekable.start(0) : 0;
+            const reserve = tamponDevant(element);
+            if (reserve >= reserveDeDepart(largeur) || (Date.now() >= limite && reserve >= 1 && element.readyState >= 2)) {
+              void element.play().catch(() => { if (!annule) setMessage("Cliquez sur l’image pour lancer la lecture."); });
+            } else if (Date.now() < limite) demarrage = window.setTimeout(demarrer, 100);
+          };
+          demarrer();
+        });
+        hls.on(HlsClass.Events.FRAG_BUFFERED, () => { dernierSegment.current = Date.now(); });
 
         /*
          * **La relève silencieuse** : une seconde lecture cachée de la même adresse, calée sur le segment
@@ -794,86 +881,257 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
          */
         const detailsDe = new WeakMap<Hls, LevelDetails>();
         const suivreLesDetails = (instance: Hls) => {
-          instance.on(HlsClass.Events.LEVEL_LOADED, (_evenement, donnees) => { detailsDe.set(instance, donnees.details); });
+          instance.on(HlsClass.Events.LEVEL_LOADED, (_evenement, donnees) => {
+            detailsDe.set(instance, donnees.details);
+            if (donnees.details.live) {
+              instance.config.liveSyncDuration = Math.min(55, calculerAvance(donnees.details.totalduration,
+                donnees.details.targetduration, incidents.current > 0 || entree.echecs > 0));
+            }
+          });
         };
         suivreLesDetails(hls);
-        const relevesTentees = new WeakSet<Hls>();
-        let relevesFaites = 0;
-        const relever = async (): Promise<boolean> => {
+        const relever = async (cible = recente(entree), index = rangRef.current): Promise<boolean> => {
           const principale = hlsRef.current;
           const aLEcran = videoRef.current;
           const autre = videos.current[ecranRef.current === 0 ? 1 : 0];
-          if (annule || !principale || !aLEcran || !autre || relevesFaites >= RELEVES_MAX) return false;
+          if (annule || !principale || !aLEcran || !autre) return false;
+          const memeSource = cleSource(cible) === cleSource(entree);
+          if (!memeSource && ["dash", "ts", "mp4"].includes(formatAdresse(cible.url))) return false;
           const releve = new HlsClass({ ...principale.userConfig, autoStartLoad: false });
-          // La patience du flux déclaré stable, et non celle de l'ouverture.
-          releve.config.levelLoadingMaxRetry = principale.config.levelLoadingMaxRetry;
-          releve.config.fragLoadingMaxRetry = principale.config.fragLoadingMaxRetry;
-          releve.config.manifestLoadingMaxRetry = principale.config.manifestLoadingMaxRetry;
+          // Les politiques de reprise font partie de userConfig, recopiée ci-dessus.
           relevesEnCours.add(releve);
           suivreLesDetails(releve);
           const abandonner = (): false => {
             relevesEnCours.delete(releve);
             releve.destroy();
-            autre.removeAttribute("src");
-            autre.load();
+            if (!annule) { autre.removeAttribute("src"); autre.load(); }
             return false;
           };
           autre.muted = true;
-          releve.loadSource(source);
-          releve.attachMedia(autre);
-          const manifeste = await new Promise<boolean>((resoudre) => {
-            const minuterie = window.setTimeout(() => resoudre(false), ATTENTE_RELEVE_MS);
+          const manifestePret = new Promise<boolean>((resoudre) => {
+            const minuterie = window.setTimeout(() => resoudre(false), Math.min(ATTENTE_RELEVE_MS, Math.max(1_500, tamponDevant(aLEcran) * 300)));
             releve.once(HlsClass.Events.MANIFEST_PARSED, () => { window.clearTimeout(minuterie); resoudre(true); });
           });
+          releve.loadSource(adresseLecture(cible));
+          releve.attachMedia(autre);
+          const manifeste = await manifestePret;
           if (annule || !manifeste) return abandonner();
           // Sans chargement automatique, hls.js lit le manifeste maître puis attend : on demande la playlist.
-          releve.startLoad(-1);
-          const niveau = await new Promise<LevelDetails | null>((resoudre) => {
+          const niveauPret = new Promise<LevelDetails | null>((resoudre) => {
             const minuterie = window.setTimeout(() => resoudre(null), ATTENTE_RELEVE_MS);
             releve.once(HlsClass.Events.LEVEL_LOADED, (_evenement, donnees) => { window.clearTimeout(minuterie); resoudre(donnees.details); });
           });
+          releve.startLoad(-1);
+          const niveau = await niveauPret;
           if (annule || !niveau || hlsRef.current !== principale) return abandonner();
           const repere = repereDansLaPlaylist(segmentsDe(detailsDe.get(principale)), aLEcran.currentTime);
-          const depart = repere ? tempsPourRepere(segmentsDe(niveau), repere) : null;
+          const depart = repere && (memeSource || repere.pdt !== null)
+            ? tempsPourRepere(segmentsDe(niveau), repere, memeSource) : null;
           releve.stopLoad();
-          releve.startLoad(depart != null ? depart + AVANCE_DE_CHARGEMENT_S : -1);
+          releve.startLoad(depart ?? -1);
+          if (depart != null) autre.currentTime = Math.max(0, depart);
           const limite = Date.now() + ATTENTE_TAMPON_RELEVE_MS;
           while (!annule && tamponDevant(autre) < TAMPON_DE_RELEVE_S && Date.now() < limite) {
             await new Promise((resoudre) => window.setTimeout(resoudre, 100));
           }
           if (annule || tamponDevant(autre) < TAMPON_DE_RELEVE_S || hlsRef.current !== principale) return abandonner();
           // Rattraper exactement l'écran avant de montrer : même segment, même instant.
-          const ecart = ecartEntre(
-            repereDansLaPlaylist(segmentsDe(detailsDe.get(principale)), aLEcran.currentTime),
-            repereDansLaPlaylist(segmentsDe(detailsDe.get(releve)), autre.currentTime),
-            niveau.targetduration,
-          );
-          if (ecart != null && Math.abs(ecart) < niveau.targetduration * 4) autre.currentTime -= ecart;
+          const repereA = repereDansLaPlaylist(segmentsDe(detailsDe.get(principale)), aLEcran.currentTime);
+          const repereB = repereDansLaPlaylist(segmentsDe(detailsDe.get(releve)), autre.currentTime);
+          const raccord = raccordAutorise(memeSource, repereA?.pdt ?? null, repereB?.pdt ?? null);
+          const ecart = raccord ? ecartEntre(repereA, repereB, niveau.targetduration) : null;
+          // Sans horloge commune, conserver l'image courante jusqu'à presque épuisement.
+          if (!raccord && tamponDevant(aLEcran) > 3) {
+            const attenteLimite = Date.now() + 30_000;
+            const receptionAvant = dernierSegment.current;
+            while (!annule && !aLEcran.paused && tamponDevant(aLEcran) > 3 && Date.now() < attenteLimite) {
+              if (dernierSegment.current > receptionAvant && tamponDevant(aLEcran) > 15) return abandonner();
+              await new Promise((resoudre) => window.setTimeout(resoudre, 100));
+            }
+            if (tamponDevant(aLEcran) > 3) return abandonner();
+          }
+          if (ecart != null && Math.abs(ecart) < niveau.targetduration * 4) {
+            const cible = autre.currentTime - ecart;
+            const disponible = Array.from({ length: autre.buffered.length }, (_, i) => i)
+              .some((i) => cible >= autre.buffered.start(i) && cible + 0.5 < autre.buffered.end(i));
+            if (disponible) autre.currentTime = cible;
+          }
+          // Une pause décidée pendant le chargement doit rester une pause.
+          if (aLEcran.paused) return abandonner();
+          const imagesAvant = imagesPresentees(autre);
           try { await autre.play(); } catch { return abandonner(); }
+          const decodageLimite = Date.now() + 2_000;
+          const imageAbsente = () => imagesAvant !== null && (imagesPresentees(autre) ?? 0) <= imagesAvant;
+          while (!annule && (autre.seeking || autre.readyState < 2 || imageAbsente()) && Date.now() < decodageLimite) {
+            await new Promise((resoudre) => window.setTimeout(resoudre, 50));
+          }
+          if (autre.seeking || autre.readyState < 2 || imageAbsente() || tamponDevant(autre) < 3 || aLEcran.paused) return abandonner();
+          if (autre.seekable.length && autre.seekable.end(autre.seekable.length - 1) - autre.currentTime > AVANCE_FRAGILE_S) return abandonner();
           if (annule || hlsRef.current !== principale) return abandonner();
-          // L'échange : le son et l'image passent à la relève, l'ancienne lecture s'efface.
+          const repereFinal = repereDansLaPlaylist(segmentsDe(detailsDe.get(principale)), aLEcran.currentTime);
+          const positionFinale = repereFinal ? tempsPourRepere(segmentsDe(detailsDe.get(releve)), repereFinal, memeSource) : null;
+          if (positionFinale !== null && Math.abs(positionFinale - autre.currentTime) > 0.25) {
+            if (!Array.from({ length: autre.buffered.length }, (_, i) => i).some((i) =>
+              positionFinale >= autre.buffered.start(i) && positionFinale + 3 < autre.buffered.end(i))) return abandonner();
+            autre.currentTime = positionFinale;
+            const finSeek = Date.now() + 1_000;
+            while (!annule && autre.seeking && Date.now() < finSeek) await new Promise((r) => window.setTimeout(r, 25));
+            if (annule || autre.seeking || aLEcran.paused || hlsRef.current !== principale) return abandonner();
+          }
+          if (!memeSource && tamponDevant(aLEcran) > 15 && Date.now() - dernierSegment.current < 2_000) return abandonner();
+          // Le son et l'image passent ensemble à la relève prête.
           autre.volume = aLEcran.volume;
           autre.muted = aLEcran.muted;
           aLEcran.muted = true;
           aLEcran.pause();
+          if (!memeSource) {
+            reposSources.current.set(cleSource(entree), Date.now() + 120_000);
+            void rapporter(chaine.id, recente(entree).url, false).catch(() => undefined);
+            fluxDeclareStable.current = false;
+            window.clearTimeout(declaration.current);
+            declaration.current = undefined;
+            depuisSource.current = Date.now();
+            qualiteContinue.current = new QualiteContinue();
+            reprises.current = 0;
+            stableDepuis.current = 0;
+          }
+          entree = cible;
+          conversionActive.current = conversions.current.has(cleSource(cible));
+          source = adresseLecture(cible);
+          cheminRef.current = source === cible.relais || source.includes("/api/live/relais?") ? "relais" : "direct";
+          essai.current = cible.url;
+          rangRef.current = index;
+          setRangAffiche(index);
           relevesEnCours.delete(releve);
           hlsRef.current = releve;
-          releve.on(HlsClass.Events.FRAG_BUFFERED, reussi);
+          releve.on(HlsClass.Events.FRAG_BUFFERED, () => { dernierSegment.current = Date.now(); });
           releve.on(HlsClass.Events.ERROR, surErreurDe(releve));
           ecranRef.current = ecranRef.current === 0 ? 1 : 0;
           videoRef.current = autre;
           setEcran(ecranRef.current);
           silenceJusqua.current = Date.now() + 4_000;
-          relevesFaites += 1;
+          dernierSegment.current = Date.now();
+          depuisLecture.current = 0;
           principale.destroy();
           aLEcran.removeAttribute("src");
           aLEcran.load();
           return true;
         };
 
+        const recuperer = async () => {
+          if (annule || repriseEnPreparation || videoRef.current?.paused) return;
+          if (Date.now() - derniereReprise < 5_000) return;
+          derniereReprise = Date.now();
+          if (reprises.current >= REPRISES_MAX) {
+            // Une panne réseau ne justifie pas de jeter les secondes encore lisibles.
+            if (tamponDevant(videoRef.current!) > 3) return;
+            suivante();
+            return;
+          }
+          repriseEnPreparation = true;
+          reprises.current += 1;
+          incidents.current += 1;
+          depuisLecture.current = 0;
+          window.clearTimeout(declaration.current);
+          declaration.current = undefined;
+          const segmentAvant = dernierSegment.current;
+          const positionAvant = videoRef.current!.currentTime;
+          // Relancer les téléchargements en place conserve les segments déjà décodables.
+          hlsRef.current?.startLoad(positionAvant, true);
+          let faite = false;
+          try {
+            faite = await relever();
+            if (!faite && !annule) {
+              const candidats = adressesRef.current.map((s, index) => ({ s: recente(s), index }))
+                .filter(({ s }) => cleSource(s) !== cleSource(entree)
+                  && !muettesRef.current.has(s.url))
+                // Une source en retrait reste un dernier secours si les autres ont disparu.
+                .sort((a, b) => Number((reposSources.current.get(cleSource(a.s)) ?? 0) > Date.now())
+                  - Number((reposSources.current.get(cleSource(b.s)) ?? 0) > Date.now())).slice(0, 2);
+              for (const { s, index } of candidats) {
+                if (annule || videoRef.current?.paused) break;
+                if (dernierSegment.current > segmentAvant && tamponDevant(videoRef.current!) > 15) break;
+                faite = await relever(s, index);
+                if (faite) break;
+                reposSources.current.set(cleSource(s), Date.now() + 30_000);
+              }
+            }
+          } catch {
+            for (const releve of relevesEnCours) releve.destroy();
+            relevesEnCours.clear();
+          }
+          if (!annule && !faite) {
+            // Si le téléchargement a repris entre-temps, garder le tampon à l'écran.
+            if (dernierSegment.current <= segmentAvant || tamponDevant(videoRef.current!) < 1) {
+              setMessage(`Reprise de la source (${reprises.current}/${REPRISES_MAX})…`);
+              await new Promise((resoudre) => window.setTimeout(resoudre, ATTENTES_REPRISE_MS[Math.max(0, reprises.current - 1)]));
+              if (!annule && !videoRef.current?.paused
+                && (tamponDevant(videoRef.current!) <= 3 || videoRef.current!.currentTime === positionAvant)) {
+                if (rangRef.current !== rang) setRang(rangRef.current);
+                else setOuverture((valeur) => valeur + 1);
+              }
+            }
+          }
+          repriseEnPreparation = false;
+        };
+
+        renouvelerLecture.current = async () => {
+          if (renouvellementEnCours || Date.now() - dernierRenouvellement < 30_000) return;
+          renouvellementEnCours = true;
+          dernierRenouvellement = Date.now();
+          try {
+            const details = await api.chaineLive(chaine.id);
+            if (annule) return;
+            for (const s of details.sources) actualisees.current.set(s.identifiant ?? s.url, {
+              ...s, relais: s.relais ?? null, hauteur: s.hauteur ?? null, debit: s.debit ?? null,
+              empreinte: s.empreinte ?? s.url,
+            });
+            if (conversionActive.current || adresseLecture(recente(entree)) === source || repriseEnPreparation || videoRef.current?.paused) return;
+            repriseEnPreparation = true;
+            try { await relever(); } finally { repriseEnPreparation = false; }
+          } finally { renouvellementEnCours = false; }
+        };
+
         // Seule la lecture à l'écran décide : une relève qui échoue en préparation ne touche à rien.
         const surErreurDe = (instance: Hls) => (_evenement: unknown, donnees: ErrorData) => {
-          if (annule || hlsRef.current !== instance) return;
+          if (annule || hlsRef.current !== instance || compatEnCours) return;
+          if (conversionActive.current && donnees.fatal && donnees.response?.code === 404) {
+            const cle = cleSource(entree);
+            const conversion = conversions.current.get(cle);
+            conversions.current.delete(cle);
+            if (conversion) void api.arreterConversionLive(conversion.id).catch(() => undefined);
+            if (Date.now() - (renouvellementsCompat.current.get(cle) ?? 0) < 30_000) { suivante(); return; }
+            renouvellementsCompat.current.set(cle, Date.now());
+            essaisCompat.current.delete(cle);
+            demandesCompat.current.add(cle);
+            setOuverture((v) => v + 1);
+            return;
+          }
+          const problemeFormat = /manifestParsingError|manifestIncompatibleCodecsError|bufferAddCodecError/.test(donnees.details);
+          if ((problemeFormat || (donnees.fatal && donnees.type === HlsClass.ErrorTypes.MEDIA_ERROR && reparations >= 2))
+            && !conversionActive.current && !essaisCompat.current.has(cleSource(entree))) {
+            compatEnCours = true;
+            void (async () => {
+              try {
+                const analyse = await api.analyserSourceLive(chaine.id, entree.url, lectureCompat.current);
+                if (annule) return;
+                if (analyse.format === "inconnu") { suivante(); return; }
+                demandesCompat.current.add(cleSource(entree));
+                setOuverture((v) => v + 1);
+              } catch { if (!annule) suivante(); }
+              finally { compatEnCours = false; }
+            })();
+            return;
+          }
+          if (lienDirectARenouveler(donnees.response?.code, source, window.location.origin)) {
+            if (renouvellementEnCours) return;
+            if (Date.now() - dernierRenouvellement >= 30_000) {
+              void renouvelerLecture.current().catch(() => undefined).finally(() => {
+                if (!annule && donnees.fatal && hlsRef.current === instance && !repriseEnPreparation) void recuperer();
+              });
+              return;
+            }
+          }
           /*
            * Le blocage du tampon n'est pas une panne, c'est un avertissement.
            *
@@ -929,7 +1187,11 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
             reagirALInstabilite.current();
             return;
           }
-          if (!donnees.fatal) return;
+          if (!donnees.fatal) {
+            if (fluxDeclareStable.current && donnees.type === HlsClass.ErrorTypes.NETWORK_ERROR
+              && tamponDevant(videoRef.current!) < 20) void recuperer();
+            return;
+          }
           /*
            * Réparer avant d'abandonner.
            *
@@ -941,64 +1203,134 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
            * Deux tentatives, pas plus : la seconde échange les codecs audio, et si cela ne suffit
            * pas, la source est bien en cause.
            */
+          if (donnees.type === HlsClass.ErrorTypes.NETWORK_ERROR && !fluxDeclareStable.current
+            && cheminRef.current === "direct" && entree.relais && !donnees.response?.code) { suivante(); return; }
+          if (donnees.type === HlsClass.ErrorTypes.MEDIA_ERROR && fluxDeclareStable.current && tamponDevant(videoRef.current!) > 3) {
+            dernierIncident.current = "Décodage interrompu";
+            void recuperer(); return;
+          }
           if (donnees.type === HlsClass.ErrorTypes.MEDIA_ERROR && reparations < 2) {
             reparations += 1;
             if (reparations > 1) instance.swapAudioCodec();
             instance.recoverMediaError();
             return;
           }
-          /*
-           * **Réessayer la même adresse avant de l'abandonner.**
-           *
-           * Ce qui se trouvait ici affirmait le contraire — « la source est en panne, et la suivante
-           * est déjà connue ». L'observation la dément : relancer la même adresse répare
-           * instantanément. Ce qui meurt, c'est la session en cours, pas la source.
-           *
-           * `startLoad` reprend le chargement sur le lecteur existant, sans le détruire : le décodeur
-           * reste en place, et la reprise coûte le remplissage du tampon au lieu d'une reconstruction
-           * complète.
-           */
-          /*
-           * **La relève d'abord, pour une erreur de réseau d'un flux qui a fait ses preuves.**
-           *
-           * Mesuré sur le banc du 13 septembre : une coupure réseau ne produit aucune erreur fatale —
-           * hls.js repart seul —, alors qu'une session expirée en produit une dans les dix secondes, et
-           * que la reprise en place la répétait jusqu'à l'abandon de la source, 39 s plus tard, image
-           * figée. La relève a tenu l'image à 0,1 s près. Si elle échoue, la reprise d'avant prend le
-           * relais, une fois par lecture.
-           */
-          if (fluxDeclareStable.current && donnees.type === HlsClass.ErrorTypes.NETWORK_ERROR && !relevesTentees.has(instance)) {
-            relevesTentees.add(instance);
-            incidents.current += 1;
-            dernierIncident.current = `réseau (${donnees.details})`;
-            void relever().then((faite) => {
-              if (!faite && !annule && hlsRef.current === instance) instance.startLoad();
-            });
-            return;
-          }
-          if (fluxDeclareStable.current && reprises.current < REPRISES_MAX) {
-            reprises.current += 1;
-            incidents.current += 1;
-            dernierIncident.current = `réseau (${donnees.details})`;
-            if (reprises.current > 1) {
-              setMessage(`Reprise de la source (${reprises.current}/${REPRISES_MAX})…`);
-            }
-            window.setTimeout(() => {
-              if (annule) return;
-              hlsRef.current?.startLoad();
-            }, ATTENTES_REPRISE_MS[reprises.current - 1]);
-            return;
-          }
+          dernierIncident.current = `${donnees.type} (${donnees.details})`;
+          if (fluxDeclareStable.current || tamponDevant(videoRef.current!) > 0) { void recuperer(); return; }
           instance.destroy();
           hlsRef.current = null;
           suivante();
         };
         hls.on(HlsClass.Events.ERROR, surErreurDe(hls));
       } else if (natif) {
-        // Safari lit HLS nativement, et n'a alors besoin ni de MediaSource ni de CORS.
+        // Le lecteur natif conserve sa réserve pendant la préparation silencieuse d'une relève.
+        const places = new Set<HTMLVideoElement>();
+        const debutProgramme = (video: HTMLVideoElement): number | null => {
+          const date = (video as HTMLVideoElement & { getStartDate?: () => Date }).getStartDate?.();
+          return date && Number.isFinite(date.getTime()) ? date.getTime() / 1000 : null;
+        };
+        const attendre = () => new Promise((resolve) => window.setTimeout(resolve, 100));
+        const preparer = async (renouvellement = false) => {
+          if (annule || repriseEnPreparation || Date.now() - derniereReprise < 10_000) return;
+          const principal = videoRef.current;
+          if (!principal || (principal.paused && !principal.error)) return;
+          repriseEnPreparation = true; derniereReprise = Date.now();
+          const autre = videos.current[ecranRef.current === 0 ? 1 : 0];
+          if (!autre) { repriseEnPreparation = false; return; }
+          try {
+            const candidats = [{ s: recente(entree), index: rangRef.current },
+              ...adressesRef.current.map((s, index) => ({ s: recente(s), index }))
+                .filter(({ index }) => index !== rangRef.current).slice(0, 2)];
+            for (const { s: cible, index } of candidats) {
+              if (annule || (principal.paused && !principal.error)) return;
+              places.delete(autre);
+              autre.muted = true; autre.src = adresseLecture(cible); autre.load();
+              void autre.play().catch(() => undefined);
+              const limite = Date.now() + 8_000;
+              while (!annule && !autre.error && (autre.readyState < 2 || tamponDevant(autre) < 6) && Date.now() < limite) await attendre();
+              if (annule) return;
+              if (autre.error || autre.readyState < 2 || tamponDevant(autre) < 6) continue;
+              const a = debutProgramme(principal), b = debutProgramme(autre);
+              if (a !== null && b !== null) {
+                const cibleTemps = a + principal.currentTime - b;
+                if (!Array.from({ length: autre.buffered.length }, (_, i) => i)
+                  .some((i) => cibleTemps >= autre.buffered.start(i) && cibleTemps + 3 < autre.buffered.end(i))) continue;
+                autre.currentTime = cibleTemps;
+              } else {
+                const limiteReserve = Date.now() + 30_000;
+                while (!annule && tamponDevant(principal) > 3 && Date.now() < limiteReserve) {
+                  if (!renouvellement && tamponDevant(principal) >= 25) return;
+                  await attendre();
+                }
+                if (tamponDevant(principal) > 3) continue;
+              }
+              const limiteSeek = Date.now() + 2_000;
+              while (!annule && autre.seeking && Date.now() < limiteSeek) await attendre();
+              if (annule || autre.seeking || autre.readyState < 2 || tamponDevant(autre) < 3 || (principal.paused && !principal.error)) return;
+              if (autre.seekable.length && autre.seekable.end(autre.seekable.length - 1) - autre.currentTime > 60) continue;
+              autre.volume = principal.volume; autre.muted = principal.muted;
+              principal.muted = true; principal.pause();
+              if (cleSource(cible) !== cleSource(entree)) {
+                void rapporter(chaine.id, recente(entree).url, false).catch(() => undefined);
+                fluxDeclareStable.current = false;
+                window.clearTimeout(declaration.current); declaration.current = undefined;
+                depuisSource.current = Date.now();
+              }
+              entree = cible; source = adresseLecture(cible); essai.current = cible.url;
+              conversionActive.current = conversions.current.has(cleSource(cible));
+              cheminRef.current = source === cible.relais || source.includes("/api/live/relais?") ? "relais" : "direct";
+              rangRef.current = index; setRangAffiche(index);
+              ecranRef.current = ecranRef.current === 0 ? 1 : 0;
+              videoRef.current = autre; setEcran(ecranRef.current);
+              principal.removeAttribute("src"); principal.load();
+              dernierIncident.current = renouvellement ? "Lien renouvelé" : "Source native reprise";
+              silenceJusqua.current = Date.now() + 4_000;
+              depuisLecture.current = 0; stableDepuis.current = 0; dernierSegment.current = Date.now();
+              reussi();
+              return;
+            }
+            if (!annule && tamponDevant(principal) < 1) suivante();
+          } finally {
+            repriseEnPreparation = false;
+            if (!annule && videoRef.current !== autre) { autre.pause(); autre.removeAttribute("src"); autre.load(); }
+          }
+        };
+        renouvelerLecture.current = async () => {
+          if (annule || renouvellementEnCours || Date.now() - dernierRenouvellement < 30_000) return;
+          renouvellementEnCours = true; dernierRenouvellement = Date.now();
+          try {
+            const details = await api.chaineLive(chaine.id);
+            if (annule) return;
+            for (const s of details.sources) actualisees.current.set(s.identifiant ?? s.url, {
+              ...s, relais: s.relais ?? null, hauteur: s.hauteur ?? null, debit: s.debit ?? null, empreinte: s.empreinte ?? s.url });
+            if (adresseLecture(recente(entree)) !== source) await preparer(true);
+          } finally { renouvellementEnCours = false; }
+        };
+        reagirALInstabilite.current = () => {
+          void renouvelerLecture.current().catch(() => undefined).finally(() => { void preparer(); });
+        };
+        for (const video of videos.current) {
+          if (!video) continue;
+          // Les refs React peuvent déjà être nulles au démontage : conserver le nœud à libérer.
+          nettoyerNatif.push(() => { video.pause(); video.removeAttribute("src"); video.load(); });
+          const placer = () => {
+            if (!places.has(video) && video.seekable.length) {
+              places.add(video);
+              const debut = video.seekable.start(0), fin = video.seekable.end(video.seekable.length - 1);
+              const cible = Math.min(55, calculerAvance(fin - debut, SEGMENT_TYPE_S, entree.echecs > 0));
+              avanceVisee.current = cible;
+              video.currentTime = Math.max(debut, fin - cible);
+            }
+          };
+          const progres = () => { placer(); if (video === videoRef.current) dernierSegment.current = Date.now(); };
+          const joue = () => { if (video === videoRef.current) reussi(); };
+          const erreur = () => { if (video === videoRef.current) reagirALInstabilite.current(); };
+          for (const [event, callback] of [["progress", progres], ["playing", joue], ["error", erreur], ["loadedmetadata", placer]] as const) {
+            video.addEventListener(event, callback);
+            nettoyerNatif.push(() => video.removeEventListener(event, callback));
+          }
+        }
         element.src = source;
-        element.addEventListener("playing", reussi, { once: true });
-        element.addEventListener("error", () => { if (!annule) suivante(); }, { once: true });
         void element.play().catch(() => undefined);
       } else {
         setMessage("Ce navigateur ne sait pas lire un flux en direct.");
@@ -1008,7 +1340,15 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
 
     return () => {
       annule = true;
+      for (const nettoyer of nettoyerNatif) nettoyer();
+      lectureAvance.current = () => {};
+      reagirALInstabilite.current = () => {};
+      renouvelerLecture.current = async () => {};
+      window.clearTimeout(declaration.current);
+      declaration.current = undefined;
+      depuisLecture.current = 0;
       window.clearTimeout(minuteur);
+      window.clearTimeout(demarrage);
       hlsRef.current?.destroy();
       hlsRef.current = null;
       for (const releve of relevesEnCours) releve.destroy();
@@ -1016,7 +1356,14 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
       const cachee = videos.current[ecranRef.current === 0 ? 1 : 0];
       if (cachee?.getAttribute("src")) { cachee.removeAttribute("src"); cachee.load(); }
     };
-  }, [adresses, chaine.id, echec, parRelais, rang, suivante]);
+  }, [adresses, chaine.id, echec, ouverture, parRelais, rang, suivante]);
+
+  useEffect(() => {
+    const renouveler = () => { void renouvelerLecture.current().catch(() => undefined); };
+    const timer = window.setInterval(renouveler, 15 * 60_000);
+    window.addEventListener("online", renouveler);
+    return () => { window.clearInterval(timer); window.removeEventListener("online", renouveler); };
+  }, [chaine.id]);
 
   /**
    * Ce que la fenêtre publiée laisse voir, relevé quatre fois par seconde.
@@ -1030,6 +1377,8 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
     const element = videoRef.current;
     if (!element) return;
     let derniereImage = { temps: element.currentTime, instant: Date.now() };
+    let dernierCompteur = imagesPresentees(element);
+    let dernierJournal = 0;
     const relever = () => {
       /*
        * L'image avance-t-elle encore ? C'est la seule question qui distingue un bégaiement d'un arrêt.
@@ -1038,10 +1387,21 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
        * regarde donc le temps de lecture lui-même, qui ne ment pas.
        */
       const maintenant = Date.now();
-      if (element.paused || element.currentTime !== derniereImage.temps) {
+      const images = imagesPresentees(element);
+      const progression = element.currentTime !== derniereImage.temps &&
+        (images === null || images !== dernierCompteur || (trame.current.element === element && maintenant - trame.current.instant < 1_000));
+      if (images !== null) dernierCompteur = images;
+      if (!element.paused && progression) lectureAvance.current();
+      if (element.paused || maintenant - derniereImage.instant > 1_000) {
+        depuisLecture.current = 0;
+        window.clearTimeout(declaration.current);
+        declaration.current = undefined;
+      }
+      if (element.paused || progression || document.hidden) {
         derniereImage = { temps: element.currentTime, instant: maintenant };
-      } else if (maintenant - derniereImage.instant > IMAGE_FIGEE_MS) {
+      } else if (maintenant > silenceJusqua.current && maintenant - derniereImage.instant > IMAGE_FIGEE_MS) {
         derniereImage = { temps: element.currentTime, instant: maintenant };
+        dernierIncident.current = "Image figée";
         reagirALInstabilite.current();
       }
       /*
@@ -1062,19 +1422,23 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
             break;
           }
         }
+        const segmentS = courant.levels?.[courant.currentLevel]?.details?.targetduration ?? SEGMENT_TYPE_S;
+        if (fluxDeclareStable.current && doitPreparerSecours(devant, maintenant - dernierSegment.current, segmentS)) {
+          reagirALInstabilite.current();
+        }
         const niveaux = courant.levels?.length ?? 0;
         if (niveaux > 1) {
           const plafond = courant.autoLevelCapping;
-          if (devant > 0 && devant < TAMPON_CRITIQUE_S) {
-            // Une image moins fine vaut infiniment mieux qu'une image arrêtée.
-            if (plafond !== 0) courant.autoLevelCapping = 0;
-          } else if (devant > 0 && devant < TAMPON_BAS_S) {
-            const vise = Math.max(0, (plafond === -1 ? niveaux - 1 : plafond) - 1);
-            if (plafond === -1 || vise < plafond) courant.autoLevelCapping = vise;
-          } else if (devant >= TAMPON_RETABLI_S && plafond !== -1) {
-            // Le tampon est refait : la qualité maximale revient d'elle-même.
-            courant.autoLevelCapping = -1;
-          }
+          const vise = qualiteContinue.current.ajuster(devant, niveaux, plafond, courant.currentLevel, maintenant);
+          if (vise !== plafond) { courant.autoLevelCapping = vise; if (vise >= 0) courant.nextAutoLevel = vise; }
+        }
+      }
+      if (element.paused || maintenant - derniereImage.instant > 1_000) stableDepuis.current = 0;
+      else {
+        if (!stableDepuis.current) stableDepuis.current = maintenant;
+        if (maintenant - stableDepuis.current >= 120_000 && essai.current) {
+          stableDepuis.current = maintenant;
+          void rapporter(chaine.id, essai.current, true, 120).catch(() => undefined);
         }
       }
 
@@ -1094,9 +1458,9 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
        * On n'écrit que si la valeur change : hls.js relit sa configuration à chaque segment, et la
        * réécrire quatre fois par seconde le ferait dériver sans cesse vers une cible qui bouge.
        */
-      if (courant) {
+      {
         const segment = Math.round(
-          courant.levels?.[courant.currentLevel]?.details?.targetduration ?? SEGMENT_TYPE_S,
+          courant?.levels?.[courant.currentLevel]?.details?.targetduration ?? SEGMENT_TYPE_S,
         );
         /*
          * **La fenêtre a toujours le dernier mot.**
@@ -1118,14 +1482,24 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
          * que le serveur connaît pour ses échecs, vise jusqu'à 60 s au lieu de 40 : c'est le temps
          * que la reprise se donne pour agir avant que le tampon ne s'épuise.
          */
-        const fragile = incidents.current > 0 || (adresses[rang]?.echecs ?? 0) > 0;
-        const segments = segmentsDAvance(fin - debut, segment, fragile);
-        avanceVisee.current = segments * segment;
-        if (courant.config.liveSyncDurationCount !== segments) {
-          courant.config.liveSyncDurationCount = segments;
-        }
+        const fragile = incidents.current > 0 || (adressesRef.current[rangRef.current]?.echecs ?? 0) > 0;
+        const cible = Math.min(55, calculerAvance(fin - debut, segment, fragile));
+        avanceVisee.current = cible;
+        if (courant) courant.config.liveSyncDuration = cible;
       }
 
+      element.playbackRate = vitesseContinue(fin - element.currentTime, avanceVisee.current,
+        tamponDevant(element), reculManuel.current || element.paused || document.hidden);
+      if (maintenant - dernierJournal >= 5_000) {
+        dernierJournal = maintenant;
+        journal.current.noter(rangRef.current + 1, tamponDevant(element), fin - element.currentTime,
+          dernierIncident.current ?? "Lecture", {
+            identifiant: adressesRef.current[rangRef.current]?.identifiant,
+            chemin: conversionActive.current ? "compatibilite" : cheminRef.current,
+            codecs: courant ? [courant.levels[courant.currentLevel]?.videoCodec, courant.levels[courant.currentLevel]?.audioCodec].filter(Boolean).join(" / ") : "natif",
+            imagesPerdues: element.getVideoPlaybackQuality?.().droppedVideoFrames,
+          });
+      }
       const releve = { debut, fin, position: element.currentTime, enPause: element.paused, avance: avanceVisee.current };
       fenetreRef.current = releve;
       setFenetre(releve);
@@ -1140,16 +1514,41 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
        */
       if (!element.paused && fin - debut > FENETRE_MINIMALE_S) {
         const marge = releve.position - debut;
-        if (marge > 0 && marge < SEGMENT_TYPE_S) {
+        if (!reculManuel.current && ((marge > 0 && marge < Math.min(SEGMENT_TYPE_S, (fin - debut) / 4)) || fin - releve.position > AVANCE_FRAGILE_S)) {
           silenceJusqua.current = Date.now() + 4_000;
           // Revenir à l'avance visée, pas au bord : c'est la marge qui empêche la prochaine coupure.
-          element.currentTime = fin - Math.max(MARGE_DIRECT_S, avanceVisee.current);
+          element.currentTime = Math.max(debut, fin - avanceVisee.current);
         }
       }
     };
     const minuteur = window.setInterval(relever, 250);
     return () => window.clearInterval(minuteur);
   }, [adresses, ecran, rang]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    let rappel = 0;
+    const image = () => {
+      trame.current = { element: video, instant: Date.now() };
+      rappel = video.requestVideoFrameCallback(image);
+    };
+    if (typeof video.requestVideoFrameCallback === "function") rappel = video.requestVideoFrameCallback(image);
+    const retour = () => {
+      if (document.hidden) return;
+      trame.current = { element: video, instant: Date.now() };
+      silenceJusqua.current = Date.now() + 4_000;
+      void renouvelerLecture.current().catch(() => undefined);
+      if (!video.paused && tamponDevant(video) < 1) reagirALInstabilite.current();
+    };
+    document.addEventListener("visibilitychange", retour);
+    window.addEventListener("pageshow", retour);
+    return () => {
+      if (rappel) video.cancelVideoFrameCallback?.(rappel);
+      document.removeEventListener("visibilitychange", retour);
+      window.removeEventListener("pageshow", retour);
+    };
+  }, [ecran, chaine.id]);
 
   const auDirect = !fenetre || fenetre.fin - fenetre.position <= fenetre.avance + MARGE_DIRECT_S;
   const largeurFenetre = fenetre ? fenetre.fin - fenetre.debut : 0;
@@ -1167,6 +1566,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
     silenceJusqua.current = Date.now() + 4_000;
     const debut = element.seekable.start(0);
     const fin = element.seekable.end(element.seekable.length - 1);
+    reculManuel.current = false;
     element.currentTime = Math.max(debut + 2, fin - Math.max(1, avanceVisee.current));
     void element.play().catch(() => undefined);
   }, []);
@@ -1184,9 +1584,11 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
     silenceJusqua.current = Date.now() + 4_000;
     const debut = element.seekable.start(0) + 2;
     const fin = element.seekable.end(element.seekable.length - 1) - 1;
+    reculManuel.current = true;
+    element.playbackRate = 1;
     element.currentTime = Math.min(fin, Math.max(debut, element.currentTime + secondes));
-    setBarreVisible(true);
-  }, []);
+    reveillerCommandes();
+  }, [reveillerCommandes]);
 
   /**
    * Mettre en pause un direct, c'est reculer dans la fenêtre.
@@ -1203,8 +1605,8 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
     silenceJusqua.current = Date.now() + 4_000;
     if (element.paused) void element.play().catch(() => undefined);
     else element.pause();
-    setBarreVisible(true);
-  }, []);
+    reveillerCommandes();
+  }, [reveillerCommandes]);
 
   useEffect(() => {
     if (!fenetre || !barreUtile) return;
@@ -1233,12 +1635,17 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
   const enPause = fenetre?.enPause ?? false;
   useEffect(() => {
     if (!barreVisible || choixOuvert || enPause) return;
-    const oubli = window.setTimeout(() => setBarreVisible(false), REPOS_BARRE_MS);
-    return () => window.clearTimeout(oubli);
+    const oubli = window.setInterval(() => {
+      if (Date.now() - dernierGeste.current < REPOS_BARRE_MS) return;
+      setDiagnosticOuvert(false);
+      setBarreVisible(false);
+    }, 250);
+    return () => window.clearInterval(oubli);
   }, [barreVisible, choixOuvert, enPause]);
 
   useEffect(() => {
     const auClavier = (evenement: KeyboardEvent) => {
+      reveillerCommandes();
       if (evenement.key === "Escape") { onClose(); return; }
       /*
        * Le clavier reprend, touche pour touche, ce que la télécommande fait sur Android TV : les
@@ -1254,26 +1661,51 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
     };
     window.addEventListener("keydown", auClavier);
     return () => window.removeEventListener("keydown", auClavier);
-  }, [basculerPause, onChaine, onClose, precedente, rejoindreDirect, sauter]);
+  }, [basculerPause, onChaine, onClose, precedente, rejoindreDirect, sauter, reveillerCommandes]);
 
   const sources = adresses.length;
+  useEffect(() => {
+    if (!diagnosticOuvert) return;
+    const relever = () => {
+      const video = videoRef.current;
+      if (!video) return;
+      const hauteur = video.videoHeight;
+      setDiagnostic({ tampon: Math.round(tamponDevant(video)),
+        retard: video.seekable.length ? Math.max(0, Math.round(video.seekable.end(video.seekable.length - 1) - video.currentTime)) : 0,
+        source: rangRef.current + 1, mode: hlsRef.current ? "HLS" : "HLS natif",
+        incident: dernierIncident.current || "Aucun", qualite: hauteur ? `${hauteur}p` : "Automatique" });
+    };
+    relever(); const timer = window.setInterval(relever, 1_000);
+    return () => window.clearInterval(timer);
+  }, [diagnosticOuvert]);
   const groupesDeSources = regrouperLesSources(adresses, muettes);
   const avance = fenetre && largeurFenetre > 0
     ? Math.min(100, Math.max(0, (fenetre.position - fenetre.debut) / largeurFenetre * 100))
     : 100;
 
+  useSurfaceDiffusion({
+    etat: () => { const v = videoRef.current; return { contenu: { genre: "direct", id: chaine.id, titre: chaine.nom },
+      lecture: !v || v.readyState < 2 ? "chargement" : v.paused ? "pause" : "lecture",
+      position: 0, duree: 0, volume: v?.volume ?? 1, navigation: false, erreur: null }; },
+    commander: async (c) => { const v = videoRef.current; if (!v) throw new Error("Lecteur en préparation");
+      if (c.type === "pause") v.pause(); else if (c.type === "reprendre") await v.play();
+      else if (c.type === "volume") v.volume = c.valeur; else if (c.type === "arreter") onClose();
+      else throw new Error("Déplacement distant indisponible pour le direct");
+    },
+  });
   return <div className={`lecteur-direct${barreVisible ? " commandes" : ""}`}
     role="dialog" aria-modal="true" aria-label={`Chaîne ${chaine.nom}`}
-    onMouseMove={() => setBarreVisible(true)}>
+    onPointerMove={reveillerCommandes} onPointerDownCapture={reveillerCommandes} onFocusCapture={reveillerCommandes}>
     {/*
       * Deux vidéos, une seule à l'écran : l'autre ne sert qu'à la relève silencieuse, qui prépare une
       * seconde lecture cachée de la même chaîne et prend la place de la première sans que l'image bouge.
       */}
-    <video ref={brancherVideo0} autoPlay playsInline muted={false} className={ecran === 0 ? undefined : "lecteur-direct-releve"}
+    <video ref={brancherVideo0} autoPlay={false} playsInline muted={ecran !== 0} className={ecran === 0 ? undefined : "lecteur-direct-releve"}
       onClick={basculerPause} onPause={() => { if (ecranRef.current === 0) setBarreVisible(true); }} />
-    <video ref={brancherVideo1} autoPlay playsInline muted={false} className={ecran === 1 ? undefined : "lecteur-direct-releve"}
+    <video ref={brancherVideo1} autoPlay={false} playsInline muted={ecran !== 1} className={ecran === 1 ? undefined : "lecteur-direct-releve"}
       onClick={basculerPause} onPause={() => { if (ecranRef.current === 1) setBarreVisible(true); }} />
-    <div className="lecteur-direct-barre">
+    <div className="lecteur-direct-barre" inert={!barreVisible} aria-hidden={!barreVisible}>
+      <BoutonDiffusion />
       <button type="button" className="player-icon-button" onClick={onClose} aria-label="Fermer">←</button>
       {precedente && <button type="button" className="player-icon-button"
         aria-label={`Revenir à ${precedente.nom}`} title={`Revenir à ${precedente.nom}`}
@@ -1291,7 +1723,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
             {" · "}
             <button type="button" className="lecteur-direct-sources" aria-expanded={choixOuvert}
               onClick={() => setChoixOuvert((ouvert) => !ouvert)}>
-              source {rang + 1}/{sources} ▾
+              source {rangAffiche + 1}/{sources} ▾
             </button>
           </>}
           {parRelais ? " · relayée par le serveur" : ""}
@@ -1307,8 +1739,8 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
     {choixOuvert && <ul className="lecteur-direct-choix" role="listbox" aria-label="Sources de la chaîne">
       {groupesDeSources.map(({ index, source, doublons, muette }, rangAffiche) => (
         <li key={source.empreinte || source.url}>
-          <button type="button" role="option" aria-selected={index === rang}
-            className={[index === rang ? "actif" : "", muette ? "muette" : ""].filter(Boolean).join(" ") || undefined}
+          <button type="button" role="option" aria-selected={index === rangAffiche}
+            className={[index === rangAffiche ? "actif" : "", muette ? "muette" : ""].filter(Boolean).join(" ") || undefined}
             onClick={() => choisirSource(index)}>
             <b>
               Source {rangAffiche + 1}{rangAffiche === 0 && !muette ? " · recommandée" : ""}
@@ -1316,7 +1748,7 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
               {doublons > 1 ? ` · ${doublons} adresses` : ""}
             </b>
             <small>
-              {index === rang && parRelais ? "relayée par le serveur" : decrireSource(source)}
+              {index === rangAffiche && parRelais ? "relayée par le serveur" : decrireSource(source)}
               {/* Muette pour le serveur, pas forcément pour ce navigateur : elle reste choisissable. */}
               {muette ? " · ne répond pas" : ""}
             </small>
@@ -1353,6 +1785,22 @@ export function LecteurDirect({ chaine, precedente, onChaine, onClose }: {
         aria-label="Revenir au direct" title="Revenir au direct">⏭</button>}
     </div>}
 
+    <details className="lecteur-direct-diagnostic" hidden={!barreVisible} open={diagnosticOuvert}
+      onToggle={(event) => setDiagnosticOuvert(event.currentTarget.open)}>
+      <summary>Diagnostic de lecture</summary>
+      {diagnosticOuvert && <button type="button" onClick={() => {
+        const url = URL.createObjectURL(new Blob([JSON.stringify(journal.current.exporter(), null, 2)], { type: "application/json" }));
+        const lien = document.createElement("a"); lien.href = url; lien.download = "flixtunes-diagnostic-live.json"; lien.click();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+      }}>Exporter le diagnostic</button>}
+      {diagnosticOuvert && <dl>
+        <dt>Réserve disponible</dt><dd>{diagnostic.tampon} s</dd>
+        <dt>Retard sur le direct</dt><dd>{diagnostic.retard} s</dd>
+        <dt>Source</dt><dd>{diagnostic.source}/{sources}</dd>
+        <dt>Qualité</dt><dd>{diagnostic.qualite} · {diagnostic.mode}{conversionActive.current ? " · compatibilité NAS" : ""}</dd>
+        <dt>Dernier événement</dt><dd>{diagnostic.incident}</dd>
+      </dl>}
+    </details>
     {message && <p className={`lecteur-direct-message${echec ? " echec" : ""}`} role="status">{message}</p>}
   </div>;
 }
