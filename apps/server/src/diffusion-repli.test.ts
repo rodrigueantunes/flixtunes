@@ -2,8 +2,11 @@ import Fastify from "fastify";
 import type { EtatDiffusion } from "@flixtunes/contracts";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const fixture = vi.hoisted(() => ({ preparer: vi.fn(), retirer: vi.fn(), charger: vi.fn(), verifier: vi.fn(), sonder: vi.fn(),
-  commander: vi.fn(), dureePreparee: vi.fn(), capacites: null as Record<string, unknown> | null, retenues: [] as unknown[], lectures: 0 }));
-vi.mock("./sessions-profil.js", () => ({ jetonDeLaRequete: () => "test", sessionDuJeton: () => ({ profileId: "profil" }) }));
+  commander: vi.fn(), dureePreparee: vi.fn(), liberer: vi.fn(), reinitialiser: vi.fn(), profil: "profil",
+  capacites: null as Record<string, unknown> | null, retenues: [] as unknown[], lectures: 0 }));
+vi.mock("./sessions-profil.js", () => ({ jetonDeLaRequete: () => "test", sessionDuJeton: () => ({ profileId: fixture.profil }) }));
+vi.mock("./database.js", async (original) => ({ ...await original<typeof import("./database.js")>(),
+  getProfile: (id: string) => ({ id, name: id === "profil" ? "Rodrigue" : "Papa" }) }));
 vi.mock("./diffusion-medias.js", () => ({
   origineDiffusion: () => "http://10.0.0.1:4000", contenuAutorise: (_profil: string, c: unknown) => c,
   MediasDiffusion: class { preparer = fixture.preparer; retirer = fixture.retirer; dureePreparee = fixture.dureePreparee; fermer = async () => {}; },
@@ -24,6 +27,8 @@ vi.mock("./diffusion-cast.js", async (original) => ({ ...await original<typeof i
     verifier = async () => { this.actualiser({ volume: .7 }); await fixture.verifier(); };
     sonder = fixture.sonder;
     commander = fixture.commander;
+    liberer = fixture.liberer;
+    reinitialiser = fixture.reinitialiser;
     fermer = () => {};
   },
 }));
@@ -33,7 +38,8 @@ import { ErreurCast } from "./diffusion-cast.js";
 let app: ReturnType<typeof Fastify>;
 const niveaux = () => fixture.preparer.mock.calls.map((c) => ({ qualiteSource: c[4].qualiteSource, compatible: c[4].compatible }));
 beforeEach(async () => {
-  fixture.lectures = 0; fixture.capacites = null; fixture.retenues = [];
+  fixture.lectures = 0; fixture.capacites = null; fixture.retenues = []; fixture.profil = "profil";
+  fixture.liberer.mockReset().mockResolvedValue(undefined); fixture.reinitialiser.mockReset().mockResolvedValue(undefined);
   fixture.retirer.mockReset().mockResolvedValue(undefined); fixture.charger.mockReset().mockResolvedValue(undefined);
   fixture.verifier.mockReset().mockResolvedValue(undefined); fixture.sonder.mockReset().mockResolvedValue("inconnu");
   fixture.commander.mockReset().mockResolvedValue(undefined); fixture.dureePreparee.mockReset().mockResolvedValue(0);
@@ -148,4 +154,40 @@ it("se déplace sur le récepteur dans la partie convertie, et relance la conver
   expect(dehors.statusCode).toBe(200);
   expect(fixture.preparer).toHaveBeenCalledTimes(2);
   expect(fixture.preparer.mock.calls[1]![3]).toBe(400);
+});
+
+it("rend le téléviseur libre avant de révoquer un flux refusé, et sur un arrêt", async () => {
+  // Le 58PUS7304 restait sur un flux révoqué, en chargement sans fin, jusqu'à son redémarrage.
+  const ordre: string[] = [];
+  fixture.liberer.mockImplementation(async () => { ordre.push("liberer"); });
+  fixture.retirer.mockImplementation(async (cle: string) => { ordre.push(`retirer ${cle}`); });
+  fixture.charger.mockRejectedValueOnce(new ErreurCast("CAST_DEMARRAGE", "Pas de progression"));
+  await app.inject({ method: "POST", url: "/api/diffusion/cibles/tv/commande", payload: commande });
+  expect(ordre.slice(0, 2)).toEqual(["liberer", "retirer cle-1"]);
+  ordre.length = 0;
+  await app.inject({ method: "POST", url: "/api/diffusion/cibles/tv/commande", payload: { type: "arreter" } });
+  expect(ordre).toEqual(["liberer", "retirer cle-2"]);
+  expect(fixture.commander).not.toHaveBeenCalled();
+});
+it("réinitialise un téléviseur même sans diffusion connue", async () => {
+  const r = await app.inject({ method: "POST", url: "/api/diffusion/cibles/tv/commande", payload: { type: "reinitialiser" } });
+  expect(r.statusCode).toBe(200); expect(fixture.reinitialiser).toHaveBeenCalledOnce();
+});
+it("montre la diffusion à tous les profils, qui peuvent la piloter et la remplacer", async () => {
+  await app.inject({ method: "POST", url: "/api/diffusion/cibles/tv/commande", payload: commande });
+  fixture.profil = "autre";
+  const vue = (await app.inject({ method: "GET", url: "/api/diffusion/cibles" })).json().cibles.find((c: any) => c.id === "tv");
+  expect(vue).toMatchObject({ occupe: false, proprietaire: "Rodrigue", etat: { lecture: "lecture" } });
+  expect((await app.inject({ method: "POST", url: "/api/diffusion/cibles/tv/commande", payload: { type: "pause" } })).statusCode).toBe(200);
+  expect(fixture.commander).toHaveBeenCalledWith({ type: "pause" });
+  const remplace = await app.inject({ method: "POST", url: "/api/diffusion/cibles/tv/commande", payload: commande });
+  expect(remplace.statusCode).toBe(200);
+  const apres = (await app.inject({ method: "GET", url: "/api/diffusion/cibles" })).json().cibles.find((c: any) => c.id === "tv");
+  expect(apres.proprietaire).toBe("Papa");
+});
+it("s'arrête à la première sonde quand le récepteur lit le HEVC 4K HDR", async () => {
+  fixture.sonder.mockResolvedValue("accepte");
+  await app.inject({ method: "POST", url: "/api/diffusion/cibles/tv/commande", payload: commande });
+  expect(fixture.sonder).toHaveBeenCalledOnce();
+  expect(fixture.retenues[0]).toMatchObject({ hevc_2160_hdr10: true, h264_1080: true, hevc_1080: true });
 });

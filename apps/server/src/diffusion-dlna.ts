@@ -1,5 +1,7 @@
 import type { CommandeDiffusion, EtatDiffusion } from "@flixtunes/contracts";
 import { analyserXml, texteBorne, urlRecepteur, type Recepteur } from "./diffusion-reseau.js";
+import type { MetadonneesDiffusion } from "./diffusion-cast.js";
+import { fonctionnalitesDlna } from "./diffusion-medias.js";
 
 export const echapperXml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 export function tempsDlna(secondes: number) {
@@ -38,8 +40,13 @@ export class TransportDlna {
       return String(r.Sink ?? "").split(",").map((entree) => entree.trim()).filter(Boolean).slice(0, 512);
     } catch { return null; }
   }
-  async charger(url: string, mime: string, titre: string, direct: boolean, position: number) {
-    const metadata = `<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/"><item id="0" parentID="-1" restricted="1"><dc:title>${echapperXml(titre)}</dc:title><upnp:class>object.item.videoItem</upnp:class><res protocolInfo="http-get:*:${mime}:*">${echapperXml(url)}</res></item></DIDL-Lite>`;
+  /** Arrête la lecture sur le téléviseur avant que le flux ne soit révoqué : il ne reste pas sur une adresse morte. */
+  async liberer() {
+    try { if (!this.ferme) await this.soap("Stop"); } catch { /* téléviseur déjà arrêté ou injoignable */ }
+    finally { this.fermer(); }
+  }
+  async charger(url: string, mime: string, titre: string, direct: boolean, position: number, metadonnees?: MetadonneesDiffusion, fichier = false) {
+    const metadata = didlDiffusion(url, mime, metadonnees ?? { genre: "film", titre }, fichier);
     await this.soap("SetAVTransportURI", { CurrentURI: url, CurrentURIMetaData: metadata });
     await this.soap("Play", { Speed: 1 });
     await this.actualiser();
@@ -70,7 +77,7 @@ export class TransportDlna {
         ...(volume && Number.isFinite(Number(volume.CurrentVolume)) ? { volume: Math.min(1, Math.max(0, Number(volume.CurrentVolume) / 100)) } : {}) });
     } finally { this.occupe = false; }
   }
-  async commander(c: Exclude<CommandeDiffusion, { type: "charger" }>) {
+  async commander(c: Exclude<CommandeDiffusion, { type: "charger" | "reinitialiser" }>) {
     if (c.type === "volume") await this.soap("SetVolume", { Channel: "Master", DesiredVolume: Math.round(c.valeur * 100) }, true);
     else if (c.type === "position") await this.soap("Seek", { Unit: "REL_TIME", Target: tempsDlna(c.valeur) });
     else await this.soap({ pause: "Pause", reprendre: "Play", arreter: "Stop" }[c.type], c.type === "reprendre" ? { Speed: 1 } : {});
@@ -79,8 +86,39 @@ export class TransportDlna {
   fermer() { this.ferme = true; clearInterval(this.timer); }
 }
 
-/** Le téléviseur lit-il le HLS ? `null` quand il ne déclare rien : on essaie alors comme avant. */
+/**
+ * Le téléviseur lit-il le HLS ? `null` quand il ne déclare rien : on essaie alors comme avant.
+ *
+ * Seules les listes vidéo comptent. Le Philips 58PUS7304 déclare `audio/x-mpegurl`, une liste de
+ * lecture audio : la r7 y voyait du HLS et lui envoyait un flux qu'il ne lit pas.
+ */
 export function dlnaLitLeHls(protocoles: string[] | null): boolean | null {
   if (!protocoles?.length) return null;
-  return protocoles.some((entree) => /mpegurl/i.test(entree.split(":")[2] ?? ""));
+  return protocoles.some((entree) => /^(application\/(vnd\.apple\.mpegurl|x-mpegurl)|video\/(x-)?mpegurl)$/i.test(entree.split(":")[2] ?? ""));
+}
+
+/** Les types sous lesquels un téléviseur peut déclarer chaque conteneur. */
+const ALIAS_DLNA: Record<string, string[]> = {
+  "video/x-matroska": ["video/x-matroska", "video/x-mkv", "video/mkv"],
+  "video/mp4": ["video/mp4", "video/mpeg4", "video/x-m4v"],
+  "video/mp2t": ["video/mp2t", "video/vnd.dlna.mpeg-tts", "video/mpeg"],
+  "video/webm": ["video/webm"], "video/quicktime": ["video/quicktime"], "video/x-msvideo": ["video/x-msvideo", "video/avi", "video/msvideo"],
+};
+/** Le téléviseur déclare-t-il savoir lire ce conteneur ? Il recevra alors le fichier tel quel. */
+export function dlnaLitLeConteneur(protocoles: string[] | null, mime: string): boolean {
+  if (!protocoles?.length) return false;
+  const acceptes = new Set(protocoles.map((entree) => (entree.split(":")[2] ?? "").toLowerCase()));
+  return (ALIAS_DLNA[mime.toLowerCase()] ?? [mime.toLowerCase()]).some((alias) => acceptes.has(alias));
+}
+
+/** Le DIDL-Lite d'une diffusion : titre, épisode, affiche, et les drapeaux DLNA du flux. */
+export function didlDiffusion(url: string, mime: string, m: MetadonneesDiffusion, fichier: boolean): string {
+  const titre = m.genre === "episode" && m.serie ? `${m.serie} — ${m.titre}` : m.titre;
+  const description = m.genre === "episode" && m.saison != null && m.episode != null ? `Saison ${m.saison}, épisode ${m.episode}` : m.sousTitre;
+  return `<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">`
+    + `<item id="0" parentID="-1" restricted="1"><dc:title>${echapperXml(titre)}</dc:title>`
+    + (description ? `<dc:description>${echapperXml(description)}</dc:description>` : "")
+    + (m.image ? `<upnp:albumArtURI>${echapperXml(m.image)}</upnp:albumArtURI>` : "")
+    + `<upnp:class>${m.genre === "direct" ? "object.item.videoItem.videoBroadcast" : m.genre === "film" ? "object.item.videoItem.movie" : "object.item.videoItem"}</upnp:class>`
+    + `<res protocolInfo="http-get:*:${mime}:${fonctionnalitesDlna(fichier)}">${echapperXml(url)}</res></item></DIDL-Lite>`;
 }

@@ -1524,6 +1524,7 @@ html.bureau-video, body.bureau-video { background: transparent; }
 .cast-relais-erreur { margin:0; background:#60283b; color:#ffe2e8; border-radius:10px; padding:10px 12px; }
 .cast-attente { width:18px; height:18px; border-radius:50%; border:2px solid #83b1ff55; border-top-color:#83b1ff; animation:cast-tourne 1s linear infinite; }
 @keyframes cast-tourne { to { transform:rotate(360deg); } }
+.cast-reinitialiser { font-size:.9rem; } .cast-panel .cast-reinitialiser button { padding:6px 10px; font-size:.85rem; margin-left:4px; }
 /* Pendant la diffusion, les commandes locales s'effacent : seule la barre du haut reste, pour fermer ou ouvrir le panneau. */
 .player-page:has(.cast-relais) :is(.player-controls, .player-skip, .player-spinner, .player-message, .player-next, .player-clock) { display:none; }
 .player-page:has(.cast-relais) .player-top { opacity:1; z-index:5; pointer-events:auto; }

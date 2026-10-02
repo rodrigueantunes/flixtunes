@@ -9,6 +9,8 @@ export const commandeDiffusionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("charger"), contenu: contenuDiffuseSchema, position: z.number().finite().min(0).max(604800).default(0) }),
   z.object({ type: z.literal("pause") }), z.object({ type: z.literal("reprendre") }),
   z.object({ type: z.literal("arreter") }),
+  /** Ferme l'application Cast du téléviseur, même sans diffusion connue : il revient à son écran. */
+  z.object({ type: z.literal("reinitialiser") }),
   z.object({ type: z.literal("position"), valeur: z.number().finite().min(0).max(604800) }),
   z.object({ type: z.literal("volume"), valeur: z.number().finite().min(0).max(1) }),
 ]);
@@ -33,6 +35,8 @@ export interface CibleDiffusion {
   etat: EtatDiffusion | null; occupe: boolean;
   /** Le modèle annoncé par le récepteur, quand il le dit (« Pixel Tablet », « Chromecast »). */
   modele?: string;
+  /** Le profil qui a lancé la diffusion en cours : tous les appareils la voient, et peuvent la piloter. */
+  proprietaire?: string;
 }
 export interface OrdreDiffusion { id: string; commande: CommandeDiffusion }
 export interface AccuseDiffusion { id: string; ok: boolean; erreur?: string }

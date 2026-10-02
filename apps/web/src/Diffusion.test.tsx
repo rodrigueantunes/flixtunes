@@ -171,3 +171,21 @@ it("remplace l’accès AirPlay refusé par une préparation compatible et conse
     expect(pause).not.toHaveBeenCalled();
   } finally { cleanup(); pauser.mockRestore(); Reflect.deleteProperty(HTMLVideoElement.prototype, "webkitShowPlaybackTargetPicker"); }
 });
+it("réinitialise un téléviseur bloqué depuis le panneau", async () => {
+  await ouvrir();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Réinitialiser le téléviseur" })); });
+  expect(diffusion).toHaveBeenCalledWith("profil", "cibles/cast-tv/commande", { type: "reinitialiser" });
+});
+it("dit qui a lancé la diffusion qu’un autre profil regarde", async () => {
+  diffusion.mockImplementation(async (_profil: string, path: string) => {
+    if (path === "lecteurs") return { id: "ft-moi", cle: "cle" };
+    if (path.startsWith("lecteurs/")) return { ordres: [] };
+    if (path === "cibles") return { cibles: [{ ...cibleTv({ ...etat, lecture: "lecture" }), proprietaire: "Papa" }] };
+    return {};
+  });
+  function Accueil() { useCatalogueDiffusion("profil", () => {}); return <BoutonDiffusion />; }
+  render(<CentreDiffusion><Accueil /></CentreDiffusion>);
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); await vi.dynamicImportSettled(); });
+  await act(async () => { await vi.dynamicImportSettled(); await vi.advanceTimersByTimeAsync(1); });
+  expect(screen.getByRole("complementary").textContent).toContain("Papa");
+});

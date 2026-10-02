@@ -97,7 +97,7 @@ private fun PanneauDiffusion(api: FlixTunesApi, etatLocal: () -> JSONObject, pau
                     val titre = c.optJSONObject("etat")?.optJSONObject("contenu")?.optString("titre")
                     Text(libelleProtocole(c) + when {
                         c.optBoolean("occupe") -> " · utilisé par un autre profil"
-                        titre != null -> " · $titre"
+                        titre != null -> " · $titre" + (c.optString("proprietaire").takeIf { it.isNotBlank() && it != "null" }?.let { " · $it" } ?: "")
                         else -> ""
                     }, color = Muet)
                 }
@@ -142,6 +142,12 @@ private fun PanneauDiffusion(api: FlixTunesApi, etatLocal: () -> JSONObject, pau
                             onValueChangeFinished = { envoyer(JSONObject().put("type", "position").put("valeur", position.toDouble())) })
                     }
                 }
+            }
+        }
+        if (cible != null && cible.optString("protocole") != "flixtunes") {
+            // Un téléviseur resté bloqué se libère d'ici, sans avoir à le redémarrer.
+            TextButton(enabled = !occupe, onClick = { envoyer(JSONObject().put("type", "reinitialiser")) }) {
+                Text("Réinitialiser le téléviseur", color = BleuClair)
             }
         }
         Text("AirPlay est disponible depuis Safari sur un appareil Apple. Le cast lancé continue après fermeture de cette fenêtre.", color = Muet)

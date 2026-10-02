@@ -16,10 +16,12 @@ import { getSetting, setSetting } from "./database.js";
  * toute conversion : le récepteur refuse en 0,4 à 0,6 s ce qu'il ne sait pas lire, et commence à lire
  * ce qu'il accepte. Le verdict est conservé par récepteur.
  */
+// Du plus exigeant au plus simple : un récepteur qui lit le HEVC 4K HDR10 lit le reste, et sa sonde
+// s'arrête là. Les téléviseurs lents — 13 s pour trois clips sur un Philips de 2019 — y gagnent.
 export const SONDES = {
+  hevc_2160_hdr10: { dossier: "hevc-2160-hdr10", mime: "application/vnd.apple.mpegurl", fmp4: true },
   h264_1080: { dossier: "h264-1080", mime: "application/vnd.apple.mpegurl", fmp4: false },
   hevc_1080: { dossier: "hevc-1080", mime: "application/vnd.apple.mpegurl", fmp4: true },
-  hevc_2160_hdr10: { dossier: "hevc-2160-hdr10", mime: "application/vnd.apple.mpegurl", fmp4: true },
 } as const;
 export type NomSonde = keyof typeof SONDES;
 export type Verdict = "accepte" | "refuse" | "inconnu";
@@ -102,6 +104,8 @@ export interface NiveauDiffusion {
   /** Pour la copie : jusqu'où le récepteur accepte le HEVC, et s'il accepte le HDR. */
   hevcHauteurMax?: number;
   hdr?: boolean;
+  /** Le fichier d'origine servi tel quel, pour un téléviseur DLNA qui lit son conteneur. */
+  fichierTelQuel?: boolean;
 }
 
 /**

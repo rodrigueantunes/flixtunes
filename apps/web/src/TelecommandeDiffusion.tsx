@@ -71,7 +71,7 @@ export function TelecommandeLecteur({ cible, contexte, onReprendreIci }: { cible
     onReprendreIci(position);
   };
   return <section className="cast-relais" role="region" aria-label={`Télécommande de ${cible.nom}`} aria-live="polite">
-    <p className="cast-relais-titre">{etat.contenu?.titre}</p>
+    <p className="cast-relais-titre">{etat.contenu?.titre}{cible.proprietaire ? ` · lancé par ${cible.proprietaire}` : ""}</p>
     <h2>{libelleEtat(etat, cible.nom)}</h2>
     {etat.qualite && etat.lecture !== "chargement" && <p className="cast-relais-qualite">{etat.qualite}</p>}
     <Commandes cible={cible} contexte={contexte} />
@@ -84,7 +84,7 @@ export function MiniTelecommande({ cible, contexte }: { cible: CibleDiffusion; c
   const etat = cible.etat!;
   return <aside className="cast-mini" aria-label={`Diffusion sur ${cible.nom}`}>
     <button type="button" className="cast-mini-ouvrir" onClick={() => contexte.ouvrir()} aria-label={`Ouvrir la télécommande de ${cible.nom}`}>
-      <strong>{etat.contenu?.titre}</strong><small>{libelleEtat(etat, cible.nom)}</small>
+      <strong>{etat.contenu?.titre}</strong><small>{libelleEtat(etat, cible.nom)}{cible.proprietaire ? ` · ${cible.proprietaire}` : ""}</small>
     </button>
     <Commandes cible={cible} contexte={contexte} compact />
   </aside>;

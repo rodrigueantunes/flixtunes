@@ -5,14 +5,14 @@ import { commandeDiffusionSchema, contenuDiffuseSchema, etatDiffusionSchema, eta
 import { jetonDeLaRequete, sessionDuJeton } from "./sessions-profil.js";
 import { RegistreDiffusion } from "./diffusion-registre.js";
 import { DecouverteDiffusion, type Recepteur } from "./diffusion-reseau.js";
-import { contenuAutorise, MediasDiffusion, origineDiffusion, type MediaDiffuse } from "./diffusion-medias.js";
+import { contenuAutorise, MediasDiffusion, mimeDuFichier, origineDiffusion, type MediaDiffuse } from "./diffusion-medias.js";
 import { ErreurCast, TransportCast } from "./diffusion-cast.js";
-import { dlnaLitLeHls, TransportDlna } from "./diffusion-dlna.js";
+import { dlnaLitLeConteneur, dlnaLitLeHls, TransportDlna } from "./diffusion-dlna.js";
 import { ErreurPreparationDiffusion } from "./diffusion-preparation.js";
 import { capacitesConnues, enseignement, planDeQualite, retenirCapacites, segmentDemande, servirSonde, SONDES,
   type CapacitesRecepteur, type NiveauDiffusion, type NomSonde, type SourceVideo } from "./diffusion-sonde.js";
 import { getPlaybackInfo } from "./playback.js";
-import { db } from "./database.js";
+import { db, getProfile } from "./database.js";
 
 const battementSchema = z.object({ cle: z.string().regex(/^[a-f0-9]{64}$/), etat: etatDiffusionSchema,
   accuses: z.array(z.object({ id: z.string().uuid(), ok: z.boolean(), erreur: z.string().max(300).optional() })).max(16).default([]) });
@@ -47,20 +47,33 @@ export async function routesDiffusion(app: FastifyInstance) {
   const lectures = new Map<string, Lecture>(), operations = new Map<string, Operation>();
   /** Le dernier échec d'une préparation, montré une minute aux clients qui suivent la cible. */
   const echecs = new Map<string, { profil: string; etat: EtatDiffusion; jusqua: number }>();
-  const retirer = async (id: string) => { const l = lectures.get(id); lectures.delete(id); if (l) { l.transport.fermer(); await medias.retirer(l.media.cle); } };
+  /**
+   * Retire une lecture. `liberer` rend d'abord le téléviseur libre — arrêt du média et fermeture de son
+   * application Cast — avant que le flux ne soit révoqué : sans cela, un lecteur restait en boucle sur
+   * une adresse morte jusqu'au redémarrage du téléviseur.
+   */
+  const retirer = async (id: string, liberer = false) => {
+    const l = lectures.get(id); lectures.delete(id);
+    if (!l) return;
+    if (liberer) await l.transport.liberer(); else l.transport.fermer();
+    await medias.retirer(l.media.cle);
+  };
+  const nomDuProfil = (profil: string) => getProfile(profil)?.name ?? undefined;
   const timer = setInterval(() => {
     const maintenant = Date.now();
     for (const [id, l] of lectures) {
       // Au repos parce que le média est fini, arrêté ou repris par une autre application : la
       // conversion est libérée vite. Une erreur reste visible une minute.
-      if (l.media.expire < maintenant || (l.repos && maintenant - l.repos > 20_000)
-        || (["erreur", "repos"].includes(l.etat.lecture) && maintenant - l.dernierControle > 60_000)) void retirer(id);
+      // Une lecture en erreur ou expirée libère aussi le téléviseur ; au repos, il l'est déjà.
+      const enErreur = l.etat.lecture === "erreur" && maintenant - l.dernierControle > 60_000;
+      if (l.media.expire < maintenant || enErreur) void retirer(id, true);
+      else if ((l.repos && maintenant - l.repos > 20_000) || (l.etat.lecture === "repos" && maintenant - l.dernierControle > 60_000)) void retirer(id);
     }
     for (const [id, e] of echecs) if (e.jusqua < maintenant) echecs.delete(id);
   }, 10_000); timer.unref();
   app.addHook("onClose", async () => {
     clearInterval(timer); for (const op of operations.values()) op.controle.abort();
-    decouverte.fermer(); registre.fermer(); await Promise.all([...lectures.keys()].map(retirer)); await medias.fermer();
+    decouverte.fermer(); registre.fermer(); await Promise.all([...lectures.keys()].map((id) => retirer(id))); await medias.fermer();
   });
   // Découverte dès le démarrage : la liste est prête à la première ouverture du panneau.
   decouverte.demarrer();
@@ -73,13 +86,19 @@ export async function routesDiffusion(app: FastifyInstance) {
     req.profilImpose = session.profileId;
   });
 
-  /** L'état montré pour une cible : la préparation en cours, sinon la lecture, sinon le dernier échec. */
-  const etatDe = (id: string, profil: string): { etat: EtatDiffusion | null; occupe: boolean } => {
+  /**
+   * L'état montré pour une cible : la préparation en cours, sinon la lecture, sinon le dernier échec.
+   *
+   * Comme sur YouTube, une diffusion se voit de tous les appareils du réseau, quel que soit le profil,
+   * et chacun peut la piloter ; le nom du profil qui l'a lancée l'accompagne. Seul le dernier échec reste
+   * propre au profil qui l'a rencontré.
+   */
+  const etatDe = (id: string, profil: string): { etat: EtatDiffusion | null; occupe: boolean; proprietaire?: string } => {
     const op = operations.get(id), l = lectures.get(id), e = echecs.get(id);
     const proprietaire = op?.profil ?? l?.profil;
-    if (proprietaire && proprietaire !== profil) return { etat: null, occupe: true };
-    if (op) return { etat: op.etat, occupe: false };
-    if (l) return { etat: l.etat, occupe: false };
+    const nom = proprietaire ? nomDuProfil(proprietaire) : undefined;
+    if (op) return { etat: op.etat, occupe: false, proprietaire: nom };
+    if (l) return { etat: l.etat, occupe: false, proprietaire: nom };
     if (e && e.profil === profil) return { etat: e.etat, occupe: false };
     return { etat: null, occupe: false };
   };
@@ -141,14 +160,14 @@ export async function routesDiffusion(app: FastifyInstance) {
       }
     };
     const nouveauTransport = () => cible.protocole === "googlecast" ? new TransportCast(cible, actualiser) : new TransportDlna(cible, actualiser);
-    let transport = nouveauTransport();
+    let transport = nouveauTransport(), chargeEnvoye = false;
     // Annuler interrompt aussi un échange en cours avec le téléviseur : le transport fermé rejette
     // ses attentes, au lieu de laisser un chargement courir jusqu'à son délai de 35 secondes.
     signal.addEventListener("abort", () => transport.fermer(), { once: true });
     try {
       etape({ etape: "connexion" });
       // La connexion est vérifiée avant de réserver une conversion sur le NAS.
-      let capacites: CapacitesRecepteur | null = null, dlnaSansHls = false;
+      let capacites: CapacitesRecepteur | null = null, dlnaSansHls = false, protocolesDlna: string[] | null = null;
       if (transport instanceof TransportCast) {
         try { await transport.verifier(); }
         catch (e) {
@@ -166,19 +185,27 @@ export async function routesDiffusion(app: FastifyInstance) {
             const sonde = SONDES[nom], depuis = Date.now();
             const verdict = await transport.sonder(`${origine}/api/diffusion/sonde/${sonde.dossier}/index.m3u8`, sonde.mime, sonde.fmp4);
             if (verdict === "accepte" || (verdict === "refuse" && segmentDemande(sonde.dossier, depuis))) verdicts[nom] = verdict === "accepte";
+            if (nom === "hevc_2160_hdr10" && verdict === "accepte") { verdicts.h264_1080 = true; verdicts.hevc_1080 = true; break; }
           }
           // Sans aucun verdict sûr, rien n'est retenu : la prochaine diffusion sondera de nouveau.
           capacites = Object.keys(verdicts).length ? retenirCapacites(id, { ...verdicts, modele: cible.modele }) : null;
           app.log.info({ protocole: "googlecast", modele: cible.modele ?? null, capacites: verdicts }, "Capacités du récepteur Cast relevées");
         }
       } else {
-        dlnaSansHls = dlnaLitLeHls(await transport.protocolesAcceptes()) === false;
+        protocolesDlna = await transport.protocolesAcceptes();
+        dlnaSansHls = dlnaLitLeHls(protocolesDlna) === false;
       }
       verifierAnnulation();
       const source = direct ? null : await sourceVideo(chargement.contenu.id);
       let plan = planDeQualite(source, capacites, direct);
       // Un téléviseur DLNA qui ne lit pas le HLS ne recevra qu'un fichier tel quel ou un MPEG-TS continu.
       if (dlnaSansHls) plan = plan.filter((niveau) => !niveau.qualiteSource || source?.mp4Direct);
+      // Un téléviseur DLNA qui déclare le conteneur du fichier le lit tel quel, avec son propre
+      // déplacement : le 58PUS7304 lit le MKV d'un film 4K HDR sans aucune conversion.
+      const fichierDlna = !direct && cible.protocole === "dlna" ? fichierDuMedia(chargement.contenu.id) : null;
+      if (fichierDlna && dlnaLitLeConteneur(protocolesDlna, mimeDuFichier(fichierDlna))) {
+        plan = [{ nom: "source", qualiteSource: true, compatible: false, hauteurMax: 2160, fichierTelQuel: true }, ...plan.filter((n) => !n.qualiteSource)];
+      }
       const courante = lectures.get(id);
       for (let rang = 0; rang < plan.length; rang++) {
         const niveau = plan[rang]!, dernier = rang === plan.length - 1;
@@ -193,7 +220,8 @@ export async function routesDiffusion(app: FastifyInstance) {
           if (signal.aborted) throw new Annulation();
           const repli = !dernier && e instanceof ErreurPreparationDiffusion && e.repliPossible;
           app.log.warn({ protocole: cible.protocole, phase: "preparation", niveau: niveau.nom,
-            code: e instanceof ErreurPreparationDiffusion ? e.code : "CAST_PREPARATION", repli }, "Échec de préparation de diffusion");
+            code: e instanceof ErreurPreparationDiffusion ? e.code : "CAST_PREPARATION", repli, appareil: cible.nom, modele: cible.modele ?? null,
+            message: e instanceof Error ? e.message.slice(0, 300) : null }, "Échec de préparation de diffusion");
           if (repli) continue;
           throw e;
         }
@@ -202,12 +230,15 @@ export async function routesDiffusion(app: FastifyInstance) {
         etape({ etape: "demarrage", qualite: media.qualite, contenu: media.contenu });
         lectures.set(id, { profil, media, etat: { ...op.etat, etape: "demarrage" }, transport, dernierControle: Date.now() });
         try {
-          if (transport instanceof TransportCast) await transport.charger(media.url, media.mime, media.contenu.titre, media.direct, media.position, media.segmentsFmp4);
-          else await transport.charger(media.url, media.mime, media.contenu.titre, media.direct, media.position);
+          chargeEnvoye = true;
+          if (transport instanceof TransportCast) await transport.charger(media.url, media.mime, media.contenu.titre, media.direct, media.position, media.segmentsFmp4, media.metadonnees);
+          else await transport.charger(media.url, media.mime, media.contenu.titre, media.direct, media.position, media.metadonnees, media.fichier != null);
           if (reprendreEnPause) await transport.commander({ type: "pause" });
         } catch (e) {
           const requetes = media.requetes ?? 0;
-          lectures.delete(id); await medias.retirer(media.cle);
+          // Le téléviseur est rendu libre avant que le flux refusé ne soit révoqué, puis le niveau suivant
+          // repart d'un lecteur neuf : un lecteur resté sur l'essai raté faisait échouer les suivants.
+          lectures.delete(id); await transport.liberer(); chargeEnvoye = false; await medias.retirer(media.cle);
           const refus = e instanceof ErreurCast ? REFUS_CAST.test(e.code)
             : cible.protocole === "dlna" && /SetAVTransportURI|Play|démarrage/.test(e instanceof Error ? e.message : "");
           if (transport instanceof TransportCast && e instanceof ErreurCast && REFUS_CAST.test(e.code)) {
@@ -215,12 +246,13 @@ export async function routesDiffusion(app: FastifyInstance) {
           }
           const repli = !dernier && refus && !signal.aborted;
           app.log.warn({ protocole: cible.protocole, phase: "chargement", niveau: niveau.nom, requetesMedia: requetes,
-            code: e instanceof ErreurCast ? e.code : "RECEPTEUR", repli }, "Échec de diffusion");
+            code: e instanceof ErreurCast ? e.code : "RECEPTEUR", repli, appareil: cible.nom, modele: cible.modele ?? null,
+            message: e instanceof Error ? e.message.slice(0, 300) : null }, "Échec de diffusion");
           media = undefined;
           if (signal.aborted) throw new Annulation();
           if (repli) {
             // Le transport DLNA se ferme définitivement ; le transport Cast se reconnecte de lui-même.
-            if (transport instanceof TransportDlna) { transport.fermer(); transport = nouveauTransport(); }
+            if (transport instanceof TransportDlna) transport = nouveauTransport();
             continue;
           }
           if (e instanceof ErreurCast && REFUS_CAST.test(e.code) && !requetes) {
@@ -229,12 +261,16 @@ export async function routesDiffusion(app: FastifyInstance) {
           throw e;
         }
         if (transport instanceof TransportCast) retenirCapacites(id, enseignement(niveau, source, true, false));
-        app.log.info({ protocole: cible.protocole, niveau: niveau.nom, qualite: media.qualite, position: lectures.get(id)?.etat.position }, "Lecture distante confirmée");
+        app.log.info({ protocole: cible.protocole, niveau: niveau.nom, qualite: media.qualite, appareil: cible.nom, modele: cible.modele ?? null,
+          position: lectures.get(id)?.etat.position }, "Lecture distante confirmée");
         return;
       }
       throw new Error("Aucune qualité de diffusion n’a pu démarrer sur ce récepteur.");
     } catch (e) {
-      if (!media || lectures.get(id)?.media !== media) transport.fermer();
+      if (!media || lectures.get(id)?.media !== media) {
+        // Un chargement interrompu ou raté ne laisse pas le téléviseur sur un flux qui va disparaître.
+        if (chargeEnvoye) await transport.liberer(); else transport.fermer();
+      }
       throw e;
     }
   }
@@ -252,12 +288,25 @@ export async function routesDiffusion(app: FastifyInstance) {
     }
     const cible = decouverte.trouver(id); if (!cible) return reply.code(404).send({ message: "Récepteur hors ligne" });
     const courante = lectures.get(id), enCours = operations.get(id);
-    if ((courante && courante.profil !== profil) || (enCours && enCours.profil !== profil)) return reply.code(409).send({ message: "Ce récepteur est utilisé par un autre profil" });
+    // Tout profil pilote la diffusion en cours, et un nouvel envoi la remplace : comme sur YouTube, le
+    // téléviseur appartient à qui l'utilise maintenant.
+
+    // Réinitialiser rend le téléviseur libre, même sans diffusion connue du serveur (après un
+    // redémarrage du NAS, ou une diffusion lancée par une autre application restée bloquée).
+    if (c.type === "reinitialiser") {
+      if (enCours) { enCours.controle.abort(); await enCours.fin.catch(() => undefined); }
+      if (lectures.get(id)) { await retirer(id, true); return { ok: true }; }
+      try {
+        if (cible.protocole === "googlecast") await new TransportCast(cible, () => {}).reinitialiser();
+        else await new TransportDlna(cible, () => {}).liberer();
+        return { ok: true };
+      } catch (e) { return reply.code(502).send({ message: e instanceof Error ? e.message : "Téléviseur injoignable" }); }
+    }
 
     // Arrêter pendant la préparation l'annule : la conversion est libérée, le téléviseur n'est pas pris.
     if (c.type === "arreter" && enCours) {
       enCours.controle.abort(); await enCours.fin.catch(() => undefined);
-      if (lectures.get(id)) { await lectures.get(id)!.transport.commander({ type: "arreter" }).catch(() => undefined); await retirer(id); }
+      if (lectures.get(id)) await retirer(id, true);
       return { ok: true };
     }
     let chargement: Chargement | null = c.type === "charger" ? c : null;
@@ -270,7 +319,9 @@ export async function routesDiffusion(app: FastifyInstance) {
     if (chargement) {
       if (enCours) { enCours.controle.abort(); await enCours.fin.catch(() => undefined); }
       echecs.delete(id);
-      const op: Operation = { id: randomUUID(), profil, controle: new AbortController(), fin: Promise.resolve(),
+      // Un déplacement relancé reste au nom de qui a lancé la diffusion : c'est sa progression qui avance.
+      const proprietaire = c.type === "position" && courante ? courante.profil : profil;
+      const op: Operation = { id: randomUUID(), profil: proprietaire, controle: new AbortController(), fin: Promise.resolve(),
         etat: { ...etatDiffusionVide(), contenu: chargement.contenu, lecture: "chargement", etape: "connexion",
           volume: courante?.etat.volume ?? 1, position: chargement.position } };
       const origine = origineDiffusion(req.headers.host ?? "", req.protocol, req.raw.socket.localAddress, req.raw.socket.localPort);
@@ -278,7 +329,7 @@ export async function routesDiffusion(app: FastifyInstance) {
         .catch((e) => {
           if (e instanceof Annulation) return;
           const message = e instanceof Error ? e.message : "Diffusion impossible";
-          echecs.set(id, { profil, jusqua: Date.now() + 60_000, etat: { ...op.etat, lecture: "erreur", erreur: message.slice(0, 300), etape: undefined } });
+          echecs.set(id, { profil: proprietaire, jusqua: Date.now() + 60_000, etat: { ...op.etat, lecture: "erreur", erreur: message.slice(0, 300), etape: undefined } });
           throw e;
         })
         .finally(() => { if (operations.get(id) === op) operations.delete(id); });
@@ -293,8 +344,9 @@ export async function routesDiffusion(app: FastifyInstance) {
     if (c.type === "position" && (!courante.etat.navigation || courante.media.direct)) return reply.code(409).send({ message: "Déplacement indisponible pour ce flux" });
     try {
       const commande = c.type === "position" ? { type: "position" as const, valeur: Math.max(0, c.valeur - courante.media.decalage) } : c;
+      // Arrêter rend le téléviseur à son écran, comme quand on quitte un cast YouTube.
+      if (c.type === "arreter") { await retirer(id, true); return { ok: true }; }
       await courante.transport.commander(commande); courante.dernierControle = Date.now();
-      if (c.type === "arreter") await retirer(id);
       return { ok: true };
     } catch (e) { return reply.code(502).send({ message: e instanceof Error ? e.message : "Diffusion impossible" }); }
   });
@@ -310,4 +362,10 @@ export async function routesDiffusion(app: FastifyInstance) {
     return await medias.retirerPourProfil(req.params.cle, req.profilImpose!) ? { ok: true } : reply.code(404).send({ message: "Diffusion expirée" });
   });
   app.get<{ Params: { cle: string; nom: string } }>("/api/diffusion/flux/:cle/:nom", discret, (req, reply) => medias.servir(req.params.cle, req.params.nom, req, reply));
+}
+
+/** Le chemin du fichier d'un média, pour savoir si un téléviseur DLNA peut le lire tel quel. */
+function fichierDuMedia(id: string): string | null {
+  const row = db.prepare("SELECT file_path FROM media_items WHERE id = ? AND available = 1").get(id) as { file_path: string } | undefined;
+  return row?.file_path ?? null;
 }

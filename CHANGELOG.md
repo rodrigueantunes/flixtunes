@@ -1,5 +1,45 @@
 # Journal des versions
 
+## 0.6.0.r8 — un cast qui prend le dessus, sans téléviseur à redémarrer
+
+<!-- release -->
+### Stabilité, sur le serveur
+
+- **Plus de téléviseur à redémarrer.** Après un échec, le NAS libérait sa conversion sans dire au
+  téléviseur d'arrêter : son lecteur Cast restait en chargement sur une adresse morte, et chaque envoi
+  suivant y échouait. Relevé ce soir sur un Philips 58PUS7304. Tout échec, abandon, annulation, arrêt
+  ou expiration arrête désormais le média et ferme l'application Cast avant de révoquer le flux.
+- **La diffusion prend le dessus.** Un lecteur Cast trouvé bloqué, en chargement ou en erreur, est
+  fermé et relancé avant l'envoi, au lieu d'y être glissé.
+- **« Réinitialiser le téléviseur »** dans la télécommande : il revient à son écran, même quand le
+  serveur ne connaît plus la diffusion.
+- **Arrêter rend le téléviseur à son écran**, comme quand on quitte un cast YouTube.
+- Un vrai essai qui échoue corrige ce que la sonde avait conclu, et la sonde commence par le format le
+  plus exigeant : un seul clip suffit sur la plupart des téléviseurs.
+- Les journaux de diffusion nomment l'appareil et le message d'erreur.
+
+### Diffusion visible partout, sur le serveur, le Web, Windows, Linux et Android
+
+- **Comme sur YouTube, une diffusion se voit de tous les appareils FlixTunes du réseau**, quel que soit
+  le profil : bouton Cast actif, mini-télécommande, lecteur devenu télécommande. Chacun peut la piloter,
+  et le nom du profil qui l'a lancée l'accompagne.
+- **Un nouvel envoi remplace la diffusion en cours**, même lancée par un autre profil, au lieu d'être
+  refusé.
+- **Le téléviseur montre ce qu'il lit** : affiche, titre, série et épisode, ou chaîne et son logo.
+
+### DLNA, sur le serveur
+
+- **Le fichier est lu tel quel** quand le téléviseur déclare son conteneur : le MKV 4K HDR d'un film
+  passe sans conversion, avec le déplacement du téléviseur.
+- **Une liste audio n'est plus prise pour du HLS.** Le Philips 58PUS7304 déclare `audio/x-mpegurl` :
+  la r7 lui envoyait un flux qu'il ne lit pas, et il refusait tout sans rien demander au NAS.
+- En-têtes et métadonnées DLNA complets : drapeaux de lecture, pochette, titre et épisode.
+<!-- /release -->
+
+Endurance sur la Pixel Tablet et le 58PUS7304, en Cast et en DLNA : seize séries d'envois, arrêts,
+annulations, remplacements et réinitialisations, aucun échec, aucun récepteur resté bloqué. Le NAS
+doit passer en r8. [Analyse et mesures de la r8](docs/DIFFUSION_060_R8.md).
+
 ## 0.6.0.r7 — un cast qui démarre, et vite
 
 <!-- release -->

@@ -78,7 +78,8 @@ fun TelecommandeLecteur(contenuId: String, reprendreIci: (Double) -> Unit) {
         contentAlignment = Alignment.Center) {
         Column(Modifier.widthIn(max = 640.dp).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text(etat.optJSONObject("contenu")?.optString("titre").orEmpty(), color = TexteDoux, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
+            val lancePar = c.optString("proprietaire").takeIf { it.isNotBlank() && it != "null" }?.let { " · lancé par $it" } ?: ""
+            Text(etat.optJSONObject("contenu")?.optString("titre").orEmpty() + lancePar, color = TexteDoux, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
             Text(libelleEtatDiffusion(etat, nom), color = Texte, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
             etat.optString("qualite").takeIf { it.isNotBlank() && it != "null" && etat.optString("lecture") != "chargement" }?.let { Text(it, color = Muet) }
             if (etat.optString("lecture") == "chargement") {
@@ -140,7 +141,8 @@ fun MiniTelecommande(ouvrir: () -> Unit, modifier: Modifier = Modifier) {
         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Column(Modifier.weight(1f).clickable(onClick = ouvrir).semantics { contentDescription = "Ouvrir la télécommande de $nom" }) {
             Text(etat.optJSONObject("contenu")?.optString("titre").orEmpty(), color = Texte, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(libelleEtatDiffusion(etat, nom), color = Muet, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(libelleEtatDiffusion(etat, nom) + (c.optString("proprietaire").takeIf { it.isNotBlank() && it != "null" }?.let { " · $it" } ?: ""),
+                color = Muet, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         when (etat.optString("lecture")) {
             "chargement" -> TextButton(onClick = { envoyer(JSONObject().put("type", "arreter")) }, enabled = !travail) { Text("Annuler", color = BleuClair) }

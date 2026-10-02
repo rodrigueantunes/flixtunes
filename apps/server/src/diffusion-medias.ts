@@ -11,6 +11,7 @@ import { createPlaybackSession, getPlaybackInfo, decidePlayback, getPlaybackSess
 import { commencerConversionLive, fichierConversionLive, arreterConversionLive } from "./live-compat.js";
 import { ErreurPreparationDiffusion } from "./diffusion-preparation.js";
 import { ipv4Privee } from "./diffusion-reseau.js";
+import type { MetadonneesDiffusion } from "./diffusion-cast.js";
 
 /** Ce que la préparation doit produire pour un niveau du plan de qualité. */
 export interface OptionsPreparation {
@@ -21,6 +22,8 @@ export interface OptionsPreparation {
   hevcHauteurMax?: number; hdr?: boolean;
   /** Le flux est destiné à un téléviseur DLNA qui ne lit pas le HLS : MPEG-TS continu. */
   tsContinu?: boolean;
+  /** Le fichier d'origine, servi tel quel : le téléviseur DLNA a déclaré savoir lire son conteneur. */
+  fichierTelQuel?: boolean;
   signal?: AbortSignal;
 }
 
@@ -29,6 +32,10 @@ export interface MediaDiffuse {
   session: string | null; direct: boolean; fichier: string | null; expire: number; vu: number;
   decalage: number; duree: number;
   requetes?: number; segmentsFmp4?: boolean; qualite?: string;
+  /** Ce que le téléviseur affiche : affiche, titre, épisode ou chaîne. */
+  metadonnees?: MetadonneesDiffusion;
+  /** Le nom sous lequel le fichier d'origine est servi, extension comprise. */
+  nomFichier?: string;
 }
 export function contenuAutorise(profil: string, contenu: ContenuDiffuse): ContenuDiffuse | null {
   if (!getProfile(profil)) return null;
@@ -67,7 +74,11 @@ export class MediasDiffusion {
     const direct = contenu.genre === "direct";
     try {
       let fichier: string | null = null, nom = "index.m3u8", type = "application/vnd.apple.mpegurl", decalage = 0;
-      if (direct) {
+      if (options.fichierTelQuel && !direct) {
+        const row = db.prepare("SELECT file_path FROM media_items WHERE id = ? AND available = 1").get(contenu.id) as { file_path: string } | undefined;
+        if (!row?.file_path) throw new Error("Fichier indisponible");
+        fichier = row.file_path; nom = nomDuFichier(fichier); type = mimeDuFichier(fichier);
+      } else if (direct) {
         const sources = chaineDetaillee(contenu.id)?.sources.slice(0, 3) ?? [];
         if (!sources.length) throw new Error("Aucune source disponible pour cette chaîne");
         const signal = options.signal ? AbortSignal.any([AbortSignal.timeout(45_000), options.signal]) : AbortSignal.timeout(45_000);
@@ -130,12 +141,13 @@ export class MediasDiffusion {
         }
         if (s.mode === "direct") {
           const row = db.prepare("SELECT file_path FROM media_items WHERE id = ? AND available = 1").get(contenu.id) as { file_path: string } | undefined;
-          if (!row?.file_path) throw new Error("Fichier indisponible"); fichier = row.file_path; nom = "media.mp4"; type = mime.lookup(fichier) || "video/mp4";
+          if (!row?.file_path) throw new Error("Fichier indisponible"); fichier = row.file_path; nom = nomDuFichier(fichier); type = mimeDuFichier(fichier);
         } else { nom = new URL(s.url, "http://local").pathname.split("/").at(-1)!; decalage = s.startOffsetSeconds ?? 0; }
       }
       const media: MediaDiffuse = { cle, profil, contenu, session, direct, fichier, mime: type, position: direct ? 0 : Math.max(0, position - decalage), decalage,
         duree: direct ? 0 : getMediaItem(profil, contenu.id)?.runtimeSeconds ?? 0,
-        segmentsFmp4: !!options.qualiteSource && !fichier,
+        segmentsFmp4: !!options.qualiteSource && !fichier, nomFichier: fichier ? nom : undefined,
+        metadonnees: metadonneesPour(profil, contenu, origine),
         qualite: options.qualiteSource ? "Vidéo source conservée" : options.compatible || direct ? "Conversion compatible · 720p maximum" : "Conversion · 1080p maximum",
         url: `${origine}/api/diffusion/flux/${cle}/${options.tsContinu && session && !options.qualiteSource ? "continu.ts" : nom}`,
         expire: Date.now() + 12 * 3600_000, vu: Date.now() };
@@ -195,10 +207,15 @@ export class MediasDiffusion {
     m.vu = Date.now();
     m.requetes = (m.requetes ?? 0) + 1;
     if (nom === "continu.ts" && m.session && !m.direct && !m.fichier) return this.servirContinu(m, reply);
-    const file = m.fichier ? (nom === "media.mp4" ? { path: m.fichier, contentType: m.mime } : null)
+    const file = m.fichier ? (nom === (m.nomFichier ?? "media.mp4") ? { path: m.fichier, contentType: m.mime } : null)
       : m.direct ? await fichierConversionLive(m.profil, m.session!, nom).then((f) => f && ({ path: f.chemin, contentType: f.type }))
       : getPlaybackFile(m.session!, nom);
     if (!file) return reply.code(404).send();
+    // Un téléviseur DLNA demande les caractéristiques du flux avant de le lire ; sans réponse, certains
+    // refusent de lancer la lecture ou de se déplacer dedans.
+    if (request.headers["getcontentfeatures.dlna.org"]) {
+      reply.header("contentFeatures.dlna.org", fonctionnalitesDlna(m.fichier != null)).header("transferMode.dlna.org", "Streaming");
+    }
     reply.header("Access-Control-Allow-Origin", "*").header("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges")
       .header("Cache-Control", "private, no-store").header("Referrer-Policy", "no-referrer").type(file.contentType);
     try {
@@ -253,4 +270,37 @@ export function listeEvenement(texte: string): string {
 export function positionDeDepart(position: number, duree: number): number {
   if (!Number.isFinite(position) || position < 0) return 0;
   return duree > 0 && position > duree - 10 ? 0 : position;
+}
+
+/** Le nom servi pour un fichier d'origine : `media` et son extension, rien d'autre du chemin. */
+export function nomDuFichier(chemin: string): string {
+  const extension = /\.([a-z0-9]{2,5})$/i.exec(chemin)?.[1]?.toLowerCase() ?? "mp4";
+  return `media.${extension}`;
+}
+const TYPES_VIDEO: Record<string, string> = { mkv: "video/x-matroska", mp4: "video/mp4", m4v: "video/mp4", mov: "video/quicktime",
+  ts: "video/mp2t", m2ts: "video/mp2t", webm: "video/webm", avi: "video/x-msvideo" };
+export function mimeDuFichier(chemin: string): string {
+  const extension = nomDuFichier(chemin).slice("media.".length);
+  return TYPES_VIDEO[extension] ?? (mime.lookup(chemin) || "video/mp4");
+}
+/**
+ * Les drapeaux DLNA d'un flux : un fichier se lit par plages (déplacement possible), une conversion
+ * en continu se lit d'un trait.
+ */
+export function fonctionnalitesDlna(fichier: boolean): string {
+  return `DLNA.ORG_OP=${fichier ? "01" : "00"};DLNA.ORG_CI=${fichier ? "0" : "1"};DLNA.ORG_FLAGS=${fichier ? "01700000" : "01300000"}000000000000000000000000`;
+}
+/** Ce que le téléviseur affiche : l'affiche servie par le NAS, le titre, l'épisode ou la chaîne. */
+export function metadonneesPour(profil: string, contenu: ContenuDiffuse, origine: string): MetadonneesDiffusion {
+  const image = (url: string | null | undefined) => !url ? undefined : url.startsWith("/") ? `${origine}${url}` : /^https?:\/\//.test(url) ? url : undefined;
+  if (contenu.genre === "direct") {
+    const chaine = chaineDetaillee(contenu.id);
+    return { genre: "direct", titre: chaine?.nom ?? contenu.titre, sousTitre: "En direct", image: image(chaine?.logo) };
+  }
+  const m = getMediaItem(profil, contenu.id);
+  if (!m) return { genre: "film", titre: contenu.titre };
+  if (m.kind === "episode") return { genre: "episode", titre: m.title, serie: m.showTitle ?? undefined,
+    saison: m.seasonNumber ?? undefined, episode: m.episodeNumber ?? undefined, image: image(m.posterUrl) };
+  if (m.kind === "video") return { genre: "video", titre: m.title, sousTitre: m.showTitle ?? undefined, image: image(m.posterUrl) };
+  return { genre: "film", titre: m.title, annee: m.year ?? undefined, image: image(m.posterUrl) };
 }

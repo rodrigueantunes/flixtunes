@@ -3,6 +3,28 @@ import type { CommandeDiffusion, EtatDiffusion } from "@flixtunes/contracts";
 import type { Recepteur } from "./diffusion-reseau.js";
 import type { Verdict } from "./diffusion-sonde.js";
 
+/** Ce que le téléviseur affiche pendant la lecture : affiche, titre, épisode ou chaîne. */
+export interface MetadonneesDiffusion {
+  genre: "film" | "episode" | "direct" | "video";
+  titre: string;
+  sousTitre?: string;
+  image?: string;
+  serie?: string;
+  saison?: number;
+  episode?: number;
+  annee?: number;
+}
+
+/** Les métadonnées Cast : film (1), épisode (2) ou générique (0), avec l'affiche quand on l'a. */
+export function metadonneesCast(m: MetadonneesDiffusion): Record<string, unknown> {
+  const images = m.image ? [{ url: m.image }] : [];
+  if (m.genre === "film") return { metadataType: 1, title: m.titre, ...(m.sousTitre ? { subtitle: m.sousTitre } : {}),
+    ...(m.annee ? { releaseDate: `${m.annee}-01-01` } : {}), images };
+  if (m.genre === "episode") return { metadataType: 2, title: m.titre, seriesTitle: m.serie ?? m.titre,
+    ...(m.saison != null ? { season: m.saison } : {}), ...(m.episode != null ? { episode: m.episode } : {}), images };
+  return { metadataType: 0, title: m.titre, ...(m.sousTitre ? { subtitle: m.sousTitre } : {}), images };
+}
+
 const NS = "urn:x-cast:com.google.cast.";
 export class ErreurCast extends Error {
   constructor(public code: string, message: string) { super(`${message} [${code}]`); this.name = "ErreurCast"; }
@@ -55,6 +77,8 @@ export class TransportCast {
   /** Le code détaillé du dernier refus du récepteur (`detailedErrorCode` du lecteur Cast). */
   private codeDetaille?: string;
   private observateurSonde?: (statut: any) => void;
+  /** Le lecteur trouvé ouvert a été examiné une fois : sain, il est repris ; douteux, il est relancé. */
+  private santeVerifiee = false;
   private attentes = new Map<number, { espace: string; destination: string; type: string; resolve: (r: Record<string, any>) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
   constructor(private cible: Recepteur, private etat: (etat: Partial<EtatDiffusion>) => void) {}
   private envoyer(espace: string, donnees: Record<string, unknown>, destination = "receiver-0") {
@@ -243,8 +267,63 @@ export class TransportCast {
     }
   }
   /** Le lecteur multimédia par défaut du récepteur, lancé s'il ne l'est pas, et notre canal vers lui. */
+  /**
+   * Un lecteur Cast déjà ouvert dans un état douteux est fermé, puis relancé : la diffusion prend le
+   * dessus au lieu de se glisser dans un lecteur bloqué. Relevé le 2 octobre 2026 sur un Philips
+   * 58PUS7304 : son lecteur restait en chargement à 0 s sur un flux révoqué, et chaque envoi suivant y
+   * échouait jusqu'au redémarrage du téléviseur. Un lecteur qui lit ou attend en pause est repris tel
+   * quel : relancer coûterait deux à trois secondes pour rien.
+   */
+  private async prendreLeDessus() {
+    if (this.santeVerifiee || !this.application) { this.santeVerifiee = true; return; }
+    this.santeVerifiee = true;
+    let douteux = false;
+    try {
+      this.destination = this.application.transportId; this.ouvrirCanal(this.destination);
+      const r = await this.requete("media", { type: "GET_STATUS" }, this.destination, 4000);
+      const s = r.status?.[0];
+      douteux = !!s && (s.playerState === "BUFFERING" || (s.playerState === "IDLE" && s.idleReason === "ERROR"));
+    } catch { douteux = true; }
+    if (!douteux) return;
+    await this.fermerApplication();
+  }
+  /** Ferme l'application Cast du récepteur : le téléviseur revient à son écran. */
+  private async fermerApplication() {
+    const session = this.application?.sessionId;
+    if (!session || !this.socket || this.socket.destroyed) return;
+    try { await this.requete("receiver", { type: "STOP", sessionId: session }, "receiver-0", 5000); } catch { /* état relu ci-dessous */ }
+    this.application = undefined; this.destination = ""; this.session = undefined;
+    const limite = Date.now() + 4000;
+    while (this.socket && !this.socket.destroyed && Date.now() < limite) {
+      try { await this.requete("receiver", { type: "GET_STATUS" }, "receiver-0", 2000); } catch { break; }
+      if (!this.application) break;
+      await new Promise((r) => setTimeout(r, 300));
+    }
+  }
+  /**
+   * Rend le téléviseur libre : arrêt du média, puis fermeture de l'application Cast. Appelé sur tout
+   * échec, abandon ou arrêt, avant que le flux ne soit révoqué — sans cela le lecteur restait en boucle
+   * sur une adresse morte.
+   */
+  async liberer() {
+    try {
+      if (!this.socket || this.socket.destroyed) await this.verifier();
+      if (this.session != null && this.destination) {
+        try { await this.requete("media", { type: "STOP", mediaSessionId: this.session }, this.destination, 3000); } catch { /* la fermeture suit */ }
+      }
+      if (this.application) await this.fermerApplication();
+    } catch { /* récepteur injoignable : rien à libérer */ }
+    finally { this.fermer(); }
+  }
+  /** Ferme l'application Cast du récepteur même sans diffusion connue : le bouton « Réinitialiser ». */
+  async reinitialiser() {
+    await this.verifier();
+    await this.fermerApplication();
+    this.fermer();
+  }
   private async assurerLecteur() {
     if (!this.socket || this.socket.destroyed) await this.verifier();
+    await this.prendreLeDessus();
     if (!this.application) {
       try { await this.requete("receiver", { type: "LAUNCH", appId: "CC1AD845" }, "receiver-0", 30_000); }
       catch (e) { if (!this.application) throw e; }
@@ -292,13 +371,13 @@ export class TransportCast {
       this.session = undefined; this.erreurLecture = undefined; this.codeDetaille = undefined;
     }
   }
-  async charger(url: string, mime: string, titre: string, direct: boolean, position: number, segmentsFmp4 = false) {
+  async charger(url: string, mime: string, titre: string, direct: boolean, position: number, segmentsFmp4 = false, metadonnees?: MetadonneesDiffusion) {
     await this.assurerLecteur();
     this.enLecture = false; this.erreurLecture = undefined; this.session = undefined; this.codeDetaille = undefined;
     this.contenuAttendu = url; this.positionConfirmee = undefined; this.progressionConfirmee = false; this.dernierProgres = Date.now();
     await this.requete("media", { type: "LOAD", autoplay: true, currentTime: direct ? 0 : position,
       ...(this.application?.sessionId ? { sessionId: this.application.sessionId } : {}),
-      media: { ...(segmentsFmp4 ? { hlsSegmentFormat: "FMP4", hlsVideoSegmentFormat: "FMP4" } : {}), contentId: url, contentUrl: url, contentType: mime, streamType: direct ? "LIVE" : "BUFFERED", metadata: { metadataType: 0, title: titre } } }, this.destination, 35_000);
+      media: { ...(segmentsFmp4 ? { hlsSegmentFormat: "FMP4", hlsVideoSegmentFormat: "FMP4" } : {}), contentId: url, contentUrl: url, contentType: mime, streamType: direct ? "LIVE" : "BUFFERED", metadata: metadonnees ? metadonneesCast(metadonnees) : { metadataType: 0, title: titre } } }, this.destination, 35_000);
     const limite = Date.now() + 35_000;
     while (!this.enLecture && !this.erreurLecture && this.socket && Date.now() < limite) {
       await new Promise((r) => setTimeout(r, 750));
@@ -307,7 +386,7 @@ export class TransportCast {
     if (this.erreurLecture) throw this.erreurLecture;
     if (!this.enLecture || !this.socket) throw new ErreurCast("CAST_DEMARRAGE", "Le récepteur Cast n’a pas confirmé le démarrage de la vidéo");
   }
-  async commander(c: Exclude<CommandeDiffusion, { type: "charger" }>) {
+  async commander(c: Exclude<CommandeDiffusion, { type: "charger" | "reinitialiser" }>) {
     if (c.type === "volume") { await this.requete("receiver", { type: "SET_VOLUME", volume: { level: c.valeur, muted: false } }); return; }
     if (this.session == null) throw new Error("Aucune lecture Cast active");
     if (c.type === "position") { this.positionConfirmee = c.valeur; this.dernierProgres = Date.now(); }

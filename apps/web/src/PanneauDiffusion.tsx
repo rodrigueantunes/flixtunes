@@ -108,7 +108,7 @@ export default function PanneauDiffusion({ catalogue, monId, ouvert, fermerPanne
         {erreur && <p role="alert" className="cast-error">{erreur}</p>}
         {travail && <p role="status">En attente du récepteur…</p>}
         <div className="cast-targets">{cibles.map((c) => <button key={c.id} disabled={c.occupe || travail} aria-pressed={selection === c.id} onClick={() => choisir(c.id)}>
-          <strong>{c.nom}</strong><small>{libelleProtocole(c)}{c.occupe ? " · utilisé par un autre profil" : c.etat?.contenu ? ` · ${c.etat.contenu.titre}` : ""}</small>
+          <strong>{c.nom}</strong><small>{libelleProtocole(c)}{c.occupe ? " · utilisé par un autre profil" : c.etat?.contenu ? ` · ${c.etat.contenu.titre}${c.proprietaire ? ` · ${c.proprietaire}` : ""}` : ""}</small>
         </button>)}</div>
         {!cibles.length && <p>Aucun appareil détecté pour le moment. Vérifiez qu’il est allumé et connecté au même réseau que le NAS.</p>}
         {cible && <section className="cast-remote" aria-label={`Télécommande de ${cible.nom}`}>
@@ -141,6 +141,8 @@ export default function PanneauDiffusion({ catalogue, monId, ouvert, fermerPanne
             {airplayActif && <button onClick={() => { const v = lecteurAirplay.current; if (v) { if (v.paused) void v.play().catch((e) => setErreur(message(e))); else v.pause(); } }}>Lecture / Pause</button>}
             <button disabled={travail} onClick={() => { lecteurAirplay.current?.pause(); setAirplay(null); setAirplayActif(false); }}>Arrêter AirPlay</button></>}
         </section>}
+        {cible && cible.protocole !== "flixtunes" && <p className="cast-reinitialiser">Le téléviseur ne répond plus ou reste bloqué ?{" "}
+          <button type="button" disabled={travail} onClick={() => void envoyer({ type: "reinitialiser" })}>Réinitialiser le téléviseur</button></p>}
         <small>Le cast continue lorsque cette fenêtre est fermée. Pause et déplacement dans le direct dépendent du récepteur et de son tampon.</small>
       </div>
     </div>, document.fullscreenElement ?? document.body)}
