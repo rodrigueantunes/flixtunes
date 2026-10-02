@@ -1662,8 +1662,8 @@ export function listerPays(criteres: CriteresFacette = {}): Array<{ code: string
   }
   const compact = criteres.q?.trim() ? compacterNom(criteres.q) : "";
   if (compact) {
-    conditions.push("c.nom_compact LIKE ? ESCAPE '\'");
-    params.push(`%${compact.replaceAll("\\", "\\\\").replaceAll("%", "\%").replaceAll("_", "\_")}%`);
+    conditions.push("c.nom_compact LIKE ? ESCAPE '\\'");
+    params.push(`%${compact.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_")}%`);
   }
 
   const requete = criteres.listes?.length
@@ -1707,8 +1707,8 @@ export function listerListesClient(criteres: CriteresFacette = {}): Array<{ id: 
   }
   const compact = criteres.q?.trim() ? compacterNom(criteres.q) : "";
   if (compact) {
-    filtres.push("c.nom_compact LIKE ? ESCAPE '\'");
-    params.push(`%${compact.replaceAll("\\", "\\\\").replaceAll("%", "\%").replaceAll("_", "\_")}%`);
+    filtres.push("c.nom_compact LIKE ? ESCAPE '\\'");
+    params.push(`%${compact.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_")}%`);
   }
 
   /*

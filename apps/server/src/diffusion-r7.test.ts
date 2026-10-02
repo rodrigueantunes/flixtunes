@@ -37,9 +37,11 @@ describe("plan de qualité d'après le récepteur", () => {
   it("ne propose pas de conversion 1080p pour une source déjà en 720p", () => {
     expect(noms(planDeQualite({ codec: "mpeg4", hauteur: 720, hdr: false, mp4Direct: false }, null, false))).toEqual(["source:2160", "compatible:720"]);
   });
-  it("convertit le direct d'emblée pour un récepteur qui refuse le 1080p", () => {
-    expect(noms(planDeQualite(null, pixelTablet, true))).toEqual(["compatible:720"]);
-    expect(noms(planDeQualite(null, null, true))).toEqual(["source:2160", "compatible:720"]);
+  it("borne le direct à la définition d'un récepteur qui refuse le 1080p", () => {
+    // r9 : le niveau source du direct est analysé — copié si le récepteur le lit, converti à 720p sinon.
+    expect(noms(planDeQualite(null, pixelTablet, true))).toEqual(["source:720", "compatible:720"]);
+    // Le direct ne dépasse jamais le 1080p : un récepteur inconnu y est borné.
+    expect(noms(planDeQualite(null, null, true))).toEqual(["source:1080", "compatible:720"]);
   });
 });
 

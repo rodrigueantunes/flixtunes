@@ -12,7 +12,7 @@ vi.mock("./television-direct.js", () => ({ chaineDetaillee: (id: string) => id =
 vi.mock("./playback.js", () => ({ getPlaybackInfo: async () => ({}), decidePlayback: fixture.decision, createPlaybackSession: fixture.source, getPlaybackSession: fixture.etat, stopPlaybackSession: fixture.fermer,
   getPlaybackFile: (_id: string, nom: string) => ["manifest.m3u8", "segment_00000.ts"].includes(nom)
     ? { path: path.join(fixture.dossier, nom), contentType: nom.endsWith("m3u8") ? "application/vnd.apple.mpegurl" : "video/mp2t" } : null }));
-vi.mock("./live-compat.js", () => ({ commencerConversionLive: fixture.live,
+vi.mock("./live-compat.js", () => ({ commencerConversionLive: fixture.live, listeConversionLive: () => null, segmentsConversionLive: () => null,
   arreterConversionLive: fixture.fermer,
   fichierConversionLive: async (_profil: string, _id: string, nom: string) => nom === "live.m3u8"
     ? { chemin: path.join(fixture.dossier, "manifest.m3u8"), type: "application/vnd.apple.mpegurl" } : null }));
@@ -145,7 +145,11 @@ it("ne lance pas une lourde conversion 4K pour simuler une copie source impossib
     .rejects.toMatchObject({repliPossible:true});
   expect(fixture.source).not.toHaveBeenCalled();
 });
-it("demande la copie vidéo pour le direct source et le fMP4 adapté au HEVC", async () => {
-  const m = await medias.preparer("profil", { genre: "direct", id: "chaine", titre: "Test" }, "http://10.0.0.1", 0, { qualiteSource: true });
-  expect(fixture.live.mock.calls[0]?.[5]).toEqual({copieVideo:true, diffusion:true}); expect(m.segmentsFmp4).toBe(true);
+it("confie le direct source à l'analyse pour le récepteur, et suit le conteneur qu'elle retient", async () => {
+  // r9 : la source n'est plus copiée à l'aveugle ; la conversion l'analyse, puis la copie ou la convertit.
+  fixture.live.mockResolvedValueOnce({ id: "live", url: "/api/live/compat/live/live.m3u8", qualite: "Vidéo source conservée", fmp4: true });
+  const m = await medias.preparer("profil", { genre: "direct", id: "chaine", titre: "Test" }, "http://10.0.0.1", 0, { qualiteSource: true, hauteurMax: 720 });
+  expect(fixture.live.mock.calls[0]?.[5]).toMatchObject({ diffusion: true, recepteur: { hauteurMax: 720, hevc: false } });
+  expect(fixture.live.mock.calls[0]?.[5]).not.toHaveProperty("copieVideo");
+  expect(m.segmentsFmp4).toBe(true); expect(m.qualite).toBe("Vidéo source conservée");
 });

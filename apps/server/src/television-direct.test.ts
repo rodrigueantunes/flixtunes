@@ -335,6 +335,15 @@ describe("ce qu'un client voit", () => {
     // La liste qui n'a pas répondu n'a rien à proposer : elle n'encombre pas le filtre.
     expect(proposees.map((liste) => liste.nom)).not.toContain("Liste morte");
   });
+
+  it("filtre pays et listes par le nom cherché, jokers compris", () => {
+    // Jusqu'à la r9, ces deux requêtes envoyaient `ESCAPE ''` à SQLite : toute recherche les faisait échouer.
+    expect(listerPays({ q: "tf1" })).toEqual([{ code: "fr", nom: "France", chaines: 1 }]);
+    expect(listerListesClient({ q: "tf1" }).length).toBeGreaterThan(0);
+    // `%` et `_` sont cherchés pour eux-mêmes, pas comme des jokers.
+    expect(listerPays({ q: "100%_" })).toEqual([]);
+    expect(listerListesClient({ q: "%" })).toEqual([]);
+  });
 });
 
 describe("les favorites et la dernière chaîne", () => {

@@ -119,9 +119,10 @@ export function planDeQualite(source: SourceVideo | null, capacites: CapacitesRe
   const h264Max = c.h264_1080 === false ? 720 : 1080;
   const plan: NiveauDiffusion[] = [];
   if (direct) {
-    // La définition d'une chaîne n'est connue qu'une fois le flux ouvert. Un récepteur qui refuse le
-    // 1080p refuserait la copie de la plupart des chaînes HD : la conversion compatible part d'emblée.
-    if (c.h264_1080 !== false) plan.push({ nom: "source", qualiteSource: true, compatible: false, hauteurMax: 2160 });
+    // La chaîne est analysée à l'ouverture : copiée si le récepteur la lit telle quelle, sinon
+    // convertie à sa pleine définition, désentrelacée. La conversion compatible reste en dernier recours.
+    const hevc = c.hevc_1080 === true || c.hevc_2160_hdr10 === true;
+    plan.push({ nom: "source", qualiteSource: true, compatible: false, hauteurMax: h264Max, hevcHauteurMax: hevc ? 2160 : 0 });
     plan.push({ nom: "compatible", qualiteSource: false, compatible: true, hauteurMax: 720 });
     return plan;
   }

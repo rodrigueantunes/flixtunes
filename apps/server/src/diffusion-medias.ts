@@ -8,7 +8,7 @@ import { db, getProfile } from "./database.js";
 import { getMediaItem } from "./catalog-view.js";
 import { chaineDetaillee } from "./television-direct.js";
 import { createPlaybackSession, getPlaybackInfo, decidePlayback, getPlaybackSession, getPlaybackFile, stopPlaybackSession } from "./playback.js";
-import { commencerConversionLive, fichierConversionLive, arreterConversionLive } from "./live-compat.js";
+import { commencerConversionLive, fichierConversionLive, arreterConversionLive, listeConversionLive, segmentsConversionLive } from "./live-compat.js";
 import { ErreurPreparationDiffusion } from "./diffusion-preparation.js";
 import { ipv4Privee } from "./diffusion-reseau.js";
 import type { MetadonneesDiffusion } from "./diffusion-cast.js";
@@ -74,17 +74,28 @@ export class MediasDiffusion {
     const direct = contenu.genre === "direct";
     try {
       let fichier: string | null = null, nom = "index.m3u8", type = "application/vnd.apple.mpegurl", decalage = 0;
+      let qualiteLive: string | undefined, fmp4Live = false;
       if (options.fichierTelQuel && !direct) {
         const row = db.prepare("SELECT file_path FROM media_items WHERE id = ? AND available = 1").get(contenu.id) as { file_path: string } | undefined;
         if (!row?.file_path) throw new Error("Fichier indisponible");
         fichier = row.file_path; nom = nomDuFichier(fichier); type = mimeDuFichier(fichier);
       } else if (direct) {
-        const sources = chaineDetaillee(contenu.id)?.sources.slice(0, 3) ?? [];
+        const toutes = chaineDetaillee(contenu.id)?.sources ?? [];
+        const sources = toutes.slice(0, 3);
         if (!sources.length) throw new Error("Aucune source disponible pour cette chaîne");
+        // Pour un téléviseur, la source est analysée puis copiée ou convertie pour lui ; les autres
+        // sources servent de secours si elle se tait pendant la lecture.
+        const secours = toutes.slice(0, 8).map((s) => s.url);
+        const recepteur = { hauteurMax: Math.min(1080, options.hauteurMax ?? 1080), hevc: (options.hevcHauteurMax ?? 0) >= 1080,
+          conversionSeule: !!options.tsContinu };
         const signal = options.signal ? AbortSignal.any([AbortSignal.timeout(45_000), options.signal]) : AbortSignal.timeout(45_000);
         let derniereErreur: unknown;
         for (const source of sources) {
-          try { const s = await commencerConversionLive(profil, contenu.id, source.url, `cast-${randomUUID()}`, signal, { copieVideo: options.qualiteSource === true, diffusion: true }); session = s.id; break; }
+          try {
+            const s = await commencerConversionLive(profil, contenu.id, source.url, `cast-${randomUUID()}`, signal,
+              options.qualiteSource ? { diffusion: true, recepteur, secours } : { copieVideo: false, diffusion: true });
+            session = s.id; qualiteLive = "qualite" in s ? s.qualite : undefined; fmp4Live = "fmp4" in s ? s.fmp4 : false; break;
+          }
           catch (e) { derniereErreur = e; options.signal?.throwIfAborted(); if (/occupée|insuffisante/i.test(e instanceof Error ? e.message : "")) throw e; if (signal.aborted) break; }
         }
         if (!session) throw new ErreurPreparationDiffusion("CAST_PREPARATION_ECHOUEE", derniereErreur instanceof Error ? derniereErreur.message : "Aucune source de cette chaîne ne démarre", true);
@@ -146,12 +157,13 @@ export class MediasDiffusion {
       }
       const media: MediaDiffuse = { cle, profil, contenu, session, direct, fichier, mime: type, position: direct ? 0 : Math.max(0, position - decalage), decalage,
         duree: direct ? 0 : getMediaItem(profil, contenu.id)?.runtimeSeconds ?? 0,
-        segmentsFmp4: !!options.qualiteSource && !fichier, nomFichier: fichier ? nom : undefined,
+        segmentsFmp4: direct ? fmp4Live : !!options.qualiteSource && !fichier, nomFichier: fichier ? nom : undefined,
         metadonnees: metadonneesPour(profil, contenu, origine),
-        qualite: options.qualiteSource ? "Vidéo source conservée" : options.compatible || direct ? "Conversion compatible · 720p maximum" : "Conversion · 1080p maximum",
-        url: `${origine}/api/diffusion/flux/${cle}/${options.tsContinu && session && !options.qualiteSource ? "continu.ts" : nom}`,
+        qualite: direct ? qualiteLive ?? "Conversion compatible · 720p maximum"
+          : options.qualiteSource ? "Vidéo source conservée" : options.compatible ? "Conversion compatible · 720p maximum" : "Conversion · 1080p maximum",
+        url: `${origine}/api/diffusion/flux/${cle}/${options.tsContinu && session && (direct ? !fmp4Live : !options.qualiteSource) ? "continu.ts" : nom}`,
         expire: Date.now() + 12 * 3600_000, vu: Date.now() };
-      if (options.tsContinu && session && !options.qualiteSource) media.mime = "video/mp2t";
+      if (options.tsContinu && session && (direct ? !fmp4Live : !options.qualiteSource)) media.mime = "video/mp2t";
       this.medias.set(cle, media); return media;
     } catch (e) { if (session) { if (direct) await arreterConversionLive(profil, session); else await stopPlaybackSession(session); } throw e; }
     finally { this.reservations--; }
@@ -180,6 +192,28 @@ export class MediasDiffusion {
     const session = m.session!;
     reply.header("Access-Control-Allow-Origin", "*").header("Cache-Control", "no-store").type("video/mp2t");
     const self = this;
+    if (m.direct) {
+      // Le direct d'un téléviseur DLNA : les segments de la liste composée, au fil de leur arrivée,
+      // à partir des trois derniers — le téléviseur démarre près du direct, avec une petite réserve.
+      async function* direct() {
+        const servis = new Set<string>(); let attente = 0, premier = true;
+        while (attente < 30) {
+          if (!self.medias.has(m.cle)) return;
+          const segments = segmentsConversionLive(m.profil, session);
+          if (!segments) return;
+          const nouveaux = (premier ? segments.slice(-3) : segments).filter((seg) => !servis.has(seg.nom));
+          premier = false;
+          if (!nouveaux.length) { attente++; await new Promise((r) => setTimeout(r, 500)); continue; }
+          for (const seg of nouveaux) {
+            servis.add(seg.nom); m.vu = Date.now(); attente = 0;
+            try { yield await readFile(seg.chemin); } catch { /* segment déjà retiré : le suivant suit */ }
+          }
+          for (const nom of servis) if (!segments.some((seg) => seg.nom === nom)) servis.delete(nom);
+        }
+      }
+      const { Readable } = await import("node:stream");
+      return reply.send(Readable.from(direct()));
+    }
     async function* morceaux() {
       let rang = 0, attente = 0;
       while (attente < 60) {
@@ -206,7 +240,13 @@ export class MediasDiffusion {
     }
     m.vu = Date.now();
     m.requetes = (m.requetes ?? 0) + 1;
-    if (nom === "continu.ts" && m.session && !m.direct && !m.fichier) return this.servirContinu(m, reply);
+    if (nom === "continu.ts" && m.session && !m.fichier) return this.servirContinu(m, reply);
+    // Le direct d'un téléviseur : la liste composée des passes, qui survit aux relances de la conversion.
+    if (m.direct && m.session && nom === "live.m3u8") {
+      const liste = listeConversionLive(m.profil, m.session);
+      if (liste) return reply.header("Access-Control-Allow-Origin", "*").header("Cache-Control", "no-store")
+        .type("application/vnd.apple.mpegurl").send(liste);
+    }
     const file = m.fichier ? (nom === (m.nomFichier ?? "media.mp4") ? { path: m.fichier, contentType: m.mime } : null)
       : m.direct ? await fichierConversionLive(m.profil, m.session!, nom).then((f) => f && ({ path: f.chemin, contentType: f.type }))
       : getPlaybackFile(m.session!, nom);

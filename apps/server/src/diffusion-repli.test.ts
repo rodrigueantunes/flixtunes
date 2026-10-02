@@ -29,6 +29,7 @@ vi.mock("./diffusion-cast.js", async (original) => ({ ...await original<typeof i
     commander = fixture.commander;
     liberer = fixture.liberer;
     reinitialiser = fixture.reinitialiser;
+    preparerLecteur = async () => {};
     fermer = () => {};
   },
 }));

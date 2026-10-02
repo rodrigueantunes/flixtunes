@@ -1,5 +1,33 @@
 # Journal des versions
 
+## 0.6.0.r9 — le direct sur un téléviseur, comme sans cast
+
+<!-- release -->
+### Live TV en diffusion, sur le serveur
+
+- **La bonne image, plus une vignette.** Une chaîne qui propose plusieurs définitions était diffusée
+  dans la première de sa liste : sur CNews, un 480×270. Chaque variante est désormais analysée, et le
+  téléviseur reçoit la plus belle qu'il sait lire — 1080p50 sur un Philips 58PUS7304, 720p sur une
+  Pixel Tablet.
+- **TF1 et les chaînes entrelacées démarrent tout de suite**, désentrelacées image par image : en
+  1080p50 par le circuit vidéo du NAS, en 720p25 sans lui. La r8 attendait l'échec d'une copie
+  illisible et démarrait au bout de 79 s.
+- **Démarrage en 3 à 9 s** en Cast comme en DLNA : le NAS ne lit plus que la variante retenue, et le
+  lecteur du téléviseur s'ouvre pendant la préparation.
+- **Une lecture qui tient.** Une conversion qui s'arrête ou se tait repart d'elle-même, puis sur une
+  autre source de la chaîne ; le téléviseur continue sans s'interrompre.
+- L'analyse des chaînes qui déclarent des sous-titres n'échoue plus en silence.
+
+### Aussi
+
+- La recherche par nom dans les filtres « pays » et « listes » du Live TV fonctionne de nouveau.
+- Les journaux de diffusion nomment ce qui est diffusé.
+<!-- /release -->
+
+Mesuré sur le 58PUS7304 (Cast et DLNA) et la Pixel Tablet, CNews et TF1 : lecture tenue à chaque
+essai, et une conversion tuée en pleine lecture reprise avec une seule attente de 0,4 s. Le NAS doit
+passer en r9. [Analyse et mesures de la r9](docs/DIFFUSION_060_R9.md).
+
 ## 0.6.0.r8 — un cast qui prend le dessus, sans téléviseur à redémarrer
 
 <!-- release -->

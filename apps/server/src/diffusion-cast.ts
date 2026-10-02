@@ -315,6 +315,15 @@ export class TransportCast {
     } catch { /* récepteur injoignable : rien à libérer */ }
     finally { this.fermer(); }
   }
+  /**
+   * Ouvre le lecteur Cast du récepteur pendant que le NAS prépare la vidéo : son lancement coûte
+   * plusieurs secondes sur un téléviseur, qui s'ajoutaient jusqu'ici à la préparation.
+   */
+  preparerLecteur(): Promise<void> {
+    this.lecteurEnCours ??= this.assurerLecteur().catch(() => undefined).finally(() => { this.lecteurEnCours = undefined; });
+    return this.lecteurEnCours;
+  }
+  private lecteurEnCours?: Promise<void>;
   /** Ferme l'application Cast du récepteur même sans diffusion connue : le bouton « Réinitialiser ». */
   async reinitialiser() {
     await this.verifier();
@@ -372,6 +381,7 @@ export class TransportCast {
     }
   }
   async charger(url: string, mime: string, titre: string, direct: boolean, position: number, segmentsFmp4 = false, metadonnees?: MetadonneesDiffusion) {
+    if (this.lecteurEnCours) await this.lecteurEnCours;
     await this.assurerLecteur();
     this.enLecture = false; this.erreurLecture = undefined; this.session = undefined; this.codeDetaille = undefined;
     this.contenuAttendu = url; this.positionConfirmee = undefined; this.progressionConfirmee = false; this.dernierProgres = Date.now();

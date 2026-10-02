@@ -196,10 +196,15 @@ export async function routesDiffusion(app: FastifyInstance) {
         dlnaSansHls = dlnaLitLeHls(protocolesDlna) === false;
       }
       verifierAnnulation();
+      // Le lecteur du téléviseur s'ouvre pendant que la vidéo se prépare.
+      if (transport instanceof TransportCast) void transport.preparerLecteur();
+      // Ce qui est diffusé, pour relire un échec dans le journal : « TF1 » ou le titre d'un film.
+      const contenuJournal = { genre: chargement.contenu.genre, titre: chargement.contenu.titre?.slice(0, 80) ?? null };
       const source = direct ? null : await sourceVideo(chargement.contenu.id);
       let plan = planDeQualite(source, capacites, direct);
       // Un téléviseur DLNA qui ne lit pas le HLS ne recevra qu'un fichier tel quel ou un MPEG-TS continu.
-      if (dlnaSansHls) plan = plan.filter((niveau) => !niveau.qualiteSource || source?.mp4Direct);
+      // Le direct garde son mode automatique : il convertira en MPEG-TS continu pour ce téléviseur.
+      if (dlnaSansHls && !direct) plan = plan.filter((niveau) => !niveau.qualiteSource || source?.mp4Direct);
       // Un téléviseur DLNA qui déclare le conteneur du fichier le lit tel quel, avec son propre
       // déplacement : le 58PUS7304 lit le MKV d'un film 4K HDR sans aucune conversion.
       const fichierDlna = !direct && cible.protocole === "dlna" ? fichierDuMedia(chargement.contenu.id) : null;
@@ -220,7 +225,7 @@ export async function routesDiffusion(app: FastifyInstance) {
           if (signal.aborted) throw new Annulation();
           const repli = !dernier && e instanceof ErreurPreparationDiffusion && e.repliPossible;
           app.log.warn({ protocole: cible.protocole, phase: "preparation", niveau: niveau.nom,
-            code: e instanceof ErreurPreparationDiffusion ? e.code : "CAST_PREPARATION", repli, appareil: cible.nom, modele: cible.modele ?? null,
+            code: e instanceof ErreurPreparationDiffusion ? e.code : "CAST_PREPARATION", repli, appareil: cible.nom, modele: cible.modele ?? null, ...contenuJournal,
             message: e instanceof Error ? e.message.slice(0, 300) : null }, "Échec de préparation de diffusion");
           if (repli) continue;
           throw e;
@@ -246,7 +251,7 @@ export async function routesDiffusion(app: FastifyInstance) {
           }
           const repli = !dernier && refus && !signal.aborted;
           app.log.warn({ protocole: cible.protocole, phase: "chargement", niveau: niveau.nom, requetesMedia: requetes,
-            code: e instanceof ErreurCast ? e.code : "RECEPTEUR", repli, appareil: cible.nom, modele: cible.modele ?? null,
+            code: e instanceof ErreurCast ? e.code : "RECEPTEUR", repli, appareil: cible.nom, modele: cible.modele ?? null, ...contenuJournal,
             message: e instanceof Error ? e.message.slice(0, 300) : null }, "Échec de diffusion");
           media = undefined;
           if (signal.aborted) throw new Annulation();
@@ -261,7 +266,7 @@ export async function routesDiffusion(app: FastifyInstance) {
           throw e;
         }
         if (transport instanceof TransportCast) retenirCapacites(id, enseignement(niveau, source, true, false));
-        app.log.info({ protocole: cible.protocole, niveau: niveau.nom, qualite: media.qualite, appareil: cible.nom, modele: cible.modele ?? null,
+        app.log.info({ protocole: cible.protocole, niveau: niveau.nom, qualite: media.qualite, appareil: cible.nom, modele: cible.modele ?? null, ...contenuJournal,
           position: lectures.get(id)?.etat.position }, "Lecture distante confirmée");
         return;
       }
