@@ -16,6 +16,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import tv.flixtunes.app.data.FlixTunesApi
+import tv.flixtunes.app.playback.RelaisCast
 import tv.flixtunes.app.playback.SuiviDiffusion
 import tv.flixtunes.app.playback.TelecommandeAndroid
 import tv.flixtunes.app.playback.etatDiffusionAndroid
@@ -49,6 +50,9 @@ private fun PanneauDiffusion(api: FlixTunesApi, etatLocal: () -> JSONObject, pau
     var selection by remember { mutableStateOf(SuiviDiffusion.active.value?.optString("id")) }
     var erreur by remember { mutableStateOf<String?>(null) }
     var occupe by remember { mutableStateOf(false) }
+    // Hors de chez soi, la source n'est copiée qu'à débit raisonnable, sauf qualité maximale demandée.
+    var maximale by remember { mutableStateOf(false) }
+    val dehors = RelaisCast.horsDeChezSoi
     val scope = rememberCoroutineScope()
     fun envoyer(commande: JSONObject) {
         val id = selection ?: return
@@ -86,10 +90,12 @@ private fun PanneauDiffusion(api: FlixTunesApi, etatLocal: () -> JSONObject, pau
     val etat = cible?.optJSONObject("etat")
     Column(Modifier.padding(22.dp).heightIn(max = 560.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Caster et piloter", style = MaterialTheme.typography.headlineSmall)
-        Text("Appareils du réseau local et lecteurs FlixTunes du même profil.", color = Muet)
+        Text(if (dehors) "Hors de chez vous : téléviseurs Cast du Wi-Fi où vous êtes, et lecteurs FlixTunes du même profil."
+            else "Appareils du réseau local et lecteurs FlixTunes du même profil.", color = Muet)
         erreur?.let { Text(it, color = Erreur) }
         if (occupe) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("En attente du récepteur…", color = Muet) }
-        if (cibles.isEmpty()) Text("Aucun appareil détecté. Vérifiez qu’il est allumé et sur le même réseau que le NAS.")
+        if (cibles.isEmpty()) Text(if (dehors) "Aucun téléviseur Cast trouvé sur ce Wi-Fi. Vérifiez qu’il est allumé et sur le même réseau que ce téléphone."
+            else "Aucun appareil détecté. Vérifiez qu’il est allumé et sur le même réseau que le NAS.")
         cibles.forEach { c ->
             OutlinedButton(onClick = { selection = c.getString("id") }, enabled = !occupe && !c.optBoolean("occupe"), modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.fillMaxWidth()) {
@@ -109,7 +115,13 @@ private fun PanneauDiffusion(api: FlixTunesApi, etatLocal: () -> JSONObject, pau
             val enCours = etat?.optString("lecture")
             local.optJSONObject("contenu")?.let { contenu ->
                 if (enCours != "chargement" || etat.optJSONObject("contenu")?.optString("id") != contenu.optString("id")) {
-                    Button(enabled = !occupe, onClick = { envoyer(JSONObject().put("type", "charger").put("contenu", contenu).put("position", local.optDouble("position", 0.0))) }) {
+                    val relayee = cible.optBoolean("relais")
+                    if (relayee && contenu.optString("genre") == "media") Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Checkbox(checked = maximale, onCheckedChange = { maximale = it }, enabled = !occupe)
+                        Text("Qualité maximale (4K, débit élevé)", color = TexteDoux)
+                    }
+                    Button(enabled = !occupe, onClick = { envoyer(JSONObject().put("type", "charger").put("contenu", contenu).put("position", local.optDouble("position", 0.0))
+                        .apply { if (relayee && maximale) put("qualite", "maximale") }) }) {
                         Text("Diffuser « ${contenu.optString("titre")} »")
                     }
                 }

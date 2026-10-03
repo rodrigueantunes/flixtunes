@@ -84,7 +84,9 @@ export async function buildApp(options: OptionsApp = {}) {
     : { max: 600, timeWindow: "1 minute", allowList: (request) => /\/api\/(media|playback|artwork)\//.test(request.url) });
   await app.register(cors, {
     delegator: (req, callback) => {
-      const fluxCast = !distant && /^\/api\/diffusion\/flux\/[a-f0-9]{64}\/[\w.-]+(?:\?|$)/.test(req.url);
+      // Le flux à clé d'un téléviseur est lu en XHR depuis l'origine du lecteur Cast, sans identifiants :
+      // sur le réseau local comme, depuis la r10, par l'accès distant.
+      const fluxCast = /^\/api\/diffusion\/(?:flux\/[a-f0-9]{64}\/[\w.-]+|sonde\/[\w-]+\/[\w.-]+)(?:\?|$)/.test(req.url);
       callback(null, fluxCast ? { origin: "*", methods: ["GET", "HEAD", "OPTIONS"], allowedHeaders: ["Range", "Content-Type"],
         exposedHeaders: ["Content-Length", "Content-Range", "Accept-Ranges"], credentials: false }
         : { origin: (origin, done) => done(null, !origin || (distant ? isWanOrigin(origin) : isTrustedOrigin(origin))),

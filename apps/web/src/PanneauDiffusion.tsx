@@ -4,7 +4,7 @@ import type { AccuseDiffusion, CibleDiffusion, CommandeDiffusion, EtatDiffusion 
 import { api } from "./api";
 import { useDiffusion, type Catalogue } from "./Diffusion";
 import { surfaceDiffusion } from "./diffusion-surface";
-import { attendre, message, etatDiffusionVide, libelleEtat, libelleProtocole, marquerTransfert } from "./diffusion-utilitaires";
+import { attendre, castNavigateurPossible, message, etatDiffusionVide, libelleEtat, libelleProtocole, marquerTransfert } from "./diffusion-utilitaires";
 type VideoAirPlay = HTMLVideoElement & { webkitShowPlaybackTargetPicker?: () => void; webkitCurrentPlaybackTargetIsWireless?: boolean };
 export default function PanneauDiffusion({ catalogue, monId, ouvert, fermerPanneau }: { catalogue: Catalogue; monId: RefObject<string | null>; ouvert: boolean; fermerPanneau: () => void }) {
   const contexte = useDiffusion();
@@ -17,6 +17,17 @@ export default function PanneauDiffusion({ catalogue, monId, ouvert, fermerPanne
   const lecteurAirplay = useRef<VideoAirPlay | null>(null);
   const panneau = useRef<HTMLDivElement | null>(null);
   const airplayDisponible = typeof document !== "undefined" && "webkitShowPlaybackTargetPicker" in document.createElement("video");
+  // Hors de chez soi (r10), les téléviseurs du réseau courant passent par ce navigateur : Chrome les voit.
+  const [distant, setDistant] = useState(false);
+  const [maximale, setMaximale] = useState(false);
+  const chromeCast = distant && castNavigateurPossible();
+  useEffect(() => { let actif = true; void api.remoteSession().then((s) => { if (actif) setDistant(!!s.required); }).catch(() => undefined);
+    return () => { actif = false; }; }, [catalogue.profil]);
+  async function choisirChrome() {
+    setTravail(true); setErreur(null);
+    try { const { choisirTeleviseurChrome } = await import("./relais-cast"); choisir(await choisirTeleviseurChrome(catalogue.profil)); contexte?.ouvrir(); }
+    catch (e) { setErreur(message(e)); } finally { setTravail(false); }
+  }
 
   useEffect(() => {
     if (!ouvert || !catalogue) return;
@@ -104,17 +115,23 @@ export default function PanneauDiffusion({ catalogue, monId, ouvert, fermerPanne
         }
       }}>
         <div className="cast-heading"><h2 id="cast-title">Caster et piloter</h2><button onClick={fermer} disabled={travail} aria-label="Fermer">✕</button></div>
-        <p>Appareils du réseau local · lecteurs FlixTunes connectés au même profil.</p>
+        <p>{distant ? "Hors de chez vous · téléviseurs du réseau où vous êtes, vus par ce navigateur, et lecteurs FlixTunes du profil."
+          : "Appareils du réseau local · lecteurs FlixTunes connectés au même profil."}</p>
         {erreur && <p role="alert" className="cast-error">{erreur}</p>}
         {travail && <p role="status">En attente du récepteur…</p>}
         <div className="cast-targets">{cibles.map((c) => <button key={c.id} disabled={c.occupe || travail} aria-pressed={selection === c.id} onClick={() => choisir(c.id)}>
           <strong>{c.nom}</strong><small>{libelleProtocole(c)}{c.occupe ? " · utilisé par un autre profil" : c.etat?.contenu ? ` · ${c.etat.contenu.titre}${c.proprietaire ? ` · ${c.proprietaire}` : ""}` : ""}</small>
         </button>)}</div>
-        {!cibles.length && <p>Aucun appareil détecté pour le moment. Vérifiez qu’il est allumé et connecté au même réseau que le NAS.</p>}
+        {chromeCast && <button type="button" className="cast-chrome" disabled={travail} onClick={() => void choisirChrome()}>Choisir un téléviseur de ce réseau</button>}
+        {distant && !chromeCast && <p>Pour caster hors de chez vous, ouvrez FlixTunes dans Chrome, ou utilisez l’application Android.</p>}
+        {!cibles.length && !distant && <p>Aucun appareil détecté pour le moment. Vérifiez qu’il est allumé et connecté au même réseau que le NAS.</p>}
         {cible && <section className="cast-remote" aria-label={`Télécommande de ${cible.nom}`}>
           <h3>{cible.nom}</h3>
           {locale.contenu && !(etat?.contenu?.id === locale.contenu.id && ["chargement", "lecture", "pause"].includes(etat.lecture))
-            && <button className="primary" disabled={travail} onClick={() => void envoyer({ type: "charger", contenu: locale.contenu!, position: locale.position })}>Diffuser « {locale.contenu.titre} » ici</button>}
+            && <>{cible.relais && locale.contenu.genre === "media" && <label className="cast-qualite"><input type="checkbox" checked={maximale} disabled={travail}
+              onChange={(e) => setMaximale(e.currentTarget.checked)} /> Qualité maximale (4K, débit élevé)</label>}
+            <button className="primary" disabled={travail} onClick={() => void envoyer({ type: "charger", contenu: locale.contenu!, position: locale.position,
+              ...(cible.relais && maximale ? { qualite: "maximale" as const } : {}) })}>Diffuser « {locale.contenu.titre} » ici</button></>}
           {!locale.contenu && !etat?.contenu && <p>Lancez un film, un épisode, une vidéo Web ou une chaîne, puis choisissez cet appareil.</p>}
           {etat?.contenu && <><p>{etat.contenu.titre}</p>
           <p role="status" className={etat.lecture === "chargement" ? "cast-etape" : undefined}>{libelleEtat(etat, cible.nom)}</p>

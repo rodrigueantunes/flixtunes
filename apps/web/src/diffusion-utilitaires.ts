@@ -21,6 +21,16 @@ export function diffusionActive(cibles: CibleDiffusion[]): CibleDiffusion | null
     ?? null;
 }
 
+/**
+ * Chrome et Edge embarquent l'émetteur Cast, en contexte sécurisé seulement ; Safari, Firefox et iOS
+ * non. Hors de chez soi, c'est par lui que ce navigateur voit les téléviseurs du réseau courant.
+ */
+export function castNavigateurPossible(): boolean {
+  if (typeof window === "undefined" || !window.isSecureContext) return false;
+  const ua = navigator.userAgent;
+  return /Chrome\//.test(ua) && !/CriOS|FxiOS|OPR\//.test(ua);
+}
+
 export function libelleProtocole(c: CibleDiffusion): string {
   const protocole = c.protocole === "googlecast" ? "Google Cast" : c.protocole === "dlna" ? "DLNA" : "Lecteur FlixTunes";
   return c.modele && c.modele !== c.nom ? `${protocole} · ${c.modele}` : protocole;

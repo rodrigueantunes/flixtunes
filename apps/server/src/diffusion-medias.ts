@@ -11,6 +11,8 @@ import { createPlaybackSession, getPlaybackInfo, decidePlayback, getPlaybackSess
 import { commencerConversionLive, fichierConversionLive, arreterConversionLive, listeConversionLive, segmentsConversionLive } from "./live-compat.js";
 import { ErreurPreparationDiffusion } from "./diffusion-preparation.js";
 import { ipv4Privee } from "./diffusion-reseau.js";
+import { getArtworkAsset } from "./artwork.js";
+import { parametresWan } from "./wan-parametres.js";
 import type { MetadonneesDiffusion } from "./diffusion-cast.js";
 
 /** Ce que la préparation doit produire pour un niveau du plan de qualité. */
@@ -24,6 +26,8 @@ export interface OptionsPreparation {
   tsContinu?: boolean;
   /** Le fichier d'origine, servi tel quel : le téléviseur DLNA a déclaré savoir lire son conteneur. */
   fichierTelQuel?: boolean;
+  /** Pour un téléviseur hors de chez soi, joint par l'accès distant : seule clé admise depuis Internet. */
+  distant?: boolean;
   signal?: AbortSignal;
 }
 
@@ -36,6 +40,12 @@ export interface MediaDiffuse {
   metadonnees?: MetadonneesDiffusion;
   /** Le nom sous lequel le fichier d'origine est servi, extension comprise. */
   nomFichier?: string;
+  /** Servi par l'accès distant : la clé est la seule preuve du téléviseur, sa vie est donc courte. */
+  distant?: boolean;
+  /** L'affiche servie avec la clé, pour un téléviseur qui n'a pas de session. */
+  affiche?: string;
+  /** Réponses en cours d'envoi : un fichier lu d'un trait ne fait qu'une requête, mais reste lu. */
+  ouverts?: number;
 }
 export function contenuAutorise(profil: string, contenu: ContenuDiffuse): ContenuDiffuse | null {
   if (!getProfile(profil)) return null;
@@ -57,6 +67,17 @@ export function origineDiffusion(host: string, protocole = "http", adresseLocale
   }
   return url.origin;
 }
+/**
+ * L'adresse annoncée à un téléviseur hors de chez soi : le domaine de l'accès distant, en HTTPS.
+ * Sans domaine configuré, il n'y a pas d'accès distant, donc pas de cast hors de chez soi.
+ */
+export function origineDistante(): string {
+  const domaine = parametresWan().domaine;
+  if (!domaine) throw new Error("L’accès distant n’est pas configuré sur le NAS : le cast hors de chez soi passe par lui.");
+  return `https://${domaine}`;
+}
+/** Inactivité au-delà de laquelle une clé distante meurt : ni requête du téléviseur, ni battement du relais. */
+export const INACTIVITE_DISTANTE_MS = 2 * 60_000;
 export class MediasDiffusion {
   private medias = new Map<string, MediaDiffuse>(); private reservations = 0;
   private timer = setInterval(() => { void this.purger(); }, 30_000);
@@ -155,14 +176,18 @@ export class MediasDiffusion {
           if (!row?.file_path) throw new Error("Fichier indisponible"); fichier = row.file_path; nom = nomDuFichier(fichier); type = mimeDuFichier(fichier);
         } else { nom = new URL(s.url, "http://local").pathname.split("/").at(-1)!; decalage = s.startOffsetSeconds ?? 0; }
       }
+      const duree = direct ? 0 : getMediaItem(profil, contenu.id)?.runtimeSeconds ?? 0;
       const media: MediaDiffuse = { cle, profil, contenu, session, direct, fichier, mime: type, position: direct ? 0 : Math.max(0, position - decalage), decalage,
-        duree: direct ? 0 : getMediaItem(profil, contenu.id)?.runtimeSeconds ?? 0,
+        duree,
         segmentsFmp4: direct ? fmp4Live : !!options.qualiteSource && !fichier, nomFichier: fichier ? nom : undefined,
         metadonnees: metadonneesPour(profil, contenu, origine),
         qualite: direct ? qualiteLive ?? "Conversion compatible · 720p maximum"
           : options.qualiteSource ? "Vidéo source conservée" : options.compatible ? "Conversion compatible · 720p maximum" : "Conversion · 1080p maximum",
         url: `${origine}/api/diffusion/flux/${cle}/${options.tsContinu && session && (direct ? !fmp4Live : !options.qualiteSource) ? "continu.ts" : nom}`,
-        expire: Date.now() + 12 * 3600_000, vu: Date.now() };
+        // Une clé distante vit au plus la durée du média et une heure ; un direct, six heures.
+        expire: Date.now() + (options.distant ? (direct || !duree ? 6 * 3600 : duree + 3600) * 1000 : 12 * 3600_000), vu: Date.now(),
+        distant: options.distant || undefined, ouverts: 0 };
+      if (options.distant) afficheDistante(media, origine);
       if (options.tsContinu && session && (direct ? !fmp4Live : !options.qualiteSource)) media.mime = "video/mp2t";
       this.medias.set(cle, media); return media;
     } catch (e) { if (session) { if (direct) await arreterConversionLive(profil, session); else await stopPlaybackSession(session); } throw e; }
@@ -238,8 +263,16 @@ export class MediasDiffusion {
     if (!m || m.expire < Date.now() || !contenuAutorise(m.profil, m.contenu) || !/^[\w.-]{1,160}$/.test(nom) || nom.includes("..")) {
       return reply.code(404).send({ message: "Diffusion expirée" });
     }
+    // Depuis Internet, seule une clé créée pour un téléviseur distant est servie : les clés du réseau
+    // local, tout aussi secrètes, n'ont pas à devenir joignables de l'extérieur.
+    if (request.expositionWan && !m.distant) return reply.code(404).send({ message: "Diffusion expirée" });
     m.vu = Date.now();
     m.requetes = (m.requetes ?? 0) + 1;
+    if (m.distant) {
+      m.ouverts = (m.ouverts ?? 0) + 1;
+      reply.raw.once("close", () => { m.ouverts = Math.max(0, (m.ouverts ?? 1) - 1); m.vu = Date.now(); });
+    }
+    if (nom === "affiche") return this.servirAffiche(m, reply);
     if (nom === "continu.ts" && m.session && !m.fichier) return this.servirContinu(m, reply);
     // Le direct d'un téléviseur : la liste composée des passes, qui survit aux relances de la conversion.
     if (m.direct && m.session && nom === "live.m3u8") {
@@ -289,7 +322,25 @@ export class MediasDiffusion {
     if (this.medias.get(cle)?.profil !== profil) return false;
     await this.retirer(cle); return true;
   }
-  private async purger() { for (const m of this.medias.values()) if (m.expire < Date.now() || (!m.fichier && Date.now() - m.vu > 10 * 60_000)) await this.retirer(m.cle); }
+  /** L'affiche d'une diffusion distante : le téléviseur n'a pas de session pour la demander ailleurs. */
+  private async servirAffiche(m: MediaDiffuse, reply: FastifyReply) {
+    const asset = m.affiche ? getArtworkAsset(m.affiche) : null;
+    if (!asset) return reply.code(404).send();
+    try {
+      const info = await stat(asset.localPath);
+      return reply.header("Access-Control-Allow-Origin", "*").header("Cache-Control", "private, max-age=3600")
+        .header("Content-Length", info.size).type(asset.mimeType).send(createReadStream(asset.localPath));
+    } catch { return reply.code(404).send(); }
+  }
+  /** Le relais bat pour son téléviseur : la clé reste vivante pendant une pause, sans requête de flux. */
+  entretenir(cle: string) { const m = this.medias.get(cle); if (m) m.vu = Date.now(); }
+  private async purger() {
+    for (const m of this.medias.values()) {
+      const inactif = Date.now() - m.vu;
+      const mort = m.expire < Date.now() || (m.distant ? !m.ouverts && inactif > INACTIVITE_DISTANTE_MS : !m.fichier && inactif > 10 * 60_000);
+      if (mort) await this.retirer(m.cle);
+    }
+  }
   async fermer() { clearInterval(this.timer); await Promise.all([...this.medias.keys()].map((cle) => this.retirer(cle))); }
 }
 
@@ -329,6 +380,22 @@ export function mimeDuFichier(chemin: string): string {
  */
 export function fonctionnalitesDlna(fichier: boolean): string {
   return `DLNA.ORG_OP=${fichier ? "01" : "00"};DLNA.ORG_CI=${fichier ? "0" : "1"};DLNA.ORG_FLAGS=${fichier ? "01700000" : "01300000"}000000000000000000000000`;
+}
+/**
+ * L'affiche d'un cast distant passe par la clé de la diffusion : `/api/artwork` exige une session, que
+ * le téléviseur n'a pas. Les images extérieures (logos de chaînes) restent telles quelles.
+ */
+function afficheDistante(media: MediaDiffuse, origine: string) {
+  const image = media.metadonnees?.image;
+  if (!media.metadonnees || !image || !image.startsWith(`${origine}/`)) return;
+  const locale = image.startsWith(`${origine}/api/artwork/`) ? image.slice(`${origine}/api/artwork/`.length) : null;
+  if (locale && /^[\w-]{1,80}$/.test(locale)) {
+    media.affiche = locale;
+    media.metadonnees = { ...media.metadonnees, image: `${origine}/api/diffusion/flux/${media.cle}/affiche` };
+  } else {
+    // Toute autre image du NAS demanderait une session : mieux vaut aucune image qu'une image cassée.
+    media.metadonnees = { ...media.metadonnees, image: undefined };
+  }
 }
 /** Ce que le téléviseur affiche : l'affiche servie par le NAS, le titre, l'épisode ou la chaîne. */
 export function metadonneesPour(profil: string, contenu: ContenuDiffuse, origine: string): MetadonneesDiffusion {

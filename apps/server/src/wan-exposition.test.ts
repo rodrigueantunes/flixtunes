@@ -148,6 +148,24 @@ describe("exposition WAN", () => {
     expect(verdictWan("GET", "/assets/index-abc123.js")).toEqual({ autorise: true, sessionRequise: false });
   });
 
+  it("n'ouvre sans session, pour le cast hors de chez soi, que le flux à clé et les clips de sonde", () => {
+    // Décision D1 du 3 octobre 2026 : un téléviseur chez un proche ne porte ni compte ni session.
+    for (const route of ["/api/diffusion/flux/:cle/:nom", "/api/diffusion/sonde/:dossier/:fichier"]) {
+      expect(verdictWan("GET", route)).toEqual({ autorise: true, sessionRequise: false });
+      expect(compteDistantRequis("GET", route)).toBe(false);
+      expect(verdictWan("POST", route)).toEqual({ autorise: false, sessionRequise: false });
+      expect(verdictWan("DELETE", route)).toEqual({ autorise: false, sessionRequise: false });
+    }
+    // Tout le reste de la diffusion exige le compte de l'appareil puis la session du profil.
+    for (const [methode, route] of [["GET", "/api/diffusion/cibles"], ["GET", "/api/diffusion/cibles/:id/ordres/:ordre"],
+      ["POST", "/api/diffusion/lecteurs"], ["POST", "/api/diffusion/lecteurs/:id"], ["POST", "/api/diffusion/relais"],
+      ["POST", "/api/diffusion/cibles/:id/commande"], ["POST", "/api/diffusion/airplay"], ["POST", "/api/diffusion/airplay/:cle/arreter"]] as const) {
+      expect(verdictWan(methode, route)).toEqual({ autorise: true, sessionRequise: true });
+      expect(compteDistantRequis(methode, route)).toBe(true);
+    }
+    expect(verdictWan("GET", "/api/diffusion/route-inventee")).toEqual({ autorise: false, sessionRequise: false });
+  });
+
   it("n'autorise aucune écriture hors de celles qui appartiennent au profil", () => {
     const { ecritures } = inventaireWan();
     expect(ecritures).not.toContain("POST /api/libraries");

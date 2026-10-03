@@ -231,4 +231,19 @@ describe("accès distant", () => {
     const accueil = await lan.inject({ method: "GET", url: "/api/home" });
     expect(accueil.statusCode).toBe(200);
   });
+
+  it("ouvre au téléviseur distant le seul flux à clé, sans compte ni session, et garde le reste de la diffusion sous session (r10)", async () => {
+    const session = { "x-flixtunes-profile-token": jeton, "x-flixtunes-remote-token": jetonDistant };
+    // Le flux répond sans compte : une clé inconnue est une diffusion expirée, pas une demande d'identité.
+    const flux = await wan.inject({ method: "GET", url: `/api/diffusion/flux/${"a".repeat(64)}/index.m3u8` });
+    expect(flux.statusCode).toBe(404); expect(flux.json().message).toBe("Diffusion expirée");
+    expect((await wan.inject({ method: "GET", url: "/api/diffusion/sonde/inconnu/index.m3u8" })).statusCode).toBe(404);
+    // Le reste exige compte et session.
+    expect((await wan.inject({ method: "GET", url: "/api/diffusion/cibles" })).statusCode).toBe(401);
+    const cibles = await wan.inject({ method: "GET", url: "/api/diffusion/cibles", headers: session });
+    expect(cibles.statusCode).toBe(200);
+    // Les téléviseurs de la maison n'y figurent pas.
+    expect(cibles.json().cibles.every((c: { protocole: string; relais?: boolean }) => c.protocole === "flixtunes" || c.relais)).toBe(true);
+    expect((await wan.inject({ method: "POST", url: "/api/diffusion/cibles/inconnu/commande", headers: session, payload: { type: "pause" } })).statusCode).toBe(404);
+  });
 });

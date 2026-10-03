@@ -5,22 +5,29 @@ import { commandeDiffusionSchema, contenuDiffuseSchema, etatDiffusionSchema, eta
 import { jetonDeLaRequete, sessionDuJeton } from "./sessions-profil.js";
 import { RegistreDiffusion } from "./diffusion-registre.js";
 import { DecouverteDiffusion, type Recepteur } from "./diffusion-reseau.js";
-import { contenuAutorise, MediasDiffusion, mimeDuFichier, origineDiffusion, type MediaDiffuse } from "./diffusion-medias.js";
+import { contenuAutorise, MediasDiffusion, mimeDuFichier, origineDiffusion, origineDistante, type MediaDiffuse } from "./diffusion-medias.js";
+import { TransportRelais, type CibleRelais } from "./diffusion-relais.js";
 import { ErreurCast, TransportCast } from "./diffusion-cast.js";
 import { dlnaLitLeConteneur, dlnaLitLeHls, TransportDlna } from "./diffusion-dlna.js";
 import { ErreurPreparationDiffusion } from "./diffusion-preparation.js";
-import { capacitesConnues, enseignement, planDeQualite, retenirCapacites, segmentDemande, servirSonde, SONDES,
+import { capacitesConnues, enseignement, planDeQualite, planDistant, retenirCapacites, segmentDemande, servirSonde, SONDES,
   type CapacitesRecepteur, type NiveauDiffusion, type NomSonde, type SourceVideo } from "./diffusion-sonde.js";
 import { getPlaybackInfo } from "./playback.js";
 import { db, getProfile } from "./database.js";
 
 const battementSchema = z.object({ cle: z.string().regex(/^[a-f0-9]{64}$/), etat: etatDiffusionSchema,
-  accuses: z.array(z.object({ id: z.string().uuid(), ok: z.boolean(), erreur: z.string().max(300).optional() })).max(16).default([]) });
-type Lecture = { profil: string; media: MediaDiffuse; transport: TransportCast | TransportDlna; etat: EtatDiffusion;
+  accuses: z.array(z.object({ id: z.string().uuid(), ok: z.boolean(), erreur: z.string().max(300).optional(),
+    code: z.string().max(40).optional(), verdict: z.enum(["accepte", "refuse", "inconnu"]).optional() })).max(16).default([]),
+  /** Pour un relais : l'adresse du média que le téléviseur lit, pour ne retenir que l'état du nôtre. */
+  media: z.string().max(2048).optional() });
+type Transport = TransportCast | TransportDlna | TransportRelais;
+/** Les transports qui parlent Cast, directement ou par un relais : sonde, capacités et lecteur Cast. */
+const estCast = (t: Transport): t is TransportCast | TransportRelais => t instanceof TransportCast || t instanceof TransportRelais;
+type Lecture = { profil: string; media: MediaDiffuse; transport: Transport; etat: EtatDiffusion;
   dernierControle: number; progression?: number; repos?: number };
 /** Une diffusion en cours de préparation : son étape est visible de tous les clients du profil. */
 type Operation = { id: string; profil: string; controle: AbortController; etat: EtatDiffusion; fin: Promise<void> };
-type Chargement = { contenu: ContenuDiffuse; position: number };
+type Chargement = { contenu: ContenuDiffuse; position: number; qualite?: "auto" | "maximale" };
 
 const REFUS_CAST = /^CAST_(LOAD_FAILED|MEDIA|DEMARRAGE|DELAI_LOAD)/;
 
@@ -31,8 +38,9 @@ async function sourceVideo(id: string): Promise<SourceVideo | null> {
   const info = await getPlaybackInfo(id).catch(() => null);
   const video = info?.streams.find((flux) => flux.type === "video");
   if (!info || !video) return null;
+  const debit = info.overallBitRate || (info.fileSize && info.durationSeconds ? info.fileSize * 8 / info.durationSeconds : 0);
   return { codec: video.codec, hauteur: Math.min(video.height ?? 0, video.width ?? 0) || video.height || 0,
-    hdr: video.hdrFormat !== "sdr", mp4Direct: /mp4|mov/i.test(info.container) && video.codec === "h264" };
+    hdr: video.hdrFormat !== "sdr", mp4Direct: /mp4|mov/i.test(info.container) && video.codec === "h264", debit: debit || undefined };
 }
 
 function libelleNiveau(niveau: NiveauDiffusion): string {
@@ -40,8 +48,14 @@ function libelleNiveau(niveau: NiveauDiffusion): string {
   return niveau.compatible ? "Conversion compatible · 720p maximum" : `Conversion · ${niveau.hauteurMax}p maximum`;
 }
 
-/** Routes volontairement absentes de la liste blanche WAN. Les téléviseurs reçoivent un jeton
- * de média révocable, jamais la session du profil ni un accès générique au NAS. */
+/**
+ * Ce que l'accès distant ouvre de la diffusion (r10) : les lecteurs FlixTunes du profil, les
+ * téléviseurs relayés par un téléphone ou un navigateur, AirPlay, et le flux à clé. Les téléviseurs
+ * reçoivent un jeton de média révocable, jamais la session du profil ni un accès générique au NAS.
+ */
+const ROUTES_DISTANTES = new Set(["/api/diffusion/cibles", "/api/diffusion/lecteurs", "/api/diffusion/lecteurs/:id",
+  "/api/diffusion/relais", "/api/diffusion/cibles/:id/ordres/:ordre", "/api/diffusion/cibles/:id/commande",
+  "/api/diffusion/airplay", "/api/diffusion/airplay/:cle/arreter", "/api/diffusion/flux/:cle/:nom", "/api/diffusion/sonde/:dossier/:fichier"]);
 export async function routesDiffusion(app: FastifyInstance) {
   const registre = new RegistreDiffusion(), decouverte = new DecouverteDiffusion(), medias = new MediasDiffusion();
   const lectures = new Map<string, Lecture>(), operations = new Map<string, Operation>();
@@ -79,7 +93,7 @@ export async function routesDiffusion(app: FastifyInstance) {
   decouverte.demarrer();
   app.addHook("preHandler", async (req, reply) => {
     if (!req.routeOptions.url?.startsWith("/api/diffusion/")) return;
-    if (req.expositionWan) return reply.code(404).send({ message: "Disponible sur le réseau local uniquement" });
+    if (req.expositionWan && !ROUTES_DISTANTES.has(req.routeOptions.url)) return reply.code(404).send({ message: "Disponible sur le réseau local uniquement" });
     if (req.routeOptions.url === "/api/diffusion/flux/:cle/:nom" || req.routeOptions.url === "/api/diffusion/sonde/:dossier/:fichier") return;
     const session = sessionDuJeton(jetonDeLaRequete(req));
     if (!session) return reply.code(401).send({ message: "Reconnectez le profil pour utiliser le cast" });
@@ -106,10 +120,23 @@ export async function routesDiffusion(app: FastifyInstance) {
   // Les clients interrogent ces routes toutes les deux ou trois secondes : les journaliser noyait le
   // journal du NAS, qui pesait 940 Mo le 2 octobre 2026, presque entièrement de battements.
   const discret = { logLevel: "warn" as const };
+  // Hors de chez soi, seuls les lecteurs FlixTunes du profil et les téléviseurs du réseau où l'on se
+  // trouve sont proposés : piloter ceux de la maison ferait démarrer un film devant quelqu'un d'autre.
   app.get("/api/diffusion/cibles", discret, async (req) => ({ cibles: [
-    ...registre.lister(req.profilImpose!),
-    ...decouverte.lister().map((c) => ({ id: c.id, nom: c.nom, protocole: c.protocole, modele: c.modele, ...etatDe(c.id, req.profilImpose!) })),
+    ...registre.lister(req.profilImpose!).map((c) => c.relais ? { ...c, ...etatDe(c.id, req.profilImpose!) } : c),
+    ...(req.expositionWan ? [] : decouverte.lister().map((c) => ({ id: c.id, nom: c.nom, protocole: c.protocole, modele: c.modele, ...etatDe(c.id, req.profilImpose!) }))),
   ] }));
+  /**
+   * Un téléphone ou un navigateur hors de chez soi annonce un téléviseur Cast qu'il voit sur son
+   * réseau. Le NAS ne peut pas le joindre ; il le pilotera par des ordres que ce relais exécute.
+   */
+  app.post("/api/diffusion/relais", async (req, reply) => {
+    const data = z.object({ nom: z.string().trim().min(1).max(120), modele: z.string().trim().max(120).optional() }).safeParse(req.body);
+    if (!data.success) return reply.code(400).send({ message: "Téléviseur invalide" });
+    try { origineDistante(); } catch (e) { return reply.code(409).send({ message: e instanceof Error ? e.message : "Accès distant indisponible" }); }
+    try { return registre.inscrireRelais(req.profilImpose!, data.data.nom, data.data.modele || undefined); }
+    catch { return reply.code(429).send({ message: "Trop d’appareils connectés" }); }
+  });
   app.post("/api/diffusion/lecteurs", async (req, reply) => {
     const data = z.object({ nom: z.string().trim().min(1).max(120) }).safeParse(req.body);
     if (!data.success) return reply.code(400).send({ message: "Nom d’appareil invalide" });
@@ -119,8 +146,15 @@ export async function routesDiffusion(app: FastifyInstance) {
   app.post<{ Params: { id: string } }>("/api/diffusion/lecteurs/:id", discret, async (req, reply) => {
     const data = battementSchema.safeParse(req.body);
     if (!data.success) return reply.code(400).send({ message: "État du lecteur invalide" });
-    const ordres = registre.battre(req.params.id, req.profilImpose!, data.data.cle, data.data.etat, data.data.accuses);
-    return ordres ? { ordres } : reply.code(404).send({ message: "Lecteur déconnecté" });
+    const ordres = registre.battre(req.params.id, req.profilImpose!, data.data.cle, data.data.etat, data.data.accuses, data.data.media);
+    if (!ordres) return reply.code(404).send({ message: "Lecteur déconnecté" });
+    // Le relais rapporte l'état du téléviseur : il tient la lecture à jour, et la clé en vie pendant une pause.
+    const lecture = lectures.get(req.params.id);
+    if (lecture?.transport instanceof TransportRelais) {
+      lecture.transport.recevoir(data.data.etat, data.data.media);
+      if (data.data.media === lecture.media.url) medias.entretenir(lecture.media.cle);
+    }
+    return { ordres };
   });
   app.get<{ Params: { id: string; ordre: string } }>("/api/diffusion/cibles/:id/ordres/:ordre", discret, async (req) => ({ resultat: registre.resultat(req.params.id, req.profilImpose!, req.params.ordre) }));
   app.get<{ Params: { dossier: string; fichier: string } }>("/api/diffusion/sonde/:dossier/:fichier", discret, (req, reply) => servirSonde(req.params.dossier, req.params.fichier, reply));
@@ -129,8 +163,11 @@ export async function routesDiffusion(app: FastifyInstance) {
    * Prépare et lance une diffusion vers un téléviseur, de la connexion à la confirmation de lecture.
    * L'étape en cours est tenue à jour dans `op.etat`, que tous les clients du profil voient.
    */
-  async function diffuser(op: Operation, id: string, cible: Recepteur, chargement: Chargement, origine: string, reprendreEnPause: boolean) {
+  async function diffuser(op: Operation, id: string, cible: Recepteur | CibleRelais, chargement: Chargement, origine: string, reprendreEnPause: boolean) {
     const profil = op.profil, signal = op.controle.signal, direct = chargement.contenu.genre === "direct";
+    const relayee = "relais" in cible;
+    // Un téléviseur relayé change d'identifiant à chaque inscription : ses capacités se retiennent par modèle.
+    const cleCapacites = relayee ? `relais:${(cible.modele || cible.nom).slice(0, 80)}` : id;
     const etape = (e: Partial<EtatDiffusion>) => { op.etat = { ...op.etat, ...e }; };
     const verifierAnnulation = () => { if (signal.aborted) throw new Annulation(); };
     let media: MediaDiffuse | undefined;
@@ -159,7 +196,8 @@ export async function routesDiffusion(app: FastifyInstance) {
         catch (e) { app.log.warn({ err: e instanceof Error ? e.message : String(e) }, "Progression de diffusion non enregistrée"); }
       }
     };
-    const nouveauTransport = () => cible.protocole === "googlecast" ? new TransportCast(cible, actualiser) : new TransportDlna(cible, actualiser);
+    const nouveauTransport = (): Transport => "relais" in cible ? new TransportRelais(registre, cible, profil, actualiser)
+      : cible.protocole === "googlecast" ? new TransportCast(cible, actualiser) : new TransportDlna(cible, actualiser);
     let transport = nouveauTransport(), chargeEnvoye = false;
     // Annuler interrompt aussi un échange en cours avec le téléviseur : le transport fermé rejette
     // ses attentes, au lieu de laisser un chargement courir jusqu'à son délai de 35 secondes.
@@ -168,7 +206,7 @@ export async function routesDiffusion(app: FastifyInstance) {
       etape({ etape: "connexion" });
       // La connexion est vérifiée avant de réserver une conversion sur le NAS.
       let capacites: CapacitesRecepteur | null = null, dlnaSansHls = false, protocolesDlna: string[] | null = null;
-      if (transport instanceof TransportCast) {
+      if (estCast(transport)) {
         try { await transport.verifier(); }
         catch (e) {
           app.log.warn({ protocole: "googlecast", phase: "connexion", code: e instanceof ErreurCast ? e.code : "CAST_CONNEXION" },
@@ -176,7 +214,7 @@ export async function routesDiffusion(app: FastifyInstance) {
           throw e;
         }
         verifierAnnulation();
-        capacites = capacitesConnues(id, cible.modele);
+        capacites = capacitesConnues(cleCapacites, cible.modele);
         if (!capacites) {
           etape({ etape: "sonde" });
           const verdicts: Partial<CapacitesRecepteur> = {};
@@ -188,20 +226,22 @@ export async function routesDiffusion(app: FastifyInstance) {
             if (nom === "hevc_2160_hdr10" && verdict === "accepte") { verdicts.h264_1080 = true; verdicts.hevc_1080 = true; break; }
           }
           // Sans aucun verdict sûr, rien n'est retenu : la prochaine diffusion sondera de nouveau.
-          capacites = Object.keys(verdicts).length ? retenirCapacites(id, { ...verdicts, modele: cible.modele }) : null;
+          capacites = Object.keys(verdicts).length ? retenirCapacites(cleCapacites, { ...verdicts, modele: cible.modele }) : null;
           app.log.info({ protocole: "googlecast", modele: cible.modele ?? null, capacites: verdicts }, "Capacités du récepteur Cast relevées");
         }
-      } else {
+      } else if (transport instanceof TransportDlna) {
         protocolesDlna = await transport.protocolesAcceptes();
         dlnaSansHls = dlnaLitLeHls(protocolesDlna) === false;
       }
       verifierAnnulation();
       // Le lecteur du téléviseur s'ouvre pendant que la vidéo se prépare.
-      if (transport instanceof TransportCast) void transport.preparerLecteur();
+      if (estCast(transport)) void transport.preparerLecteur();
       // Ce qui est diffusé, pour relire un échec dans le journal : « TF1 » ou le titre d'un film.
       const contenuJournal = { genre: chargement.contenu.genre, titre: chargement.contenu.titre?.slice(0, 80) ?? null };
       const source = direct ? null : await sourceVideo(chargement.contenu.id);
       let plan = planDeQualite(source, capacites, direct);
+      // Hors de chez soi, une source trop lourde pour un réseau inconnu n'est copiée que sur demande.
+      if (relayee && !direct) plan = planDistant(plan, source, chargement.qualite === "maximale");
       // Un téléviseur DLNA qui ne lit pas le HLS ne recevra qu'un fichier tel quel ou un MPEG-TS continu.
       // Le direct garde son mode automatique : il convertira en MPEG-TS continu pour ce téléviseur.
       if (dlnaSansHls && !direct) plan = plan.filter((niveau) => !niveau.qualiteSource || source?.mp4Direct);
@@ -220,7 +260,7 @@ export async function routesDiffusion(app: FastifyInstance) {
         if (courante?.media.direct && direct && lectures.get(id) === courante) await retirer(id);
         try {
           media = await medias.preparer(profil, chargement.contenu, origine, chargement.position,
-            { ...niveau, tsContinu: dlnaSansHls, signal });
+            { ...niveau, tsContinu: dlnaSansHls, signal, distant: relayee });
         } catch (e) {
           if (signal.aborted) throw new Annulation();
           const repli = !dernier && e instanceof ErreurPreparationDiffusion && e.repliPossible;
@@ -236,7 +276,7 @@ export async function routesDiffusion(app: FastifyInstance) {
         lectures.set(id, { profil, media, etat: { ...op.etat, etape: "demarrage" }, transport, dernierControle: Date.now() });
         try {
           chargeEnvoye = true;
-          if (transport instanceof TransportCast) await transport.charger(media.url, media.mime, media.contenu.titre, media.direct, media.position, media.segmentsFmp4, media.metadonnees);
+          if (estCast(transport)) await transport.charger(media.url, media.mime, media.contenu.titre, media.direct, media.position, media.segmentsFmp4, media.metadonnees);
           else await transport.charger(media.url, media.mime, media.contenu.titre, media.direct, media.position, media.metadonnees, media.fichier != null);
           if (reprendreEnPause) await transport.commander({ type: "pause" });
         } catch (e) {
@@ -246,8 +286,8 @@ export async function routesDiffusion(app: FastifyInstance) {
           lectures.delete(id); await transport.liberer(); chargeEnvoye = false; await medias.retirer(media.cle);
           const refus = e instanceof ErreurCast ? REFUS_CAST.test(e.code)
             : cible.protocole === "dlna" && /SetAVTransportURI|Play|démarrage/.test(e instanceof Error ? e.message : "");
-          if (transport instanceof TransportCast && e instanceof ErreurCast && REFUS_CAST.test(e.code)) {
-            retenirCapacites(id, enseignement(niveau, source, false, /^CAST_(LOAD_FAILED|MEDIA)/.test(e.code) && requetes <= 4));
+          if (estCast(transport) && e instanceof ErreurCast && REFUS_CAST.test(e.code)) {
+            retenirCapacites(cleCapacites, enseignement(niveau, source, false, /^CAST_(LOAD_FAILED|MEDIA)/.test(e.code) && requetes <= 4));
           }
           const repli = !dernier && refus && !signal.aborted;
           app.log.warn({ protocole: cible.protocole, phase: "chargement", niveau: niveau.nom, requetesMedia: requetes,
@@ -261,12 +301,14 @@ export async function routesDiffusion(app: FastifyInstance) {
             continue;
           }
           if (e instanceof ErreurCast && REFUS_CAST.test(e.code) && !requetes) {
-            throw new Error(`${e.message} Le récepteur n’a demandé aucun média au NAS : vérifiez son accès à l’adresse locale et au port FlixTunes.`);
+            throw new Error(relayee
+              ? `${e.message} Le téléviseur n’a rien demandé au NAS : vérifiez que l’accès distant répond depuis ce réseau.`
+              : `${e.message} Le récepteur n’a demandé aucun média au NAS : vérifiez son accès à l’adresse locale et au port FlixTunes.`);
           }
           throw e;
         }
-        if (transport instanceof TransportCast) retenirCapacites(id, enseignement(niveau, source, true, false));
-        app.log.info({ protocole: cible.protocole, niveau: niveau.nom, qualite: media.qualite, appareil: cible.nom, modele: cible.modele ?? null, ...contenuJournal,
+        if (estCast(transport)) retenirCapacites(cleCapacites, enseignement(niveau, source, true, false));
+        app.log.info({ protocole: cible.protocole, relais: relayee || undefined, niveau: niveau.nom, qualite: media.qualite, appareil: cible.nom, modele: cible.modele ?? null, ...contenuJournal,
           position: lectures.get(id)?.etat.position }, "Lecture distante confirmée");
         return;
       }
@@ -291,7 +333,11 @@ export async function routesDiffusion(app: FastifyInstance) {
       try { const ordre = registre.commander(id, profil, c); return ordre ? reply.code(202).send({ ordre }) : reply.code(404).send({ message: "Lecteur hors ligne" }); }
       catch { return reply.code(429).send({ message: "Le lecteur ne répond pas encore" }); }
     }
-    const cible = decouverte.trouver(id); if (!cible) return reply.code(404).send({ message: "Récepteur hors ligne" });
+    // Un téléviseur relayé n'est connu que du registre ; hors de chez soi, il n'y a pas d'autre cible (D4).
+    const relais = id.startsWith("rl-") ? registre.relais(id, profil) : null;
+    const cible: Recepteur | CibleRelais | null = relais ? { id, nom: relais.nom, protocole: "googlecast", modele: relais.modele, relais: true }
+      : req.expositionWan ? null : decouverte.trouver(id) ?? null;
+    if (!cible) return reply.code(404).send({ message: "Récepteur hors ligne" });
     const courante = lectures.get(id), enCours = operations.get(id);
     // Tout profil pilote la diffusion en cours, et un nouvel envoi la remplace : comme sur YouTube, le
     // téléviseur appartient à qui l'utilise maintenant.
@@ -302,7 +348,8 @@ export async function routesDiffusion(app: FastifyInstance) {
       if (enCours) { enCours.controle.abort(); await enCours.fin.catch(() => undefined); }
       if (lectures.get(id)) { await retirer(id, true); return { ok: true }; }
       try {
-        if (cible.protocole === "googlecast") await new TransportCast(cible, () => {}).reinitialiser();
+        if ("relais" in cible) await new TransportRelais(registre, cible, profil, () => {}).reinitialiser();
+        else if (cible.protocole === "googlecast") await new TransportCast(cible, () => {}).reinitialiser();
         else await new TransportDlna(cible, () => {}).liberer();
         return { ok: true };
       } catch (e) { return reply.code(502).send({ message: e instanceof Error ? e.message : "Téléviseur injoignable" }); }
@@ -329,7 +376,10 @@ export async function routesDiffusion(app: FastifyInstance) {
       const op: Operation = { id: randomUUID(), profil: proprietaire, controle: new AbortController(), fin: Promise.resolve(),
         etat: { ...etatDiffusionVide(), contenu: chargement.contenu, lecture: "chargement", etape: "connexion",
           volume: courante?.etat.volume ?? 1, position: chargement.position } };
-      const origine = origineDiffusion(req.headers.host ?? "", req.protocol, req.raw.socket.localAddress, req.raw.socket.localPort);
+      // Un téléviseur relayé est hors de chez soi : il joint le NAS par son domaine public, jamais par le réseau local.
+      let origine: string;
+      try { origine = "relais" in cible ? origineDistante() : origineDiffusion(req.headers.host ?? "", req.protocol, req.raw.socket.localAddress, req.raw.socket.localPort); }
+      catch (e) { return reply.code(409).send({ message: e instanceof Error ? e.message : "Adresse du NAS indisponible" }); }
       op.fin = diffuser(op, id, cible, chargement, origine, c.type === "position" && courante?.etat.lecture === "pause")
         .catch((e) => {
           if (e instanceof Annulation) return;
@@ -358,8 +408,11 @@ export async function routesDiffusion(app: FastifyInstance) {
   app.post("/api/diffusion/airplay", async (req, reply) => {
     const data = z.object({ contenu: contenuDiffuseSchema, position: z.number().min(0).max(604800).default(0), compatible: z.boolean().default(false) }).safeParse(req.body);
     if (!data.success) return reply.code(400).send({ message: "Contenu invalide" });
-    try { const m = await medias.preparer(req.profilImpose!, data.data.contenu,
-      origineDiffusion(req.headers.host ?? "", req.protocol, req.raw.socket.localAddress, req.raw.socket.localPort), data.data.position, { compatible: data.data.compatible, qualiteSource: !data.data.compatible });
+    // Depuis l'accès distant, l'Apple TV est chez un proche : elle lit par le domaine public, avec une clé distante.
+    try { const distant = !!req.expositionWan;
+      const m = await medias.preparer(req.profilImpose!, data.data.contenu,
+      distant ? origineDistante() : origineDiffusion(req.headers.host ?? "", req.protocol, req.raw.socket.localAddress, req.raw.socket.localPort),
+      data.data.position, { compatible: data.data.compatible, qualiteSource: !data.data.compatible, distant });
       return { url: m.url, cle: m.cle, position: m.position, expire: m.expire, decalage: m.decalage }; }
     catch (e) { return reply.code(502).send({ message: e instanceof Error ? e.message : "AirPlay indisponible" }); }
   });

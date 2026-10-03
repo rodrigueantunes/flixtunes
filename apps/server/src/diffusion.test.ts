@@ -103,10 +103,15 @@ describe("API cast", async () => {
     const r = await app.inject({ method: "POST", url: "/api/diffusion/cibles/inconnue/commande", headers,
       payload: { type: "charger", contenu: { genre: "media", id: "absent" } } }); expect(r.statusCode).toBe(404);
   });
-  it("refuse les jetons de flux inconnus et n'expose aucune route Cast sur le WAN", async () => {
+  it("refuse les jetons de flux inconnus, et n'ouvre au WAN que ce que la r10 a décidé", async () => {
     expect((await app.inject({ url: `/api/diffusion/flux/${"a".repeat(64)}/media.mp4` })).statusCode).toBe(404);
-    for (const route of ["/api/diffusion/cibles", "/api/diffusion/lecteurs", "/api/diffusion/airplay", "/api/diffusion/flux/:cle/:nom"]) {
-      expect(verdictWan("GET", route).autorise).toBe(false); expect(verdictWan("POST", route).autorise).toBe(false);
+    // Décision D1 du 3 octobre 2026 : le flux à clé d'un téléviseur distant, sans session ; rien d'autre.
+    expect(verdictWan("GET", "/api/diffusion/flux/:cle/:nom")).toEqual({ autorise: true, sessionRequise: false });
+    expect(verdictWan("POST", "/api/diffusion/flux/:cle/:nom").autorise).toBe(false);
+    for (const [methode, route] of [["GET", "/api/diffusion/cibles"], ["POST", "/api/diffusion/lecteurs"], ["POST", "/api/diffusion/airplay"]] as const) {
+      expect(verdictWan(methode, route)).toEqual({ autorise: true, sessionRequise: true });
     }
+    expect(verdictWan("GET", "/api/diffusion/lecteurs").autorise).toBe(false);
+    expect(verdictWan("GET", "/api/diffusion/airplay").autorise).toBe(false);
   });
 });

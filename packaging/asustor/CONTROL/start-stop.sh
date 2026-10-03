@@ -369,6 +369,14 @@ caddy_running() {
 # elle doit suivre le domaine et les ports sans qu'on ait a se souvenir de la regenerer.
 ecrire_caddyfile() {
   mkdir -p "$(dirname "$CADDY_FILE")" "$CADDY_DIR" "$SHARE_ROOT/logs"
+  # Le flux d'un televiseur hors de chez soi porte sa cle dans son adresse (r10) : Caddy, qui journalise
+  # chaque adresse, ne doit pas l'ecrire en clair. "repli" engendre la configuration sans ce masquage,
+  # si jamais ce Caddy la refusait : l'acces distant ne doit pas tomber pour autant.
+  CADDY_MASQUE_FLUX=""
+  if [ "${1:-}" != "repli" ]; then
+    CADDY_MASQUE_FLUX='	@fluxCle path /api/diffusion/flux/* /api/diffusion/sonde/*
+	log_skip @fluxCle'
+  fi
   cat >"$CADDY_FILE" <<CADDYEOF
 {
 	# Les serveurs de Let's Encrypt se connectent a l'IP publique sur 80 et 443 ; la box traduit vers
@@ -388,6 +396,7 @@ ecrire_caddyfile() {
 
 ${FLIXTUNES_WAN_DOMAIN} {
 	reverse_proxy 127.0.0.1:${FLIXTUNES_WAN_PORT:-4001}
+${CADDY_MASQUE_FLUX}
 	# La video, les segments et les jaquettes sont deja compresses : les recomprimer couterait du
 	# processeur pour rien, et sur un N5105 ce rien se paie sur les conversions en cours.
 	#
@@ -429,11 +438,16 @@ start_caddy() {
     return 0
   fi
   ecrire_caddyfile
-  XDG_DATA_HOME="$CADDY_DIR" XDG_CONFIG_HOME="$CADDY_DIR" \
-    "$CADDY_BIN" validate --config "$CADDY_FILE" --adapter caddyfile >>"$CADDY_LOG" 2>&1 || {
-      echo "Configuration Caddy invalide : acces distant non demarre. Consultez $CADDY_LOG" >&2
-      return 0
-    }
+  if ! XDG_DATA_HOME="$CADDY_DIR" XDG_CONFIG_HOME="$CADDY_DIR" \
+    "$CADDY_BIN" validate --config "$CADDY_FILE" --adapter caddyfile >>"$CADDY_LOG" 2>&1; then
+    ecrire_caddyfile repli
+    XDG_DATA_HOME="$CADDY_DIR" XDG_CONFIG_HOME="$CADDY_DIR" \
+      "$CADDY_BIN" validate --config "$CADDY_FILE" --adapter caddyfile >>"$CADDY_LOG" 2>&1 || {
+        echo "Configuration Caddy invalide : acces distant non demarre. Consultez $CADDY_LOG" >&2
+        return 0
+      }
+    echo "Caddy refuse le masquage du flux de diffusion : acces distant demarre sans lui. Consultez $CADDY_LOG" >&2
+  fi
 
   # Le proxy ne lie que 8080/8444 : il n'a pas plus besoin de root que le serveur applicatif. Ses
   # donnees ACME et son journal doivent toutefois appartenir au compte avant la baisse de privilege.

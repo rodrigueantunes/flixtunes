@@ -22,6 +22,9 @@
         android:usesCleartextTraffic="true"
         android:supportsRtl="true"
         android:theme="@style/Theme.FlixTunes.Starting">
+        <!-- Le SDK Cast ne sert qu'au relais hors de chez soi (r10) : à la maison, c'est le NAS qui caste. -->
+        <meta-data android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
+            android:value="tv.flixtunes.app.playback.OptionsCast" />
         <activity android:name=".PlayerActivity" android:theme="@style/Theme.FlixTunes.Player" android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|smallestScreenSize|screenLayout" android:exported="false" android:supportsPictureInPicture="true" />
         <activity android:name=".LecteurDirectActivity" android:theme="@style/Theme.FlixTunes.Player" android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|smallestScreenSize|screenLayout" android:exported="false" />
         <activity android:name=".MainActivity" android:exported="true">

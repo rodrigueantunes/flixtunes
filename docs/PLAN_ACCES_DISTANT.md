@@ -68,6 +68,12 @@ contourné depuis le LAN, et réciproquement.
 - **La lecture seule est une propriété du système, pas une promesse du code** : d'où le hors-root et
   les médias montés en lecture seule.
 - **Aucun jeton dans une URL.** Ils finissent dans les journaux et les historiques.
+  *Amendée le 3 octobre 2026 (0.6.0.r10, décision D1 de `PLAN_DIFFUSION_060_R10.md`)* : un téléviseur
+  chez un proche ne porte ni compte ni session. Pour la seule route `GET /api/diffusion/flux/:cle/:nom`,
+  une clé de diffusion de 256 bits figure dans l'adresse : une clé par diffusion créée pour un téléviseur
+  distant, morte à l'arrêt, après deux minutes sans requête ni battement du relais, et au plus tard à la
+  durée du média plus une heure. Les clés du réseau local y répondent `404`. La clé est masquée du
+  journal du serveur, et Caddy ne journalise pas ces requêtes (`log_skip`).
 
 ## 5. Lots de travail, dans l'ordre
 

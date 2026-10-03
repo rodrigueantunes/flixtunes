@@ -2,8 +2,8 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { CentreDiffusion, BoutonDiffusion, RelaisDiffusion, useCatalogueDiffusion, useSurfaceDiffusion } from "./Diffusion";
-const { diffusion } = vi.hoisted(() => ({ diffusion: vi.fn() }));
-vi.mock("./api", () => ({ api: { diffusion, saveProgress: vi.fn().mockResolvedValue(undefined) } }));
+const { diffusion, remoteSession } = vi.hoisted(() => ({ diffusion: vi.fn(), remoteSession: vi.fn() }));
+vi.mock("./api", () => ({ api: { diffusion, remoteSession, saveProgress: vi.fn().mockResolvedValue(undefined) } }));
 const pause = vi.fn();
 const etat = { contenu: { genre: "media" as const, id: "film", titre: "Été à la télé" }, lecture: "lecture" as const, position: 123, duree: 3600, volume: 1, navigation: true, erreur: null };
 function Client() {
@@ -12,7 +12,7 @@ function Client() {
   return <BoutonDiffusion />;
 }
 beforeEach(() => {
-  vi.useFakeTimers(); pause.mockReset(); diffusion.mockReset();
+  vi.useFakeTimers(); pause.mockReset(); diffusion.mockReset(); remoteSession.mockReset().mockResolvedValue({ required: false, authenticated: true, account: null });
   diffusion.mockImplementation(async (_profil: string, path: string) => {
     if (path === "lecteurs") return { id: "ft-moi", cle: "cle" };
     if (path.startsWith("lecteurs/")) return { ordres: [] };
@@ -188,4 +188,26 @@ it("dit qui a lancé la diffusion qu’un autre profil regarde", async () => {
   await act(async () => { await vi.advanceTimersByTimeAsync(1); await vi.dynamicImportSettled(); });
   await act(async () => { await vi.dynamicImportSettled(); await vi.advanceTimersByTimeAsync(1); });
   expect(screen.getByRole("complementary").textContent).toContain("Papa");
+});
+
+it("hors de chez soi, propose la qualité maximale pour un téléviseur relayé, et le dit quand ce navigateur ne caste pas", async () => {
+  remoteSession.mockResolvedValue({ required: true, authenticated: true, account: "rodrigue" });
+  diffusion.mockImplementation(async (_profil: string, path: string) => {
+    if (path === "lecteurs") return { id: "ft-moi", cle: "cle" };
+    if (path.startsWith("lecteurs/")) return { ordres: [] };
+    if (path === "cibles") return { cibles: [{ id: "rl-tv", nom: "TV de Paul", protocole: "googlecast", modele: "Chromecast", relais: true, etat: null, occupe: false }] };
+    if (path.includes("/commande")) return { operation: "op" };
+    return {};
+  });
+  render(<CentreDiffusion><Client /></CentreDiffusion>);
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  fireEvent.click(screen.getByRole("button", { name: "Caster ou piloter un appareil" }));
+  await act(async () => { await vi.dynamicImportSettled(); await vi.advanceTimersByTimeAsync(350); });
+  // jsdom n'est pas Chrome : le panneau dit comment caster d'ici, sans bouton qui ne mènerait nulle part.
+  expect(screen.getByText(/ouvrez FlixTunes dans Chrome/)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Choisir un téléviseur de ce réseau" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: /TV de Paul/ }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /Qualité maximale/ }));
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Diffuser/ })); });
+  expect(diffusion).toHaveBeenCalledWith("profil", "cibles/rl-tv/commande?asynchrone=1", { type: "charger", contenu: etat.contenu, position: 123, qualite: "maximale" });
 });

@@ -1,5 +1,37 @@
 # Journal des versions
 
+## 0.6.0.r10 — caster hors de chez soi
+
+<!-- release -->
+### Cast depuis l'accès distant, sur le serveur, le Web et Android
+
+- **Caster chez un proche.** Connecté au NAS par l'accès distant, le téléphone voit les téléviseurs
+  Cast du Wi-Fi où il se trouve et les propose dans le dialogue de cast, à côté des lecteurs FlixTunes
+  du profil. Le NAS prépare la vidéo comme à la maison — formats sondés, qualité choisie, replis,
+  direct analysé — et le téléphone transmet au téléviseur.
+- **Depuis Chrome aussi** : « Choisir un téléviseur de ce réseau » ouvre le sélecteur Cast du
+  navigateur. L'onglet reste ouvert pendant la diffusion.
+- **AirPlay depuis Safari** fonctionne hors de chez soi.
+- **Une qualité qui tient sur un réseau inconnu** : au-delà de 25 Mbit/s, la source passe en
+  conversion 1080p ; la case « Qualité maximale » garde la 4K.
+- **La maison reste à la maison** : de l'extérieur, les téléviseurs de chez vous ne sont ni listés ni
+  pilotables.
+- **Les lecteurs FlixTunes du profil** — Android TV, navigateur — deviennent des cibles depuis
+  l'extérieur.
+
+### Sécurité
+
+- Le téléviseur lit par le domaine de l'accès distant avec une clé propre à la diffusion, seule
+  exception à la session obligatoire : morte à l'arrêt, après deux minutes d'inactivité, et au plus
+  tard une heure après la fin du média. Les clés du réseau local restent fermées à Internet.
+- La clé n'apparaît ni dans le journal du serveur ni dans celui du proxy de l'accès distant.
+<!-- /release -->
+
+Mesuré par un relais joué par le PC vers la Pixel Tablet : film converti après une sonde relayée en
+16 s, CNews en 7 s, TF1 en 11 s, avec pause, reprise, déplacement et arrêt. Le chemin Internet réel, les
+émetteurs Android et Chrome et AirPlay restent à mesurer sur place. Le NAS doit passer en r10.
+[Analyse et mesures de la r10](docs/DIFFUSION_060_R10.md).
+
 ## 0.6.0.r9 — le direct sur un téléviseur, comme sans cast
 
 <!-- release -->

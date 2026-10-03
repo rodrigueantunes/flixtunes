@@ -114,6 +114,9 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-dash:1.10.1")
     implementation("androidx.media3:media3-ui:1.10.1")
     implementation("androidx.media3:media3-session:1.10.1")
+    // Cast hors de chez soi (r10) : le téléphone relaie au NAS les téléviseurs Cast du réseau courant.
+    implementation("com.google.android.gms:play-services-cast-framework:22.3.1")
+    implementation("androidx.mediarouter:mediarouter:1.8.1")
     testImplementation("junit:junit:4.13.2")
     // Sur les tests JVM, org.json provient du stub d'android.jar dont chaque méthode lève « not mocked ».
     // La vraie implémentation, placée avant le stub sur le classpath de test, rend les analyseurs

@@ -51,7 +51,11 @@ route ajoutée par une évolution ultérieure est fermée d'office, et le test l
 ### Session
 
 - session obligatoire sur **toutes** les routes, y compris le flux vidéo, les jaquettes et les
-  sous-titres ;
+  sous-titres — à une exception près, décidée le 3 octobre 2026 (0.6.0.r10) : le flux à clé d'un
+  téléviseur hors de chez soi (`/api/diffusion/flux/:cle/:nom`) et les clips de sonde embarqués. Un
+  téléviseur ne porte ni compte ni session ; la clé, de 256 bits, ne vaut que pour une diffusion créée
+  pour lui, meurt à l'arrêt, après deux minutes d'inactivité et au plus tard une heure après la fin du
+  média, n'est journalisée ni par le serveur ni par Caddy. Les clés du réseau local y répondent `404` ;
 - jeton porté par en-tête `X-FlixTunes-Profile-Token` **ou** par cookie
   `HttpOnly; Secure; SameSite=Strict` — le cookie est indispensable, `<video>`, `<img>` et `<track>`
   ne pouvant porter aucun en-tête ;

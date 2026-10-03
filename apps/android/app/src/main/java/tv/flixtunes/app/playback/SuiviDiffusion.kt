@@ -41,12 +41,14 @@ object SuiviDiffusion {
     private data class Transfert(val cible: String, val contenu: String, val pause: () -> Unit)
 
     fun attacher(proprietaire: LifecycleOwner, api: FlixTunesApi): () -> Unit {
+        // Hors de chez soi, le téléphone relaie les téléviseurs Cast qu'il voit : ils deviennent des cibles.
+        val relais = (proprietaire as? android.content.Context)?.let { RelaisCast.attacher(proprietaire, it, api) }
         val observateur = object : DefaultLifecycleObserver {
             override fun onStart(owner: LifecycleOwner) { this@SuiviDiffusion.api = api; visibles++; demarrer() }
             override fun onStop(owner: LifecycleOwner) { visibles = (visibles - 1).coerceAtLeast(0) }
         }
         proprietaire.lifecycle.addObserver(observateur)
-        return { proprietaire.lifecycle.removeObserver(observateur); if (proprietaire.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) visibles = (visibles - 1).coerceAtLeast(0) }
+        return { relais?.invoke(); proprietaire.lifecycle.removeObserver(observateur); if (proprietaire.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) visibles = (visibles - 1).coerceAtLeast(0) }
     }
 
     fun attendreTransfert(cible: String, contenu: String, pause: () -> Unit) { transfert = Transfert(cible, contenu, pause); relancer() }

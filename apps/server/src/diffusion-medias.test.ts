@@ -7,7 +7,9 @@ const fixture = vi.hoisted(() => ({ dossier: "", permis: true, hls: false, sourc
 vi.mock("./database.js", () => ({ getProfile: (id: string) => id === "profil" ? { preferredAudioLanguages: ["fra"] } : null,
   db: { prepare: () => ({ get: () => ({ file_path: path.join(fixture.dossier, "media.mp4") }) }) } }));
 vi.mock("./catalog-view.js", () => ({ getMediaItem: (profil: string, id: string) => profil === "profil" && fixture.permis && ["film", "episode", "video-web"].includes(id)
-  ? { id, title: "Été à la télé", runtimeSeconds: 1800 } : null }));
+  ? { id, title: "Été à la télé", runtimeSeconds: 1800, posterUrl: "/api/artwork/affiche-1" } : null }));
+vi.mock("./artwork.js", () => ({ getArtworkAsset: (id: string) => id === "affiche-1" ? { localPath: path.join(fixture.dossier, "media.mp4"), mimeType: "image/jpeg" } : null }));
+vi.mock("./wan-parametres.js", () => ({ parametresWan: () => ({ domaine: "flixtunes.exemple.fr" }) }));
 vi.mock("./television-direct.js", () => ({ chaineDetaillee: (id: string) => id === "chaine" ? { nom: "Télévision", sources: [{ url: "http://example.com/live.m3u8" }, { url: "http://example.com/secours.m3u8" }] } : null }));
 vi.mock("./playback.js", () => ({ getPlaybackInfo: async () => ({}), decidePlayback: fixture.decision, createPlaybackSession: fixture.source, getPlaybackSession: fixture.etat, stopPlaybackSession: fixture.fermer,
   getPlaybackFile: (_id: string, nom: string) => ["manifest.m3u8", "segment_00000.ts"].includes(nom)
@@ -16,12 +18,14 @@ vi.mock("./live-compat.js", () => ({ commencerConversionLive: fixture.live, list
   arreterConversionLive: fixture.fermer,
   fichierConversionLive: async (_profil: string, _id: string, nom: string) => nom === "live.m3u8"
     ? { chemin: path.join(fixture.dossier, "manifest.m3u8"), type: "application/vnd.apple.mpegurl" } : null }));
-import { MediasDiffusion } from "./diffusion-medias.js";
+import { INACTIVITE_DISTANTE_MS, MediasDiffusion, origineDistante } from "./diffusion-medias.js";
 const medias = new MediasDiffusion(), app = Fastify();
 beforeAll(async () => {
   fixture.dossier = await mkdtemp(path.join(tmpdir(), "flixtunes-cast-media-"));
   await writeFile(path.join(fixture.dossier, "media.mp4"), "0123456789");
   await writeFile(path.join(fixture.dossier, "segment_00000.ts"), "segment-test");
+  // L'écoute distante pose `expositionWan` ; un en-tête de banc en tient lieu.
+  app.addHook("onRequest", async (req) => { if (req.headers["x-banc-wan"]) req.expositionWan = true; });
   app.get<{ Params: { cle: string; nom: string } }>("/api/diffusion/flux/:cle/:nom", (req, reply) => medias.servir(req.params.cle, req.params.nom, req, reply));
 });
 beforeEach(async () => {
@@ -152,4 +156,41 @@ it("confie le direct source à l'analyse pour le récepteur, et suit le conteneu
   expect(fixture.live.mock.calls[0]?.[5]).toMatchObject({ diffusion: true, recepteur: { hauteurMax: 720, hevc: false } });
   expect(fixture.live.mock.calls[0]?.[5]).not.toHaveProperty("copieVideo");
   expect(m.segmentsFmp4).toBe(true); expect(m.qualite).toBe("Vidéo source conservée");
+});
+
+it("ne sert depuis Internet que les diffusions préparées pour un téléviseur distant", async () => {
+  const locale = await medias.preparer("profil", { genre: "media", id: "film", titre: "Film" }, "http://10.0.0.1:4000", 0);
+  const chemin = new URL(locale.url).pathname;
+  expect((await app.inject({ url: chemin, headers: { "x-banc-wan": "1" } })).statusCode).toBe(404);
+  expect((await app.inject(chemin)).statusCode).toBe(200);
+  const distante = await medias.preparer("profil", { genre: "media", id: "film", titre: "Film" }, origineDistante(), 0, { distant: true });
+  expect(distante.url.startsWith("https://flixtunes.exemple.fr/api/diffusion/flux/")).toBe(true);
+  const r = await app.inject({ url: new URL(distante.url).pathname, headers: { "x-banc-wan": "1" } });
+  expect(r.statusCode).toBe(200); expect(r.headers["access-control-allow-origin"]).toBe("*");
+  // Au plus la durée du média et une heure.
+  expect(distante.expire - Date.now()).toBeGreaterThan((1800 + 3500) * 1000);
+  expect(distante.expire - Date.now()).toBeLessThanOrEqual((1800 + 3600) * 1000);
+});
+it("sert l'affiche d'une diffusion distante avec sa clé, sans session", async () => {
+  const m = await medias.preparer("profil", { genre: "media", id: "film", titre: "Film" }, "https://flixtunes.exemple.fr", 0, { distant: true });
+  expect(m.metadonnees?.image).toBe(`https://flixtunes.exemple.fr/api/diffusion/flux/${m.cle}/affiche`);
+  const r = await app.inject({ url: `/api/diffusion/flux/${m.cle}/affiche`, headers: { "x-banc-wan": "1" } });
+  expect(r.statusCode).toBe(200); expect(r.headers["content-type"]).toContain("image/jpeg");
+  // À la maison, l'affiche reste celle de la médiathèque.
+  const locale = await medias.preparer("profil", { genre: "media", id: "film", titre: "Film" }, "http://10.0.0.1:4000", 0);
+  expect(locale.metadonnees?.image).toBe("http://10.0.0.1:4000/api/artwork/affiche-1");
+});
+it("révoque une clé distante après deux minutes sans requête ni battement, mais pas une clé locale", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const distante = await medias.preparer("profil", { genre: "media", id: "film", titre: "Film" }, "https://flixtunes.exemple.fr", 0, { distant: true });
+  const locale = await medias.preparer("profil", { genre: "media", id: "episode", titre: "Épisode" }, "http://10.0.0.1:4000", 0);
+  vi.setSystemTime(Date.now() + INACTIVITE_DISTANTE_MS - 5_000);
+  medias.entretenir(distante.cle);
+  vi.setSystemTime(Date.now() + INACTIVITE_DISTANTE_MS - 5_000);
+  await (medias as unknown as { purger(): Promise<void> }).purger();
+  expect((await app.inject(new URL(distante.url).pathname)).statusCode).toBe(200);
+  vi.setSystemTime(Date.now() + INACTIVITE_DISTANTE_MS + 5_000);
+  await (medias as unknown as { purger(): Promise<void> }).purger();
+  expect((await app.inject(new URL(distante.url).pathname)).statusCode).toBe(404);
+  expect((await app.inject(new URL(locale.url).pathname)).statusCode).toBe(200);
 });

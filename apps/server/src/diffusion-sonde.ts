@@ -90,7 +90,23 @@ export async function servirSonde(dossier: string, fichier: string, reply: Fasti
   } catch { return reply.code(404).send(); }
 }
 
-export interface SourceVideo { codec: string | null; hauteur: number; hdr: boolean; mp4Direct: boolean }
+export interface SourceVideo { codec: string | null; hauteur: number; hdr: boolean; mp4Direct: boolean;
+  /** Débit moyen du fichier, en bit/s, quand il est connu. */
+  debit?: number }
+
+/** Hors de chez soi, au-delà de ce débit, la source n'est copiée que sur demande de la qualité maximale. */
+export const DEBIT_DISTANT_MAX = 25_000_000;
+
+/**
+ * Le plan d'un cast hors de chez soi. Le débit du réseau d'accueil est inconnu, et le lecteur Cast
+ * n'adapte pas la qualité d'une liste à une seule variante : une copie 4K à 60 Mbit/s y tournerait en
+ * chargement sans fin. Au-delà de 25 Mbit/s, la conversion 1080p passe donc d'abord.
+ */
+export function planDistant(plan: NiveauDiffusion[], source: SourceVideo | null, maximale: boolean): NiveauDiffusion[] {
+  if (maximale || !source?.debit || source.debit <= DEBIT_DISTANT_MAX) return plan;
+  const sansCopie = plan.filter((niveau) => !niveau.qualiteSource);
+  return sansCopie.length ? sansCopie : plan;
+}
 
 /**
  * Un niveau de qualité à essayer. `source` copie la vidéo telle quelle ; les autres la convertissent

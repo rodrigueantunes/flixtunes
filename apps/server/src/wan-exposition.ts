@@ -26,8 +26,25 @@ function cle(methode: string, motif: string): string {
 }
 
 /**
+ * La seule exception à la session obligatoire, décidée le 3 octobre 2026 pour la 0.6.0.r10 (décision D1
+ * de `PLAN_DIFFUSION_060_R10.md`) : un téléviseur chez un proche ne porte ni compte ni session.
+ *
+ * - `/api/diffusion/flux/:cle/:nom` ne sert que les diffusions créées **pour un téléviseur distant** :
+ *   une clé aléatoire de 256 bits par diffusion, morte à l'arrêt, après deux minutes sans requête ni
+ *   battement du relais, et au plus tard à la durée du média plus une heure. Toute autre clé répond
+ *   `404`, y compris celles du réseau local. La clé est masquée du journal du serveur, et Caddy ne
+ *   journalise pas ces requêtes.
+ * - `/api/diffusion/sonde/:dossier/:fichier` ne sert que les clips de sonde embarqués dans le paquet,
+ *   les mêmes pour tous : aucune donnée de la médiathèque.
+ */
+const FLUX_A_CLE = [
+  cle("GET", "/api/diffusion/flux/:cle/:nom"),
+  cle("GET", "/api/diffusion/sonde/:dossier/:fichier"),
+];
+
+/**
  * Les routes accessibles sans session : strictement de quoi afficher l'écran de choix de profil et
- * se déverrouiller. Rien d'autre — et surtout aucune donnée de la médiathèque.
+ * se déverrouiller, plus le flux à clé des téléviseurs distants. Aucune donnée de la médiathèque.
  */
 const SANS_SESSION = new Set([
   cle("GET", "/api/health"),
@@ -40,6 +57,7 @@ const SANS_SESSION = new Set([
   cle("GET", "/api/profiles"),
   cle("GET", "/api/profile-groups"),
   cle("POST", "/api/profiles/:id/unlock"),
+  ...FLUX_A_CLE,
 ]);
 
 /** Seules ces routes précèdent le compte de connexion de l'appareil. */
@@ -47,6 +65,7 @@ const SANS_COMPTE = new Set([
   cle("GET", "/api/health"),
   cle("GET", "/api/remote/session"),
   cle("POST", "/api/remote/login"),
+  ...FLUX_A_CLE,
 ]);
 
 /**
@@ -87,6 +106,10 @@ const LECTURES = new Set([
   cle("GET", "/api/media/:id/subtitles/external/:index.vtt"),
   cle("GET", "/api/playback/:id"),
   cle("GET", "/api/playback/:id/:file"),
+  // Cast hors de chez soi (r10) : les cibles du profil — ses lecteurs FlixTunes et les téléviseurs que
+  // ses relais voient, jamais ceux de la maison — et l'accusé d'un ordre.
+  cle("GET", "/api/diffusion/cibles"),
+  cle("GET", "/api/diffusion/cibles/:id/ordres/:ordre"),
 ]);
 
 /**
@@ -120,6 +143,15 @@ const ECRITURES = new Set([
   cle("PUT", "/api/catalog/:id/watchlist"),
   cle("DELETE", "/api/catalog/:id/watchlist"),
   cle("PUT", "/api/recommendations/feedback"),
+  // Cast hors de chez soi (r10). Chacune ne touche que le registre éphémère du profil, ou une diffusion
+  // qu'il lance : un lecteur FlixTunes s'inscrit et bat, un relais annonce le téléviseur qu'il voit,
+  // une commande vise un lecteur ou un téléviseur relayé du profil, AirPlay prépare un flux distant.
+  cle("POST", "/api/diffusion/lecteurs"),
+  cle("POST", "/api/diffusion/lecteurs/:id"),
+  cle("POST", "/api/diffusion/relais"),
+  cle("POST", "/api/diffusion/cibles/:id/commande"),
+  cle("POST", "/api/diffusion/airplay"),
+  cle("POST", "/api/diffusion/airplay/:cle/arreter"),
 ]);
 
 export type VerdictWan =
