@@ -1,5 +1,40 @@
 # Journal des versions
 
+## 0.6.0.r12 — un direct sans saut visible, à la meilleure qualité
+
+<!-- release -->
+### Live TV, sur Android et le Web
+
+- **Plus de micro-saccades dues au rattrapage.** Les lecteurs accéléraient ou ralentissaient de
+  quelques pour cent pour se recaler sur le direct ; dans le navigateur, la vitesse basculait à chaque
+  rechargement de la chaîne — 49 fois en moins de trois minutes sur CNews. Le direct joue désormais
+  toujours à vitesse normale.
+- **Plus de bond en avant pour un simple retard.** Seule la fin de ce que la chaîne garde en réserve
+  impose de bouger, et l'on reprend alors au plus près, en sautant le moins possible : sur une chaîne
+  qui garde cinq minutes, le lecteur pouvait sauter quatre minutes de programme d'un coup.
+- **Sur téléviseur, l'écran se cale sur la cadence de la chaîne** (50 Hz pour les chaînes françaises),
+  comme pour les films, au lieu de saccader à 60 Hz.
+
+### Qualité, sur le serveur, Android et le Web
+
+- **La chaîne s'ouvre dans la bonne qualité**, celle que l'appareil a déjà tenue, au lieu de démarrer
+  floue et de s'améliorer sous les yeux.
+- **Une chaîne que le navigateur ne lit pas telle quelle** n'est plus réduite à un 720p à faible débit,
+  ni prise dans sa plus petite version : elle est gardée intacte quand c'est possible, et sinon
+  convertie à pleine définition.
+- **Le direct sur un téléviseur, en cast** : conversions à plus haut débit, son de meilleure qualité.
+
+### Live TV, sur Android, Windows, Linux et le Web
+
+- **« Ne garder que les chaînes qui marchent »** : pendant une recherche de chaîne, un bouton teste en
+  quelques secondes les chaînes trouvées et ne garde que celles qui jouent en ce moment, avec une
+  barre de progression. Une nouvelle recherche remet tout.
+<!-- /release -->
+
+Mesuré dans le vrai client Web sur CNews : 49 changements de vitesse en 162 s avant, aucun en 200 s
+après, lecture tenue sans déplacement ni attente. Test des chaînes : 148 chaînes en 5,5 s. Le passage à 50 Hz et la fluidité sur un vrai
+téléviseur restent à juger sur place. [Analyse et mesures de la r12](docs/DIRECT_060_R12.md).
+
 ## 0.6.0.r11 — un cast plus stable, à la maison comme chez un proche
 
 <!-- release -->

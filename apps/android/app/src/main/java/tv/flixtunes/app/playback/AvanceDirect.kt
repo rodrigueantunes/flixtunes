@@ -33,3 +33,33 @@ fun avanceViseeMs(fenetreMs: Long, segmentMs: Long, fragile: Boolean): Long {
     val souhaitee = minOf(plafond, maxOf(2 * segment, fenetreMs - MARGE_ARRIERE_AVANCE_MS))
     return maxOf(0L, minOf(plafond, souhaitee, fenetreMs - minOf(segment, fenetreMs / 2)))
 }
+
+/*
+ * r12 — **aucun saut que l'on puisse éviter.**
+ *
+ * Le direct joue désormais toujours à 1× : la vitesse variable (0,97× à 1,06×) recalait la latence en
+ * continu, et chaque écart à 1× désaccorde la cadence des images d'avec l'écran — des micro-saccades,
+ * visibles sur un téléviseur réglé à 50 Hz. Sans rattrapage, le retard ne grandit qu'à chaque calage,
+ * et l'on ne bouge que lorsque la fenêtre de la chaîne l'impose : au bord arrière. Là, on reprend au
+ * plus près de ce bord, pas à l'avance visée — sur une fenêtre de cinq minutes, revenir à 40 s du
+ * direct faisait sauter quatre minutes de programme.
+ */
+
+/** Sous cette marge au bord arrière, la lecture va tomber hors de ce que la chaîne publie encore. */
+const val SEUIL_BORD_ARRIERE_MS = 12_000L
+
+/** La marge où l'on reprend : trois segments ordinaires, de quoi absorber un rechargement de playlist. */
+const val MARGE_REPRISE_MS = 24_000L
+
+/** Faut-il reprendre parce que le bord arrière approche ? Jamais sur une fenêtre trop courte pour en avoir un. */
+fun doitReprendreAuBordArriere(positionMs: Long, fenetreMs: Long, segmentMs: Long): Boolean {
+    val segment = segmentMs.coerceAtLeast(1_000L)
+    if (fenetreMs <= 2 * segment + MARGE_REPRISE_MS) return false
+    return positionMs in 1 until maxOf(SEUIL_BORD_ARRIERE_MS, segment * 3 / 2)
+}
+
+/** Le point de reprise, compté depuis le bord arrière : le moins de programme sauté, sans retomber aussitôt. */
+fun repriseAuBordArriereMs(fenetreMs: Long, segmentMs: Long): Long {
+    val segment = segmentMs.coerceAtLeast(1_000L)
+    return minOf(maxOf(MARGE_REPRISE_MS, 3 * segment), fenetreMs - segment).coerceAtLeast(0L)
+}

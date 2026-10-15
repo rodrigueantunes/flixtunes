@@ -85,7 +85,7 @@ export function argumentsConversionLive(entree: string, dossier: string, format:
     ...(copie ? ["-c:v", "copy"] : video ? video.sortie : ["-vf", "scale=w='min(1280,iw)':h='min(720,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2", "-r", "30", "-c:v", "libx264", "-threads", "2",
     "-preset", "veryfast", "-pix_fmt", "yuv420p", "-profile:v", "main", "-b:v", "2200k",
     "-maxrate", "2600k", "-bufsize", "5200k", "-g", "120", "-keyint_min", "120", "-sc_threshold", "0"]),
-    "-c:a", "aac", "-ac", "2", "-b:a", "160k", "-f", "hls", "-hls_time", video ? "2" : "4",
+    "-c:a", "aac", "-ac", "2", "-b:a", "192k", "-f", "hls", "-hls_time", video ? "2" : "4",
     ...(segmentsFmp4 ? ["-hls_segment_type", "fmp4", "-hls_fmp4_init_filename", "init.mp4"] : []),
     "-hls_list_size", "18", "-hls_delete_threshold", "2", "-hls_flags", "delete_segments+temp_file+independent_segments",
     "-hls_segment_filename", path.join(dossier, segmentsFmp4 ? "segment%09d.m4s" : "segment%09d.ts"), path.join(dossier, "live.m3u8")];
@@ -250,8 +250,9 @@ export async function commencerConversionLive(profil: string, chaine: string, so
   for (const s of sessions.values()) if (Date.now() - s.acces > 60_000) await arreter(s);
   for (const s of sessions.values()) if (s.profil === profil && s.lecture === lecture) await arreter(s);
   const max = conversionsDuDirectMax();
-  // Une diffusion ne sait qu'après analyse si elle copie ou convertit : elle est comptée à ce moment-là.
-  const convertira = !options.recepteur && !options.copieVideo;
+  // Une diffusion, comme une conversion locale analysée (r12), ne sait qu'après analyse si elle copie
+  // ou convertit : elle est comptée à ce moment-là. Seule une ancienne demande sans analyse l'est d'emblée.
+  const convertira = !options.recepteur && !options.copieVideo && !!options.diffusion;
   if (sessions.size >= max + 3 || (convertira && conversionsEnCours() >= max)) throw occupee(max);
   if (freemem() < 512 * 1024 * 1024) throw new Error("Mémoire insuffisante sur le NAS pour une conversion du direct");
   const admission = decideAdmission({ mode: options.copieVideo ? "remux" : "transcode", variants: [{ width: 1280, height: 720 }], frameRate: 30 }, currentAdmissionState());
@@ -272,7 +273,33 @@ export async function commencerConversionLive(profil: string, chaine: string, so
     signal?.throwIfAborted();
     if (session.arretee) { await session.entree.fermer(); throw new Error("Conversion annulée"); }
     if (options.recepteur) return await commencerDiffusion(session, format, options, signal);
-    const processus = spawn(config.ffmpegPath, argumentsConversionLive(session.entree.url, session.dossier, format, options.copieVideo, options.diffusion), {
+    /*
+     * r12 : la conversion locale — pour un navigateur qui ne lit pas le flux tel quel — profite de
+     * l'analyse du direct. Elle convertissait toujours, en logiciel, en 720p30 à 2,2 Mbit/s, et à partir
+     * de la première variante de la liste : sur CNews, un 480×270. Elle prend désormais la meilleure
+     * variante, la copie quand le navigateur sait la lire (le son seul est converti, cas d'une piste
+     * AC-3), et sinon la convertit à pleine définition par le circuit vidéo mesuré, ou en 720p propre.
+     */
+    let entreeLocale = session.entree.url;
+    let traitementLocal: TraitementLive | undefined;
+    if (!options.copieVideo && !options.diffusion) {
+      const materiel = materielDuDirect();
+      const navigateur: RecepteurLive = { hauteurMax: 1080, hevc: false };
+      const preparee = await preparerEntreeDiffusion(session.entree.url, format, navigateur, !!materiel);
+      signal?.throwIfAborted();
+      if (session.arretee) throw new Error("Conversion annulée");
+      if (preparee.analyse) {
+        entreeLocale = preparee.entree;
+        traitementLocal = choisirTraitementLive(preparee.analyse, navigateur, materiel);
+        session.copieVideo = traitementLocal.copie;
+      }
+      if (!traitementLocal?.copie) {
+        if (conversionsEnCours(session) >= max) throw occupee(max);
+        session.conversion = true;
+      }
+    }
+    const processus = spawn(config.ffmpegPath, argumentsConversionLive(entreeLocale, session.dossier, format, options.copieVideo, options.diffusion,
+      traitementLocal), {
       cwd: session.dossier, windowsHide: true, stdio: ["ignore", "ignore", "pipe"],
     });
     session.processus = processus;

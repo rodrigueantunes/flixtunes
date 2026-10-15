@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { budgetCacheDirect, familleLecteur, formatAdresse, imagesPresentees, identifiantLectureDirect, JournalDirect, reserveDeDepart, vitesseContinue } from "./pilotage-direct";
+import { budgetCacheDirect, debitRetenu, familleLecteur, formatAdresse, imagesPresentees, identifiantLectureDirect, JournalDirect, reserveDeDepart, retenirDebit } from "./pilotage-direct";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -19,12 +19,20 @@ describe("pilotage Web du direct", () => {
     expect(reserveDeDepart(9)).toBe(3);
     expect(reserveDeDepart(0)).toBe(8);
   });
-  it("régule sans consommer une réserve critique ni annuler un recul manuel", () => {
-    expect(vitesseContinue(48, 40, 25, false)).toBe(1.03);
-    expect(vitesseContinue(59, 55, 20, false)).toBe(1.06);
-    expect(vitesseContinue(48, 40, 3, false)).toBe(1);
-    expect(vitesseContinue(40, 55, 20, false)).toBe(0.98);
-    expect(vitesseContinue(59, 40, 20, true)).toBe(1);
+  it("retient le débit mesuré pour démarrer dans la bonne qualité, lissé et borné (r12)", () => {
+    const memoire = new Map<string, string>();
+    const avant = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+    Object.defineProperty(globalThis, "localStorage", { configurable: true,
+      value: { getItem: (c: string) => memoire.get(c) ?? null, setItem: (c: string, v: string) => { memoire.set(c, v); } } });
+    try {
+      expect(debitRetenu()).toBeUndefined();
+      retenirDebit(10_000_000); expect(debitRetenu()).toBe(10_000_000);
+      // Une soirée sur un réseau lent ne fixe pas le départ des suivantes.
+      retenirDebit(2_000_000); expect(debitRetenu()).toBe(7_600_000);
+      retenirDebit(Number.NaN); retenirDebit(100_000); expect(debitRetenu()).toBe(7_600_000);
+    } finally {
+      if (avant) Object.defineProperty(globalThis, "localStorage", avant); else delete (globalThis as { localStorage?: unknown }).localStorage;
+    }
   });
   it("ne compte pas une image perdue comme une image présentée", () => {
     expect(imagesPresentees({ getVideoPlaybackQuality: () => ({ totalVideoFrames: 12, droppedVideoFrames: 10 }) } as HTMLVideoElement)).toBe(2);

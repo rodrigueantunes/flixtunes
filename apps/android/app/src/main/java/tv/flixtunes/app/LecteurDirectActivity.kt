@@ -113,6 +113,11 @@ import tv.flixtunes.app.playback.estRelaisFlixTunes
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
 import tv.flixtunes.app.playback.avanceViseeMs
+import tv.flixtunes.app.playback.accorderCadenceEcran
+import tv.flixtunes.app.playback.DebitRetenu
+import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
+import tv.flixtunes.app.playback.doitReprendreAuBordArriere
+import tv.flixtunes.app.playback.repriseAuBordArriereMs
 import tv.flixtunes.app.playback.GroupeDeSources
 import tv.flixtunes.app.playback.debutDeVague
 import tv.flixtunes.app.playback.premiereAdresse
@@ -322,6 +327,14 @@ class LecteurDirectActivity : ComponentActivity() {
         budgetMemoireDirect(minOf(Runtime.getRuntime().maxMemory(), gestionnaire.memoryClass.toLong() * 1024 * 1024), gestionnaire.isLowRamDevice)
     }
     private val cacheSegments by lazy { CacheSegmentsDirect(maximum = budgetMemoire.cacheOctets) }
+    /**
+     * r12 : un seul compteur de débit pour les lecteurs du direct, qui démarre de ce que l'appareil a
+     * déjà tenu (à 80 %, par prudence) au lieu d'une estimation générique.
+     */
+    private val compteurDebit by lazy {
+        DefaultBandwidthMeter.Builder(this).apply { DebitRetenu.lire(this@LecteurDirectActivity)?.let { setInitialBitrateEstimate(it * 8 / 10) } }.build()
+    }
+    private var debitRetenuLe = 0L
     private var adresseRapportee: String? = null
     /** Ce qui a coupé, et au bout de combien de temps — dit à l'écran plutôt que deviné. */
     private var dernierIncident: String? = null
@@ -432,6 +445,7 @@ class LecteurDirectActivity : ComponentActivity() {
             if (renduTvProtege) setRenderersFactory(RenduDirectTv(this@LecteurDirectActivity))
         }
             .setLivePlaybackSpeedControl(controleVitesse)
+            .setBandwidthMeter(compteurDebit)
 
             .setMediaSourceFactory(
                 DefaultMediaSourceFactory(this)
@@ -469,6 +483,12 @@ class LecteurDirectActivity : ComponentActivity() {
                     val avant = dernierFormat
                     dernierFormat = format
                     if (lecteur === joueurObserve) {
+                        // r12 : l'écran du téléviseur suit la cadence de la chaîne — 50 Hz pour une chaîne
+                        // française —, au lieu de saccader à 60 Hz. Rien n'est demandé si rien ne change.
+                        if (estAppareilTv(this@LecteurDirectActivity) && format.frameRate > 0f &&
+                            (avant == null || kotlin.math.abs(avant.frameRate - format.frameRate) > 0.5f)) {
+                            accorderCadenceEcran(format.frameRate.toDouble())
+                        }
                         renduCourant = decrireRendu(format)
                         if (avant != null && (avant.colorInfo != format.colorInfo || avant.sampleMimeType != format.sampleMimeType)
                             && rearmerCouleursDirect(avant, format) && !renduTvProtege) {
@@ -1288,7 +1308,13 @@ class LecteurDirectActivity : ComponentActivity() {
         .setLiveConfiguration(MediaItem.LiveConfiguration.Builder()
             .setTargetOffsetMs(if (incidents > 0 || (echecs[source] ?: 0) > 0) 55_000 else 40_000)
             .setMinOffsetMs(2_000).setMaxOffsetMs(AVANCE_FRAGILE_MS)
-            .setMinPlaybackSpeed(0.97f).setMaxPlaybackSpeed(1.06f).build())
+            /*
+             * r12 : **toujours 1×.** La vitesse variable recalait la latence en continu, entre 0,97×
+             * et 1,06× ; chaque écart à 1× désaccorde la cadence des images d'avec l'écran, et cela se
+             * voit en micro-saccades, surtout sur un téléviseur à 50 Hz. Le retard n'est plus rattrapé :
+             * il ne grandit qu'à chaque calage, et la fenêtre de la chaîne l'absorbe.
+             */
+            .setMinPlaybackSpeed(1f).setMaxPlaybackSpeed(1f).build())
         .build()
 
     private suspend fun renouvelerAdresses() {
@@ -1469,6 +1495,10 @@ class LecteurDirectActivity : ComponentActivity() {
                      * temps. Un tampon qui fond se voit dix secondes à l'avance ; dix secondes
                      * suffisent à changer de variante, alors qu'à zéro il ne reste plus qu'à réparer.
                      */
+                    if (joueur.isPlaying && maintenant - debitRetenuLe >= 5_000) {
+                        debitRetenuLe = maintenant
+                        DebitRetenu.retenir(this@LecteurDirectActivity, compteurDebit.bitrateEstimate)
+                    }
                     if (joueur.isPlaying) {
                         val tamponMs = (joueur.bufferedPosition - joueur.currentPosition)
                             .coerceAtLeast(0)
@@ -1530,8 +1560,10 @@ class LecteurDirectActivity : ComponentActivity() {
                      * direct en le disant — ExoPlayer sait aussi le signaler lui-même, par
                      * `ERROR_CODE_BEHIND_LIVE_WINDOW`, mais l'attendre voudrait dire attendre l'erreur.
                      */
-                    if (!enPause && fenetreMs > FENETRE_MINIMALE_MS &&
-                        (positionMs in 1 until FENETRE_MINIMALE_MS || retardMs > AVANCE_FRAGILE_MS)) {
+                    val segmentDirectMs = (joueur.currentManifest as? HlsManifest)?.mediaPlaylist?.targetDurationUs
+                        ?.div(1_000)?.takeIf { it > 0 } ?: 8_000L
+                    // r12 : plus de bond en avant pour un simple retard — seule la fenêtre de la chaîne l'impose.
+                    if (!enPause && doitReprendreAuBordArriere(positionMs, fenetreMs, segmentDirectMs)) {
                         /*
                          * **En silence.**
                          *
@@ -1545,7 +1577,9 @@ class LecteurDirectActivity : ComponentActivity() {
                          * avant, faisait de ces douze secondes la nouvelle cible d'ExoPlayer — un saut
                          * vaut consigne —, et la marge était perdue pour le reste de la soirée.
                          */
-                        deplacerLecture(joueur)
+                        // r12 : reprendre au plus près du bord arrière, pas à l'avance visée — sur une fenêtre de
+                        // cinq minutes, revenir à 40 s du direct faisait sauter quatre minutes de programme.
+                        deplacerLecture(joueur, repriseAuBordArriereMs(fenetreMs, segmentDirectMs))
                         // Le saut efface la cible écrite : la surveillance la réécrira si la source est fragile.
                         avanceDemandeeMs = C.TIME_UNSET
                         silenceJusqua = System.currentTimeMillis() + REPIT_APRES_GESTE_MS

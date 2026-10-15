@@ -698,6 +698,11 @@ h1, h2 { font-family: "Manrope", sans-serif; }
  * Elle a la silhouette d'une commande et non d'une carte : ce n'est pas une chaîne parmi les autres,
  * c'est un raccourci vers celle qu'on regardait.
  */
+/* r12 : la vérification des chaînes d'une recherche. Une chaîne muette s'estompe sans bouger la grille. */
+.live-verification { display: grid; gap: .3rem; align-content: end; min-width: min(100%, 15rem); }
+.live-verification small { color: var(--muted); font-size: .76rem; }
+.live-carte-enveloppe { transition: opacity .3s ease; }
+.live-carte-enveloppe.muette { opacity: .28; }
 .live-reprise { display: flex; align-items: baseline; gap: var(--pas-2); margin-top: var(--pas-3);
   padding: var(--pas-2) var(--pas-3); border: 1px solid var(--line); border-radius: var(--rayon-commande);
   background: #ffffff08; color: inherit; cursor: pointer; }

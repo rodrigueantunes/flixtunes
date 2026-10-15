@@ -168,9 +168,18 @@ data class SectionDirect(
     val masquerMortes: Boolean = false,
     /** La dernière chaîne regardée, pour la rallumer d'un geste. */
     val derniere: ChaineDirect? = null,
+    /** r12 : la vérification en cours des chaînes de la recherche. */
+    val verification: VerificationEnCours? = null,
+    /** Les chaînes qui jouaient au moment du test ; `null` hors filtrage. Tombe à tout changement de critère. */
+    val verifiees: List<ChaineDirect>? = null,
+    val verifieesTotal: Int = 0,
 ) {
-    val hasMore: Boolean get() = items.size < total
+    val hasMore: Boolean get() = verifiees == null && items.size < total
 }
+
+/** Faites sur total, et les chaînes déjà connues muettes — elles s'estompent pendant le test. */
+@Immutable
+data class VerificationEnCours(val total: Int, val faites: Int, val mortes: Set<String>)
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     // Le type déclaré est le contrat, pas la mise en œuvre : c'est ce qui permettra de fournir un
@@ -845,6 +854,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
     }
 
+    private var verificationDirect: Job? = null
+
+    /**
+     * « Ne garder que les chaînes qui marchent » (r12) : le NAS vérifie, à l'instant, les chaînes de la
+     * recherche ; on suit sa progression, puis la grille ne garde que celles qui jouent. Le client Web
+     * fait de même (`LiveTv.tsx`).
+     */
+    fun verifierDirect() {
+        val currentApi = repository.api ?: return
+        val profile = state.profile ?: return
+        val section = state.direct ?: return
+        if (section.query.isBlank()) return
+        verificationDirect?.cancel()
+        state = state.copy(direct = section.copy(verification = VerificationEnCours(0, 0, emptySet()), verifiees = null))
+        verificationDirect = viewModelScope.launch {
+            try {
+                val (id, total) = currentApi.verifierChainesDirect(profile.id, section.query, section.listesChoisies,
+                    section.paysChoisis, section.fiabilitesChoisies, section.favorisSeuls, section.masquerMortes)
+                state.direct?.let { state = state.copy(direct = it.copy(verification = VerificationEnCours(total, 0, emptySet()))) }
+                while (true) {
+                    delay(300)
+                    val etat = currentApi.etatVerificationDirect(profile.id, id)
+                    val courante = state.direct ?: return@launch
+                    if (etat.fini) {
+                        state = state.copy(direct = courante.copy(verification = null, verifiees = etat.chaines.orEmpty(), verifieesTotal = etat.total))
+                        return@launch
+                    }
+                    state = state.copy(direct = courante.copy(verification = VerificationEnCours(etat.total, etat.faites, etat.mortes)))
+                }
+            } catch (annulee: kotlinx.coroutines.CancellationException) { throw annulee }
+            catch (e: Exception) {
+                state = state.copy(direct = state.direct?.copy(verification = null), error = e.message ?: "Vérification impossible")
+            }
+        }
+    }
+
     /** Un critère changé repart de la première page : c'est une autre grille, pas la suite de celle-ci. */
     fun filtrerDirect(
         query: String? = null, listes: List<String>? = null,
@@ -852,7 +897,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         favorisSeuls: Boolean? = null, masquerMortes: Boolean? = null,
     ) {
         val section = state.direct ?: return
+        // Le filtrage « qui marchent » valait pour cette recherche-là : tout changement le fait tomber.
+        verificationDirect?.cancel(); verificationDirect = null
         state = state.copy(direct = section.copy(
+            verification = null, verifiees = null, verifieesTotal = 0,
             query = query ?: section.query,
             listesChoisies = listes ?: section.listesChoisies,
             paysChoisis = pays ?: section.paysChoisis,

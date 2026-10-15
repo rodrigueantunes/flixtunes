@@ -104,7 +104,9 @@ const BUDGETS = {
   // Le budget du premier affichage reste à 96 Kio ; seuls les modules différés gagnent 5 Kio.
   // 0.6.0.r7 : 219,3 Kio, relevé à 223 : étapes de la préparation, annulation, mini-télécommande et
   // relais du lecteur, tous chargés seulement quand une diffusion existe.
-  jsDiffere: { limite: 223 * Kio, libelle: "Lecteur chargé à la demande (gzip)" },
+  // 0.6.0.r12 : 223,4 Kio, relevé à 226 : la vérification des chaînes d'une recherche (LiveTv) et la
+  // mémoire du débit du direct, deux modules qui ne se chargent qu'à l'ouverture du direct.
+  jsDiffere: { limite: 226 * Kio, libelle: "Lecteur chargé à la demande (gzip)" },
   imageUnitaire: { limite: 96 * Kio, libelle: "Image la plus lourde (brute)" },
   mediaDemarrage: { limite: 128 * Kio, libelle: "Son de démarrage (brut)" },
   totalDemarrage: { limite: 320 * Kio, libelle: "Tout ce qui part au premier affichage (gzip + images)" },

@@ -55,6 +55,7 @@ import { adresseLiveDistante, empreinteLiveDistante, sourceLiveDistante } from "
 import { lireCorpsBorne, relayerLiveDistant, relayerLiveLocal } from "./live-relais-distant.js";
 import { enregistrerXtream, listerSources, reglerFast, retirerSource } from "./live-fournisseurs.js";
 import { sonderLesAutres, sonderLesSources } from "./live-qualite.js";
+import { etatVerification, lancerVerification } from "./live-verification.js";
 import {
   arreterRafraichissement,
   chaineDetaillee,
@@ -879,6 +880,31 @@ export async function registerRoutes(app: FastifyInstance) {
       fiabilites: decouper(query.fiabilites) as ClassementListe[], offset, limit,
     });
     return request.expositionWan ? { ...page, items: page.items.map((chaine) => logoDistant(chaine, profile.id)) } : page;
+  });
+
+  /**
+   * « Ne garder que les chaînes qui marchent » (r12) : vérifier, à l'instant, les chaînes que rend une
+   * recherche. Mêmes critères que la liste ; la progression se suit, et la réponse finale donne les
+   * chaînes qui jouent, dans l'ordre de la recherche.
+   */
+  app.post("/api/live/verifications", async (request, reply) => {
+    const profile = profileFromRequest(request);
+    if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
+    const corps = (request.body ?? {}) as Record<string, unknown>;
+    const texte = (v: unknown) => typeof v === "string" ? v : undefined;
+    const liste = (v: unknown) => Array.isArray(v) ? v.filter((e): e is string => typeof e === "string").slice(0, 200) : [];
+    const q = texte(corps.q);
+    if (!q?.trim()) return reply.code(400).send({ message: "La vérification suit une recherche" });
+    if (q.length > 120) return reply.code(400).send({ message: "Recherche trop longue" });
+    return lancerVerification(profile.id, { q, favoris: corps.favoris === true, masquerMortes: corps.masquerMortes === true,
+      listes: liste(corps.listes), pays: liste(corps.pays), fiabilites: liste(corps.fiabilites) as ClassementListe[] });
+  });
+  app.get<{ Params: IdParams }>("/api/live/verifications/:id", { logLevel: "warn" }, async (request, reply) => {
+    const profile = profileFromRequest(request);
+    if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
+    const etat = etatVerification(request.params.id, profile.id);
+    if (!etat) return reply.code(404).send({ message: "Vérification expirée" });
+    return request.expositionWan && etat.chaines ? { ...etat, chaines: etat.chaines.map((chaine) => logoDistant(chaine, profile.id)) } : etat;
   });
 
   /**

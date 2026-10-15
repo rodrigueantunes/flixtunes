@@ -288,6 +288,28 @@ class FlixTunesApi(
         runCatching { request("/web?profileId=${encode(profileId)}").optBoolean("disponible") }.getOrDefault(false)
     }
 
+    /** r12 : vérifier, à l'instant, les chaînes que rend une recherche. Rend l'identifiant et le nombre testé. */
+    suspend fun verifierChainesDirect(
+        profileId: String, query: String, listes: List<String>, pays: List<String>, fiabilites: List<String>,
+        favoris: Boolean, masquerMortes: Boolean,
+    ): Pair<String, Int> {
+        val reponse = request("/live/verifications?profileId=${encode(profileId)}", "POST", JSONObject()
+            .put("q", query).put("listes", JSONArray(listes)).put("pays", JSONArray(pays)).put("fiabilites", JSONArray(fiabilites))
+            .put("favoris", favoris).put("masquerMortes", masquerMortes))
+        return reponse.getString("id") to reponse.optInt("total")
+    }
+
+    suspend fun etatVerificationDirect(profileId: String, id: String): EtatVerificationDirect = withContext(Dispatchers.Default) {
+        val reponse = request("/live/verifications/${encode(id)}?profileId=${encode(profileId)}")
+        val mortes = reponse.optJSONArray("mortes")
+        val chaines = reponse.optJSONArray("chaines")
+        EtatVerificationDirect(
+            total = reponse.optInt("total"), faites = reponse.optInt("faites"), fini = reponse.optBoolean("fini"),
+            mortes = if (mortes == null) emptySet() else (0 until mortes.length()).mapTo(mutableSetOf()) { mortes.getString(it) },
+            chaines = chaines?.let { tableau -> (0 until tableau.length()).map { lireChaine(tableau.getJSONObject(it)) } },
+        )
+    }
+
     suspend fun chainesDirect(
         profileId: String, offset: Int, limit: Int,
         query: String = "", listes: List<String> = emptyList(), pays: List<String> = emptyList(),

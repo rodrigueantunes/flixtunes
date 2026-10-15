@@ -22,7 +22,10 @@ import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.draw.alpha
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -50,6 +53,7 @@ import tv.flixtunes.app.R
 import tv.flixtunes.app.SectionDirect
 import tv.flixtunes.app.data.ChaineDirect
 import tv.flixtunes.app.ui.ApprocheTitre
+import tv.flixtunes.app.ui.Bleu
 import tv.flixtunes.app.ui.BleuClair
 import tv.flixtunes.app.ui.BoutonTexte
 import tv.flixtunes.app.ui.FormatImageTv
@@ -149,6 +153,36 @@ internal fun EcranDirect(
                 }
 
                 /*
+                 * r12 : « Ne garder que les chaînes qui marchent », seulement pendant une recherche.
+                 * Pendant le test, les muettes s'estompent sans bouger la grille ; à la fin, seules
+                 * celles qui jouent restent. Tout changement de recherche fait tomber le filtrage.
+                 */
+                if (section.query.isNotBlank() && (section.items.isNotEmpty() || section.verifiees != null)) {
+                    val enCours = section.verification
+                    val verifiees = section.verifiees
+                    when {
+                        enCours != null -> Column(Modifier.padding(top = 8.dp).widthIn(max = 420.dp).fillMaxWidth()) {
+                            Text(if (enCours.total > 0) "Test en cours… ${enCours.faites} chaîne${if (enCours.faites > 1) "s" else ""} sur ${enCours.total}"
+                                else "Test en cours…", color = Muet, fontSize = 13.sp)
+                            LinearProgressIndicator(
+                                progress = { if (enCours.total > 0) enCours.faites.toFloat() / enCours.total else 0.04f },
+                                modifier = Modifier.padding(top = 6.dp).fillMaxWidth().height(4.dp).clip(RoundedCornerShape(5.dp)),
+                                color = Bleu, trackColor = Color.White.copy(alpha = .07f),
+                            )
+                        }
+                        verifiees != null -> Text(
+                            "${verifiees.size} chaîne${if (verifiees.size > 1) "s" else ""} sur ${section.verifieesTotal} " +
+                                "${if (verifiees.size > 1) "jouent" else "joue"} en ce moment" +
+                                if (section.total > section.verifieesTotal) " · les ${section.verifieesTotal} premières testées" else "",
+                            color = Muet, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp),
+                        )
+                        else -> BoutonTexte({ model.verifierDirect() }, Modifier.padding(top = 8.dp)) {
+                            Text("Ne garder que les chaînes qui marchent", color = BleuClair, fontSize = 13.sp)
+                        }
+                    }
+                }
+
+                /*
                  * Deux interrupteurs plutôt que deux volets : ils n'ont qu'un état, et ce sont les
                  * deux qu'on actionne le plus. Un volet à déplier coûterait deux gestes pour un — et
                  * à la télécommande, deux pressions de plus avant le premier choix.
@@ -231,11 +265,22 @@ internal fun EcranDirect(
             }
         }
 
-        items(section.items, key = { it.id }) { chaine ->
-            CarteChaine(chaine, gabarit.televiseur, jouer) { model.basculerFavoriDirect(chaine) }
+        items(section.verifiees ?: section.items, key = { it.id }) { chaine ->
+            val muette = section.verification?.mortes?.contains(chaine.id) == true
+            val opacite by animateFloatAsState(if (muette) .28f else 1f, label = "muette")
+            Box(Modifier.alpha(opacite)) {
+                CarteChaine(chaine, gabarit.televiseur, jouer) { model.basculerFavoriDirect(chaine) }
+            }
         }
 
-        if (section.items.isEmpty() && !section.loading) {
+        if (section.verifiees?.isEmpty() == true) {
+            item(span = { GridItemSpanPleineLargeur() }) {
+                Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
+                    Text("Aucune des chaînes trouvées ne joue en ce moment. Modifiez la recherche pour les retrouver toutes.",
+                        color = Muet, textAlign = TextAlign.Center)
+                }
+            }
+        } else if (section.items.isEmpty() && !section.loading) {
             item(span = { GridItemSpanPleineLargeur() }) {
                 Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
                     Text(stringResource(R.string.direct_vide), color = Muet)

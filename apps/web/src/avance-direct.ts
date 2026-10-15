@@ -38,6 +38,37 @@ export function avanceVisee(largeurFenetreS: number, segmentS: number, fragile: 
   return Math.max(0, Math.min(plafond, souhaitee, largeurFenetreS - Math.min(segment, largeurFenetreS / 2)));
 }
 
+/*
+ * r12 — **aucun saut que l'on puisse éviter.**
+ *
+ * Le direct joue toujours à 1× : la vitesse variable recalait la latence en continu, et le bord du
+ * direct avançant par bonds d'un segment à chaque rechargement de playlist, elle basculait entre 0,98×
+ * et 1× toutes les trois secondes — mesuré sur CNews, 49 changements en 162 s. Chaque changement
+ * désaccorde la cadence des images : des micro-saccades. Sans rattrapage, le retard ne grandit qu'à
+ * chaque calage, et l'on ne bouge que lorsque la fenêtre de la chaîne l'impose : au bord arrière. On
+ * reprend alors au plus près de ce bord — revenir à l'avance visée faisait sauter jusqu'à quatre
+ * minutes de programme sur une fenêtre de cinq. Android applique la même règle (`AvanceDirect.kt`).
+ */
+
+/** Sous cette marge au bord arrière, la lecture va tomber hors de ce que la chaîne publie encore. */
+export const SEUIL_BORD_ARRIERE_S = 12;
+
+/** La marge où l'on reprend : trois segments ordinaires, de quoi absorber un rechargement de playlist. */
+export const MARGE_REPRISE_S = 24;
+
+/** Faut-il reprendre parce que le bord arrière approche ? Jamais sur une fenêtre trop courte pour en avoir un. */
+export function doitReprendreAuBordArriere(margeS: number, largeurFenetreS: number, segmentS: number): boolean {
+  const segment = Math.max(1, segmentS);
+  if (largeurFenetreS <= 2 * segment + MARGE_REPRISE_S) return false;
+  return margeS > 0 && margeS < Math.max(SEUIL_BORD_ARRIERE_S, segment * 1.5);
+}
+
+/** Le point de reprise, compté depuis le bord arrière : le moins de programme sauté, sans retomber aussitôt. */
+export function repriseAuBordArriere(largeurFenetreS: number, segmentS: number): number {
+  const segment = Math.max(1, segmentS);
+  return Math.max(0, Math.min(Math.max(MARGE_REPRISE_S, 3 * segment), largeurFenetreS - segment));
+}
+
 /** La même avance, comptée en segments — l'unité que hls.js attend. */
 export function segmentsDAvance(largeurFenetreS: number, segmentS: number, fragile: boolean): number {
   return Math.max(1, Math.floor(avanceVisee(largeurFenetreS, segmentS, fragile) / Math.max(1, segmentS)));

@@ -337,6 +337,11 @@ export const api = {
     `/live/channels/${encodeURIComponent(id)}/favori`, { method: favori ? "PUT" : "DELETE" },
   ),
   derniereChaineLive: () => request<{ chaine: ChaineDirect | null }>("/live/derniere"),
+  /** r12 : vérifier, à l'instant, les chaînes que rend une recherche. */
+  verifierChainesLive: (criteres: { q: string; listes?: string[]; pays?: string[]; fiabilites?: string[]; favoris?: boolean; masquerMortes?: boolean }) =>
+    request<{ id: string; total: number }>("/live/verifications", { method: "POST", body: JSON.stringify(criteres) }),
+  etatVerificationLive: (id: string) => request<{ total: number; faites: number; fini: boolean; mortes: string[]; chaines?: ChaineDirect[] }>(
+    `/live/verifications/${encodeURIComponent(id)}`),
   chainesLive: (requete: { q?: string; listes?: string[]; pays?: string[]; fiabilites?: string[];
     favoris?: boolean; masquerMortes?: boolean; offset?: number; limit?: number } = {}) => {
     const parametres = new URLSearchParams();

@@ -11,7 +11,7 @@ const chaines: ChaineDirect[] = [
 
 const { apiMock } = vi.hoisted(() => ({ apiMock: {
   chainesLive: vi.fn(), listesLiveClient: vi.fn(), paysLive: vi.fn(), fiabilitesLive: vi.fn(),
-  favoriLive: vi.fn(), derniereChaineLive: vi.fn(),
+  favoriLive: vi.fn(), derniereChaineLive: vi.fn(), verifierChainesLive: vi.fn(), etatVerificationLive: vi.fn(),
 } }));
 vi.mock("./api", () => ({ api: apiMock }));
 
@@ -177,5 +177,31 @@ describe("le retour d'une chaîne", () => {
     fireEvent.change(screen.getByPlaceholderText("Rechercher une chaîne"), { target: { value: "arte" } });
     // Une autre grille est une autre demande : la mémoire ne sert qu'à revenir, jamais à figer.
     await waitFor(() => expect(apiMock.chainesLive).toHaveBeenCalledWith(expect.objectContaining({ q: "arte" })));
+  });
+});
+
+describe("ne garder que les chaînes qui marchent (r12)", () => {
+  it("n'apparaît que pendant une recherche, montre la progression, filtre, puis s'efface à la recherche suivante", async () => {
+    apiMock.verifierChainesLive.mockResolvedValue({ id: "v1", total: 2 });
+    apiMock.etatVerificationLive
+      .mockResolvedValueOnce({ total: 2, faites: 1, fini: false, mortes: ["c2"] })
+      .mockResolvedValueOnce({ total: 2, faites: 2, fini: true, mortes: ["c2"], chaines: [chaines[0]] });
+    render(<LiveTv onPlay={() => {}} />);
+    await screen.findByText("TF1");
+    expect(screen.queryByRole("button", { name: "Ne garder que les chaînes qui marchent" })).toBeNull();
+
+    fireEvent.change(screen.getByPlaceholderText("Rechercher une chaîne"), { target: { value: "fr" } });
+    const bouton = await screen.findByRole("button", { name: "Ne garder que les chaînes qui marchent" });
+    fireEvent.click(bouton);
+    expect(await screen.findByText(/Test en cours… 1 chaîne sur 2/)).toBeInTheDocument();
+    expect(await screen.findByText("1 chaîne sur 2 joue en ce moment")).toBeInTheDocument();
+    expect(apiMock.verifierChainesLive).toHaveBeenCalledWith(expect.objectContaining({ q: "fr" }));
+    expect(screen.queryByText("Arte")).toBeNull();
+    expect(screen.getByText("TF1")).toBeInTheDocument();
+
+    // Une nouvelle recherche fait tomber le filtrage : toutes les chaînes reviennent.
+    fireEvent.change(screen.getByPlaceholderText("Rechercher une chaîne"), { target: { value: "fra" } });
+    expect(await screen.findByRole("button", { name: "Ne garder que les chaînes qui marchent" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Arte")).toBeInTheDocument());
   });
 });

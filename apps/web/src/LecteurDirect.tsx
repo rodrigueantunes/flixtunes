@@ -4,7 +4,7 @@ import { pontBureau } from "./bureau";
 import type { PropsDirect } from "./LecteurDirectBureau";
 const DirectBureau = lazy(() => import("./LecteurDirectBureau").then((m) => ({ default: m.LecteurDirectBureau })));
 import { identifiantLectureDirect } from "./pilotage-direct";
-import { budgetCacheDirect, formatAdresse, imagesPresentees, JournalDirect, prefereRelais, reserveDeDepart, retenirRelais, vitesseContinue } from "./pilotage-direct";
+import { budgetCacheDirect, debitRetenu, formatAdresse, imagesPresentees, JournalDirect, prefereRelais, reserveDeDepart, retenirDebit, retenirRelais } from "./pilotage-direct";
 import type Hls from "hls.js";
 import type { ErrorData, LevelDetails } from "hls.js";
 import type { ChaineDirect } from "@flixtunes/contracts";
@@ -13,7 +13,7 @@ import { CacheSegmentsDirect, chargeurAvecCache } from "./cache-segments-direct"
 import { QualiteContinue, doitPreparerSecours, raccordAutorise, lienDirectARenouveler } from "./continuite-direct";
 import { courirLesAdresses } from "./course-adresses";
 import { COURSE_MAX, debutDeVague, premiereAdresse, prochaineAdresse, regrouperLesSources } from "./sources-direct";
-import { AVANCE_FRAGILE_S, avanceVisee as calculerAvance } from "./avance-direct";
+import { AVANCE_FRAGILE_S, avanceVisee as calculerAvance, doitReprendreAuBordArriere, repriseAuBordArriere } from "./avance-direct";
 import { ecartEntre, repereDansLaPlaylist, tempsPourRepere, type SegmentRepere } from "./releve-direct";
 
 /**
@@ -118,14 +118,11 @@ const FENETRE_MINIMALE_S = 2 * SEGMENT_TYPE_S;
 const MARGE_DIRECT_S = 12;
 
 /**
- * La vitesse de rattrapage, et pourquoi elle vaut mieux qu'un saut.
- *
- * hls.js sait revenir vers le direct **en accélérant imperceptiblement** plutôt qu'en sautant. Le
- * réglage existait et valait 1 — c'est-à-dire désactivé : une fois la dérive prise, elle restait.
- * À 1,06, une minute de lecture rattrape 3,4 s de retard ; personne ne l'entend ni ne le voit, et la
- * marge arrière se reconstitue toute seule au lieu de s'éroder jusqu'à la coupure.
+ * Le seuil de latence au-delà duquel hls.js se déplacerait de lui-même vers le direct : repoussé hors
+ * d'atteinte (r12). Un tel déplacement est un bond en avant ; seul le bord arrière de la fenêtre
+ * justifie désormais de bouger, et c'est le lecteur qui s'en charge, au plus près de ce bord.
  */
-const RATTRAPAGE_MAX = 1.06;
+const LATENCE_SANS_SAUT_S = 6 * 3600;
 
 /**
  * Combien de fois on redémarre **la même adresse** avant de la mettre en cause.
@@ -807,7 +804,7 @@ function LecteurDirectWeb({ chaine, precedente, onChaine, onClose }: {
           maxBufferSize: budgetCacheDirect(),
           fLoader: chargeurAvecCache(HlsClass, cacheSegments.current),
           liveSyncDuration: incidents.current > 0 || entree.echecs > 0 ? 55 : 40,
-          liveMaxLatencyDuration: AVANCE_FRAGILE_S, liveSyncOnStallIncrease: 0, capLevelToPlayerSize: false,
+          liveMaxLatencyDuration: LATENCE_SANS_SAUT_S, liveSyncOnStallIncrease: 0, capLevelToPlayerSize: false,
           maxLiveSyncPlaybackRate: 1,
           /*
            * **L'adaptation de débit, réglée pour tenir plutôt que pour briller.**
@@ -823,7 +820,10 @@ function LecteurDirectWeb({ chaine, precedente, onChaine, onClose }: {
            * `maxStarvationDelay` raccourci fait descendre dès que le tampon souffre, sans attendre.
            */
           abrBandWidthFactor: 0.7,
-          abrBandWidthUpFactor: 0.5,
+          // r12 : remontée moins timide — avec 40 s de réserve, une variante un peu juste ne fait pas caler.
+          abrBandWidthUpFactor: 0.7,
+          // r12 : démarrer dans la qualité que l'appareil a déjà tenue, à 80 % par prudence.
+          abrEwmaDefaultEstimate: Math.round((debitRetenu() ?? 500_000) * 0.8),
           maxStarvationDelay: 4,
           maxLoadingDelay: 4,
           /*
@@ -1488,10 +1488,11 @@ function LecteurDirectWeb({ chaine, precedente, onChaine, onClose }: {
         if (courant) courant.config.liveSyncDuration = cible;
       }
 
-      element.playbackRate = vitesseContinue(fin - element.currentTime, avanceVisee.current,
-        tamponDevant(element), reculManuel.current || element.paused || document.hidden);
+      // r12 : toujours 1×. Une vitesse qui bascule à chaque rechargement de playlist se voit en saccades.
+      if (element.playbackRate !== 1) element.playbackRate = 1;
       if (maintenant - dernierJournal >= 5_000) {
         dernierJournal = maintenant;
+        if (courant && !element.paused) retenirDebit(courant.bandwidthEstimate);
         journal.current.noter(rangRef.current + 1, tamponDevant(element), fin - element.currentTime,
           dernierIncident.current ?? "Lecture", {
             identifiant: adressesRef.current[rangRef.current]?.identifiant,
@@ -1512,13 +1513,15 @@ function LecteurDirectWeb({ chaine, precedente, onChaine, onClose }: {
        * rattrapage de hls.js faire son travail, et en ne le contrariant plus. Un saut ne subsiste que
        * si la marge tombe sous un segment, c'est-à-dire quand il n'y a plus rien à négocier.
        */
-      if (!element.paused && fin - debut > FENETRE_MINIMALE_S) {
-        const marge = releve.position - debut;
-        if (!reculManuel.current && ((marge > 0 && marge < Math.min(SEGMENT_TYPE_S, (fin - debut) / 4)) || fin - releve.position > AVANCE_FRAGILE_S)) {
-          silenceJusqua.current = Date.now() + 4_000;
-          // Revenir à l'avance visée, pas au bord : c'est la marge qui empêche la prochaine coupure.
-          element.currentTime = Math.max(debut, fin - avanceVisee.current);
-        }
+      /*
+       * r12 : un simple retard ne fait plus bondir l'image — seul le bord arrière l'impose. On reprend
+       * alors au plus près de lui, et non à l'avance visée : sur une fenêtre de cinq minutes, revenir à
+       * 40 s du direct faisait sauter quatre minutes de programme.
+       */
+      const segmentRelu = courant?.levels?.[courant.currentLevel]?.details?.targetduration ?? SEGMENT_TYPE_S;
+      if (!element.paused && !reculManuel.current && doitReprendreAuBordArriere(releve.position - debut, fin - debut, segmentRelu)) {
+        silenceJusqua.current = Date.now() + 4_000;
+        element.currentTime = debut + repriseAuBordArriere(fin - debut, segmentRelu);
       }
     };
     const minuteur = window.setInterval(relever, 250);

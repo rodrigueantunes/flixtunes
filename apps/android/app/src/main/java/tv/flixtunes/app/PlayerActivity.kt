@@ -1,5 +1,6 @@
 package tv.flixtunes.app
 import tv.flixtunes.app.playback.TelecommandeAndroid
+import tv.flixtunes.app.playback.accorderCadenceEcran
 import tv.flixtunes.app.playback.etatDiffusionAndroid
 import tv.flixtunes.app.ui.ouvrirDialogueDiffusion
 import tv.flixtunes.app.ui.TelecommandeLecteur
@@ -1286,29 +1287,6 @@ class PlayerActivity : ComponentActivity() {
         if (error.errorCode in ERREURS_RESEAU until ERREURS_ANALYSE)
             getString(R.string.lecteur_erreur_reseau)
         else getString(R.string.lecteur_erreur_decodage)
-
-    /**
-     * Demande à l'écran la fréquence qui tombe juste avec la cadence du film.
-     *
-     * Sans cela, un film à 23,976 images par seconde affiché sur un panneau à 60 Hz montre une image
-     * pendant trois rafraîchissements puis la suivante pendant deux : les mouvements lents avancent par
-     * à-coups. C'est le défaut de fluidité le plus visible de toute la chaîne, et le seul qu'aucune
-     * augmentation de débit ne corrige.
-     *
-     * Le choix lui-même est dans [chooseDisplayMode], vérifiable hors appareil. Ici ne reste que la
-     * demande au système — et le soin de ne rien demander quand rien ne convient : chaque changement de
-     * mode renégocie le HDMI, ce qui noircit l'écran une à deux secondes.
-     */
-    private fun accorderCadenceEcran(contentFps: Double) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || contentFps <= 0.0) return
-        val display = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) display else windowManager.defaultDisplay
-        val actif = display?.mode ?: return
-        val vers = { m: android.view.Display.Mode ->
-            DisplayModeInfo(m.modeId, m.physicalWidth, m.physicalHeight, m.refreshRate.toDouble())
-        }
-        val choisi = chooseDisplayMode(display.supportedModes.map(vers), vers(actif), contentFps) ?: return
-        window.attributes = window.attributes.apply { preferredDisplayModeId = choisi.id }
-    }
 
     /**
      * Signale au serveur que le codec annoncé n'a pas été décodé ici.

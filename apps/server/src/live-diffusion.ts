@@ -276,9 +276,14 @@ function traiter(analyse: AnalyseLive | null, recepteur: RecepteurLive, circuit:
     imagesParSeconde, libelle: `Conversion ${hauteur}p${Math.round(imagesParSeconde)}${entrelace ? " · désentrelacée" : ""}` };
 }
 
-/** Le débit visé d'une conversion du direct : assez pour une image de télévision, sans saturer le Wi-Fi. */
+/**
+ * Le débit visé d'une conversion du direct (r12 : relevé pour la qualité). Un 1080p50 à 8,1 Mbit/s
+ * laissait voir des aplats sur les mouvements rapides — sport, plateaux en travelling. 10,8 Mbit/s
+ * restent loin de ce que tient le Wi-Fi d'un téléviseur, et le débit variable n'y monte que si l'image
+ * le demande.
+ */
 export function debitLive(hauteur: number, imagesParSeconde: number): number {
-  const base = hauteur >= 1000 ? 6_000_000 : hauteur >= 700 ? 3_500_000 : 2_000_000;
+  const base = hauteur >= 1000 ? 8_000_000 : hauteur >= 700 ? 4_500_000 : 2_500_000;
   return Math.round(base * (imagesParSeconde > 30 ? 1.35 : 1));
 }
 
@@ -290,7 +295,9 @@ export function argumentsVideoLive(t: TraitementLive): { entree: string[]; sorti
   if (t.encodeur === "vaapi") {
     const filtres = ["format=nv12", "hwupload", ...(t.entrelace ? ["deinterlace_vaapi=rate=field"] : []),
       `scale_vaapi=w=${t.largeur}:h=${t.hauteur}`];
-    const reglage = t.reglage === "cqp" ? ["-qp", "23"] : ["-rc_mode", "VBR", ...debits];
+    // r12 : qualité constante un cran plus fine que celle des films (23), pour une image de direct
+    // recompressée une seconde fois.
+    const reglage = t.reglage === "cqp" ? ["-qp", "21"] : ["-rc_mode", "VBR", ...debits];
     return { entree: ["-vaapi_device", config.hardwareDevice],
       sortie: ["-vf", filtres.join(","), "-c:v", "h264_vaapi", ...reglage, ...cles] };
   }

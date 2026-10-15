@@ -125,6 +125,46 @@ export function LiveTv({ onPlay }: { onPlay: (chaine: ChaineDirect) => void }) {
    */
   const criteresServis = useRef(souvenir.chaines.length ? JSON.stringify(criteres) : null);
 
+  /**
+   * « Ne garder que les chaînes qui marchent » (r12).
+   *
+   * Le bouton n'existe que pendant une recherche. Il fait vérifier par le NAS, à l'instant, les chaînes
+   * trouvées ; pendant le test, celles qui se taisent s'estompent sans bouger la grille, puis seules
+   * celles qui jouent restent. Le filtrage tombe de lui-même dès que la recherche ou les filtres
+   * changent : il valait pour cette recherche-là, à ce moment-là.
+   */
+  const [verification, setVerification] = useState<{ total: number; faites: number; mortes: Set<string> } | null>(null);
+  const [verifiees, setVerifiees] = useState<{ chaines: ChaineDirect[]; total: number } | null>(null);
+  const [erreurVerification, setErreurVerification] = useState<string | null>(null);
+  const generationVerification = useRef(0);
+  useEffect(() => {
+    generationVerification.current += 1;
+    setVerification(null); setVerifiees(null); setErreurVerification(null);
+  }, [criteres]);
+  const verifier = useCallback(async () => {
+    if (!recherche) return;
+    const generation = ++generationVerification.current;
+    setErreurVerification(null); setVerifiees(null);
+    setVerification({ total: 0, faites: 0, mortes: new Set() });
+    try {
+      const { id, total } = await api.verifierChainesLive({ ...criteres, q: recherche });
+      if (generation !== generationVerification.current) return;
+      setVerification({ total, faites: 0, mortes: new Set() });
+      for (;;) {
+        await new Promise((resoudre) => setTimeout(resoudre, 300));
+        if (generation !== generationVerification.current) return;
+        const etat = await api.etatVerificationLive(id);
+        if (generation !== generationVerification.current) return;
+        if (etat.fini) { setVerification(null); setVerifiees({ chaines: etat.chaines ?? [], total: etat.total }); return; }
+        setVerification({ total: etat.total, faites: etat.faites, mortes: new Set(etat.mortes) });
+      }
+    } catch (cause) {
+      if (generation !== generationVerification.current) return;
+      setVerification(null);
+      setErreurVerification(cause instanceof Error ? cause.message : "Vérification impossible");
+    }
+  }, [criteres, recherche]);
+
   useEffect(() => {
     const empreinte = JSON.stringify(criteres);
     if (criteresServis.current === empreinte) return;
@@ -237,7 +277,8 @@ export function LiveTv({ onPlay }: { onPlay: (chaine: ChaineDirect) => void }) {
     poser(choisis.includes(valeur) ? choisis.filter((autre) => autre !== valeur) : [...choisis, valeur]);
   };
 
-  const restantes = Math.max(0, total - chaines.length);
+  const restantes = verifiees ? 0 : Math.max(0, total - chaines.length);
+  const affichees = verifiees?.chaines ?? chaines;
 
   return <section className="catalog-page" aria-labelledby="live-page-title">
     <header className="catalog-header">
@@ -250,6 +291,18 @@ export function LiveTv({ onPlay }: { onPlay: (chaine: ChaineDirect) => void }) {
         <label><span>Rechercher</span>
           <input value={saisie} onChange={(event) => setSaisie(event.target.value)} placeholder="Rechercher une chaîne" />
         </label>
+        {recherche && (chaines.length > 0 || verifiees) && <div className="live-verification" aria-live="polite">
+          {verification
+            ? <div className="scan-progress" role="status">
+                <small>Test en cours… {verification.total ? `${verification.faites} chaîne${verification.faites > 1 ? "s" : ""} sur ${verification.total}` : ""}</small>
+                <span><i style={{ width: `${verification.total ? Math.round(verification.faites * 100 / verification.total) : 4}%` }} /></span>
+              </div>
+            : verifiees
+              ? <small>{verifiees.chaines.length} chaîne{verifiees.chaines.length > 1 ? "s" : ""} sur {verifiees.total} {verifiees.chaines.length > 1 ? "jouent" : "joue"} en ce moment
+                  {total > verifiees.total ? ` · les ${verifiees.total} premières de la recherche ont été testées` : ""}</small>
+              : <button type="button" className="genre-reset" onClick={() => void verifier()}>Ne garder que les chaînes qui marchent</button>}
+          {erreurVerification && <small className="scan-error">{erreurVerification}</small>}
+        </div>}
         {/*
           * Deux interrupteurs plutôt que deux volets : ils n'ont qu'un état, et ce sont les deux
           * qu'on actionne le plus. Les mettre dans un volet à déplier coûterait deux gestes pour un.
@@ -363,9 +416,9 @@ export function LiveTv({ onPlay }: { onPlay: (chaine: ChaineDirect) => void }) {
       <b>{derniere.numero != null ? `${derniere.numero} · ` : ""}{derniere.nom}</b>
     </button>}
 
-    {chaines.length ? <>
+    {affichees.length ? <>
       <div className="live-grille">
-        {chaines.map((chaine) => <div key={chaine.id} className="live-carte-enveloppe">
+        {affichees.map((chaine) => <div key={chaine.id} className={`live-carte-enveloppe${verification?.mortes.has(chaine.id) ? " muette" : ""}`}>
           {/*
             * L'étoile est un bouton à part, et non un coin de la carte : cliquer une carte ouvre la
             * chaîne, et rien ne doit rendre ce geste hésitant. Elle porte son propre libellé pour
@@ -400,7 +453,12 @@ export function LiveTv({ onPlay }: { onPlay: (chaine: ChaineDirect) => void }) {
         </button>
         <small>{restantes.toLocaleString("fr-FR")} {restantes > 1 ? "chaînes restantes" : "chaîne restante"}</small>
       </div>}
-    </> : chargement
+    </> : verifiees
+      ? <div className="catalog-empty">
+          <h2>Aucune chaîne ne joue en ce moment</h2>
+          <p>Aucune des chaînes trouvées n’a répondu au test. Modifiez la recherche pour les retrouver toutes.</p>
+        </div>
+      : chargement
       ? <div className="live-grille" aria-busy="true" aria-label="Chargement des chaînes">
           {Array.from({ length: 18 }, (_, rang) => <div className="catalog-skeleton live-squelette" key={rang} />)}
         </div>

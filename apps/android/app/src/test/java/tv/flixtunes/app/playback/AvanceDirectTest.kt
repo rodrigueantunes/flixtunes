@@ -32,4 +32,22 @@ class AvanceDirectTest {
         assertEquals(12_000L, avance)
         assertTrue(avance < 20_000L)
     }
+
+    // r12 : on ne bouge que lorsque la fenêtre l'impose, et au plus près du bord arrière.
+    @Test fun `un simple retard ne fait plus bondir l image`() {
+        // CNews : fenêtre de cinq minutes. Deux minutes de retard ne déclenchent rien.
+        assertEquals(false, doitReprendreAuBordArriere(180_000L, 313_000L, 8_000L))
+        assertEquals(false, doitReprendreAuBordArriere(30_000L, 313_000L, 8_000L))
+        assertEquals(true, doitReprendreAuBordArriere(10_000L, 313_000L, 8_000L))
+        // Fenêtre trop courte pour avoir un bord arrière distinct.
+        assertEquals(false, doitReprendreAuBordArriere(5_000L, 36_000L, 8_000L))
+        assertEquals(false, doitReprendreAuBordArriere(0L, 313_000L, 8_000L))
+    }
+
+    @Test fun `reprend au plus pres du bord arriere, comme le Web`() {
+        assertEquals(24_000L, repriseAuBordArriereMs(313_000L, 8_000L))
+        assertEquals(24_000L, repriseAuBordArriereMs(61_000L, 8_000L))
+        assertEquals(30_000L, repriseAuBordArriereMs(61_000L, 10_000L))
+        assertEquals(22_000L, repriseAuBordArriereMs(30_000L, 8_000L))
+    }
 }

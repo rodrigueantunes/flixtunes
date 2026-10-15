@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { avanceVisee, segmentsDAvance } from "./avance-direct";
+import { avanceVisee, doitReprendreAuBordArriere, repriseAuBordArriere, segmentsDAvance } from "./avance-direct";
 
 /**
  * L'avance a deux devoirs contraires : être la plus grande possible, et ne jamais sortir de ce que la
@@ -33,5 +33,24 @@ describe("l'avance derrière le direct", () => {
     // Le plancher de deux segments ferait 16 s ; la fenêtre n'en laisse que 12 derrière le bord.
     expect(avanceVisee(20, 8, true)).toBe(12);
     expect(avanceVisee(20, 8, true)).toBeLessThan(20);
+  });
+});
+
+describe("reprise au bord arrière (r12)", () => {
+  it("ne bouge que lorsque la fenêtre l'impose, jamais pour un simple retard", () => {
+    // CNews : fenêtre de cinq minutes, segments de 8 s. Un retard de deux minutes ne fait plus rien.
+    expect(doitReprendreAuBordArriere(180, 313, 8)).toBe(false);
+    expect(doitReprendreAuBordArriere(30, 313, 8)).toBe(false);
+    expect(doitReprendreAuBordArriere(10, 313, 8)).toBe(true);
+    // Fenêtre trop courte pour avoir un bord arrière distinct : on n'y touche pas.
+    expect(doitReprendreAuBordArriere(5, 36, 8)).toBe(false);
+    expect(doitReprendreAuBordArriere(0, 313, 8)).toBe(false);
+  });
+  it("reprend au plus près du bord, et non à l'avance visée", () => {
+    // Sur cinq minutes de fenêtre : 24 s du bord arrière, et non 40 s du direct — 4 min épargnées.
+    expect(repriseAuBordArriere(313, 8)).toBe(24);
+    expect(repriseAuBordArriere(61, 8)).toBe(24);
+    expect(repriseAuBordArriere(61, 10)).toBe(30);
+    expect(repriseAuBordArriere(30, 8)).toBe(22);
   });
 });

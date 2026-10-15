@@ -41,7 +41,7 @@ describe("calibrage du direct (r11)", () => {
     expect(progressif.endsWith("-f null -")).toBe(true);
     const entrelace = argumentsSondeDirect("cqp", true).join(" ");
     expect(entrelace).toContain("setfield=tff,format=nv12,hwupload,deinterlace_vaapi=rate=field");
-    expect(entrelace).toContain("-qp 23");
+    expect(entrelace).toContain("-qp 21");
     expect(entrelace).not.toContain("-rc_mode");
   });
 });
@@ -57,7 +57,7 @@ describe("traitement du direct selon le circuit mesuré", () => {
     const t = choisirTraitementLive(variante(false), dlna, { reglage: "cqp", desentrelacement: true });
     expect(t).toMatchObject({ encodeur: "vaapi", reglage: "cqp", hauteur: 1080, imagesParSeconde: 50 });
     const sortie = argumentsVideoLive(t).sortie.join(" ");
-    expect(sortie).toContain("-qp 23"); expect(sortie).not.toContain("-rc_mode");
+    expect(sortie).toContain("-qp 21"); expect(sortie).not.toContain("-rc_mode");
   });
 
   it("ne désentrelace au circuit vidéo que si ce désentrelacement a été qualifié", () => {

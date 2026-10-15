@@ -20,12 +20,26 @@ export function reserveDeDepart(fenetre: number): number {
   return fenetre > 0 ? Math.min(8, Math.max(2, fenetre / 3)) : 8;
 }
 
-/** La cible laisse une marge sous la limite de 60 s ; aucun rattrapage ne vide une petite réserve. */
-export function vitesseContinue(retard: number, cible: number, reserve: number, manuel: boolean): number {
-  if (manuel || !Number.isFinite(retard) || cible <= 0) return 1;
-  if (retard > cible + 2 && reserve >= 12) return retard > 57 ? 1.06 : 1.03;
-  if (retard < cible - 3 && reserve >= 3 && reserve < cible - 5) return 0.98;
-  return 1;
+const CLE_DEBIT = "flixtunes.debitDirect";
+/**
+ * Le débit mesuré lors des dernières lectures du direct (r12), pour démarrer dans la qualité que
+ * l'appareil tient. hls.js partait d'une estimation de 500 kbit/s : la chaîne s'ouvrait sur sa plus
+ * petite variante, puis la qualité montait par paliers sous les yeux — un saut de plus. Rien n'est
+ * retenu en navigation privée ou sans stockage : on repart alors comme avant.
+ */
+export function debitRetenu(): number | undefined {
+  try {
+    const valeur = Number(globalThis.localStorage?.getItem(CLE_DEBIT));
+    return Number.isFinite(valeur) && valeur >= 300_000 ? Math.min(valeur, 200_000_000) : undefined;
+  } catch { return undefined; }
+}
+export function retenirDebit(estimation: number) {
+  if (!Number.isFinite(estimation) || estimation < 300_000) return;
+  try {
+    const avant = debitRetenu();
+    // Lissé : un réseau d'hôtel une soirée ne doit pas fixer le départ de toutes les suivantes.
+    globalThis.localStorage?.setItem(CLE_DEBIT, String(Math.round(avant ? avant * 0.7 + estimation * 0.3 : estimation)));
+  } catch { /* stockage indisponible : rien à retenir */ }
 }
 
 export function budgetCacheDirect(memoire = (navigator as Navigator & { deviceMemory?: number }).deviceMemory): number {

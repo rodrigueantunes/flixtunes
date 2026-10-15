@@ -110,6 +110,8 @@ const LECTURES = new Set([
   // ses relais voient, jamais ceux de la maison — et l'accusé d'un ordre.
   cle("GET", "/api/diffusion/cibles"),
   cle("GET", "/api/diffusion/cibles/:id/ordres/:ordre"),
+  // r12 : la progression d'une vérification des chaînes d'une recherche, propre au profil.
+  cle("GET", "/api/live/verifications/:id"),
 ]);
 
 /**
@@ -152,6 +154,8 @@ const ECRITURES = new Set([
   cle("POST", "/api/diffusion/cibles/:id/commande"),
   cle("POST", "/api/diffusion/airplay"),
   cle("POST", "/api/diffusion/airplay/:cle/arreter"),
+  // r12 : vérifier, à l'instant, les chaînes d'une recherche ; ne touche que la mémoire du profil.
+  cle("POST", "/api/live/verifications"),
 ]);
 
 export type VerdictWan =
