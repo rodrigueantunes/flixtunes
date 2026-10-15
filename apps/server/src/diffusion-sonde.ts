@@ -122,6 +122,8 @@ export interface NiveauDiffusion {
   hdr?: boolean;
   /** Le fichier d'origine servi tel quel, pour un téléviseur DLNA qui lit son conteneur. */
   fichierTelQuel?: boolean;
+  /** Le direct converti à pleine définition, même quand le récepteur pourrait lire la source copiée. */
+  convertir?: boolean;
 }
 
 /**
@@ -139,6 +141,9 @@ export function planDeQualite(source: SourceVideo | null, capacites: CapacitesRe
     // convertie à sa pleine définition, désentrelacée. La conversion compatible reste en dernier recours.
     const hevc = c.hevc_1080 === true || c.hevc_2160_hdr10 === true;
     plan.push({ nom: "source", qualiteSource: true, compatible: false, hauteurMax: h264Max, hevcHauteurMax: hevc ? 2160 : 0 });
+    // r11 : une copie que le téléviseur ne démarre pas — LCI sur le 58PUS7304, le 3 octobre — passe à
+    // une conversion à pleine définition avant de descendre au 720p compatible.
+    plan.push({ nom: "conversion", qualiteSource: true, compatible: false, hauteurMax: h264Max, convertir: true });
     plan.push({ nom: "compatible", qualiteSource: false, compatible: true, hauteurMax: 720 });
     return plan;
   }

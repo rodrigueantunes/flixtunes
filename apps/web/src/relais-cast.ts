@@ -202,5 +202,7 @@ async function executer(contexte: any, action: ActionRelais): Promise<Partial<Ac
       finDeSession = setTimeout(() => { finDeSession = undefined; contexte.getCurrentSession()?.endSession(true); }, 5_000);
       return {};
     }
+    // Un navigateur ne voit pas les téléviseurs DLNA : seul le téléphone relaie leurs commandes.
+    case "soap": throw new ErreurRelais("CAST_RELAIS", "Ce navigateur ne relaie pas les téléviseurs DLNA.");
   }
 }

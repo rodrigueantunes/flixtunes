@@ -53,8 +53,22 @@ export interface RecepteurLive {
   conversionSeule?: boolean;
 }
 
+/**
+ * Ce que le circuit vidéo de la machine tient pour le direct, mesuré à son calibrage (r11).
+ *
+ * La r9 lançait `h264_vaapi` en débit variable sans que le NAS l'ait jamais essayé : le calibrage ne
+ * mesurait que la qualité constante. Sur le NAS, LCI et M6 sont sorties en « Conversion 720p25 », le
+ * repli logiciel, au lieu du 1080p50 prévu. Le réglage employé est désormais celui que la machine a tenu.
+ */
+export interface MaterielLive {
+  reglage: "vbr" | "cqp";
+  desentrelacement: boolean;
+}
+
 export interface TraitementLive {
   copie: boolean;
+  /** Le réglage de `h264_vaapi` : débit variable plafonné, ou qualité constante. */
+  reglage?: "vbr" | "cqp";
   /** Les flux à lire, ou `null` pour laisser FFmpeg prendre le premier. */
   flux: number | null;
   fluxAudio: number | null;
@@ -232,9 +246,18 @@ export function choisirVariante(analyse: AnalyseLive, recepteur: RecepteurLive, 
  * haute sont convertis à la définition du récepteur, désentrelacés trame par trame — 50 images par
  * seconde pour un 50i, comme un téléviseur le restitue sans cast.
  */
-export function choisirTraitementLive(analyse: AnalyseLive | null, recepteur: RecepteurLive, materiel: boolean): TraitementLive {
+export function choisirTraitementLive(analyse: AnalyseLive | null, recepteur: RecepteurLive,
+  materiel: boolean | MaterielLive | null): TraitementLive {
+  const circuit: MaterielLive | null = materiel === true ? { reglage: "vbr", desentrelacement: true } : materiel || null;
+  const traitement = traiter(analyse, recepteur, circuit);
+  // Une source entrelacée ne passe au circuit vidéo que si son désentrelacement y a été qualifié.
+  if (traitement.encodeur === "vaapi" && traitement.entrelace && !circuit?.desentrelacement) return traiter(analyse, recepteur, null);
+  return traitement;
+}
+
+function traiter(analyse: AnalyseLive | null, recepteur: RecepteurLive, circuit: MaterielLive | null): TraitementLive {
   // Sans analyse, le chemin logiciel convertit sans connaître les dimensions : il sait les déduire.
-  const encodeur = materiel && analyse && analyse.largeur > 0 && analyse.hauteur > 0 ? "vaapi" as const : "logiciel" as const;
+  const encodeur = circuit && analyse && analyse.largeur > 0 && analyse.hauteur > 0 ? "vaapi" as const : "logiciel" as const;
   // Le logiciel ne tient pas un 1080p50 sur un petit processeur : il reste à 720p, et à 30 images au plus.
   const plafond = hauteurVisee(recepteur, encodeur === "vaapi");
   const choix = analyse ? choisirVariante(analyse, recepteur, plafond) : null;
@@ -249,6 +272,7 @@ export function choisirTraitementLive(analyse: AnalyseLive | null, recepteur: Re
   const base = source?.imagesParSeconde || 25;
   const imagesParSeconde = encodeur === "vaapi" ? Math.min(60, entrelace ? base * 2 : base) : base > 30 ? base / 2 : base;
   return { copie: false, flux: source?.flux ?? null, fluxAudio: source?.fluxAudio ?? null, largeur, hauteur, entrelace, encodeur,
+    ...(encodeur === "vaapi" ? { reglage: circuit!.reglage } : {}),
     imagesParSeconde, libelle: `Conversion ${hauteur}p${Math.round(imagesParSeconde)}${entrelace ? " · désentrelacée" : ""}` };
 }
 
@@ -266,13 +290,33 @@ export function argumentsVideoLive(t: TraitementLive): { entree: string[]; sorti
   if (t.encodeur === "vaapi") {
     const filtres = ["format=nv12", "hwupload", ...(t.entrelace ? ["deinterlace_vaapi=rate=field"] : []),
       `scale_vaapi=w=${t.largeur}:h=${t.hauteur}`];
+    const reglage = t.reglage === "cqp" ? ["-qp", "23"] : ["-rc_mode", "VBR", ...debits];
     return { entree: ["-vaapi_device", config.hardwareDevice],
-      sortie: ["-vf", filtres.join(","), "-c:v", "h264_vaapi", "-rc_mode", "VBR", ...debits, ...cles] };
+      sortie: ["-vf", filtres.join(","), "-c:v", "h264_vaapi", ...reglage, ...cles] };
   }
   const filtres = [...(t.entrelace ? ["yadif=mode=send_frame:parity=auto:deint=interlaced"] : []),
     `scale=w='min(${t.largeur},iw)':h='min(${t.hauteur},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2`];
   return { entree: [], sortie: ["-vf", filtres.join(","), "-r", String(t.imagesParSeconde), "-c:v", "libx264", "-threads", "2", "-preset", "veryfast",
     "-profile:v", "high", "-pix_fmt", "yuv420p", ...debits, ...cles, "-sc_threshold", "0"] };
+}
+
+/**
+ * La sonde du direct, jouée au calibrage avec les arguments mêmes de la conversion réelle : une mire
+ * 1080p50 de deux secondes, entrelacée au besoin, encodée vers nulle part. Cent images.
+ */
+export function argumentsSondeDirect(reglage: "vbr" | "cqp", entrelace: boolean): string[] {
+  const video = argumentsVideoLive({ copie: false, flux: null, fluxAudio: null, largeur: 1920, hauteur: 1080, entrelace,
+    encodeur: "vaapi", reglage, imagesParSeconde: 50, libelle: "sonde" });
+  const sortie = [...video.sortie];
+  const filtre = sortie.indexOf("-vf");
+  if (entrelace && filtre >= 0) sortie[filtre + 1] = `setfield=tff,${sortie[filtre + 1]}`;
+  return [...video.entree, "-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=50:duration=2", "-an", ...sortie, "-f", "null", "-"];
+}
+
+/** Retire de la sortie de FFmpeg toute adresse : elle peut contenir celle d'un fournisseur ou d'un relais. */
+export function erreurFfmpegLisible(texte: string): string {
+  return texte.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/gi, "[adresse]").replace(/data:[^\s'"]+/g, "[liste]")
+    .split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(-6).join(" | ").slice(0, 600);
 }
 
 /** Le dossier de travail d'une conversion est-il bien un des nôtres ? Garde-fou avant suppression. */

@@ -1,3 +1,4 @@
+import { argumentsSondeDirect, type MaterielLive } from "./live-diffusion.js";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import os from "node:os";
@@ -839,8 +840,11 @@ async function creerMireDiffusion(): Promise<{ fichier: string; nettoyer: () => 
   }
 }
 
+/** Les chaînes de conversion d'un film vers un récepteur ; le direct a ses propres sondes. */
+type ChaineDiffusion = "materiel-hdr" | "materiel-sdr" | "logiciel-hdr";
+
 /** Les trois chaînes mesurées, vers 1280 × 720 en `h264_vaapi` : ce que vise un récepteur limité. */
-export function commandesDiffusionMaterielle(mire: string, toneMappingLogiciel: string[]): Record<DiffusionMaterielleProbe["id"], string[]> {
+export function commandesDiffusionMaterielle(mire: string, toneMappingLogiciel: string[]): Record<ChaineDiffusion, string[]> {
   const sortie = ["-c:v", "h264_vaapi", "-qp", "23", "-f", "null", "-"];
   const entree = ["-stream_loop", "3", "-i", mire, "-an"];
   return {
@@ -851,13 +855,29 @@ export function commandesDiffusionMaterielle(mire: string, toneMappingLogiciel: 
   };
 }
 
+/** En deçà, une conversion 1080p50 du direct prendrait du retard : elle ne tient pas le temps réel. */
+export const DIRECT_IMAGES_MIN = 55;
+
 /** La chaîne matérielle n'est retenue que si elle fonctionne et va plus vite que celle d'avant. */
 export function retenirDiffusion(probes: DiffusionMaterielleProbe[]): DiffusionMaterielleCalibration["retenue"] {
   const mesure = (id: DiffusionMaterielleProbe["id"]) => probes.find((probe) => probe.id === id);
   const materiel = mesure("materiel-hdr"), logiciel = mesure("logiciel-hdr");
   const hdr = Boolean(materiel?.usable && materiel.framesPerSecond
     && (!logiciel?.usable || !logiciel.framesPerSecond || materiel.framesPerSecond > logiciel.framesPerSecond));
-  return { hdr, sdr: Boolean(mesure("materiel-sdr")?.usable) };
+  // Le direct : le débit variable d'abord, plus économe en Wi-Fi ; la qualité constante s'il est refusé.
+  const tient = (id: DiffusionMaterielleProbe["id"]) => { const m = mesure(id); return !!m?.usable && (m.framesPerSecond ?? 0) >= DIRECT_IMAGES_MIN; };
+  const direct = tient("direct-vbr") ? "vbr" as const : tient("direct-cqp") ? "cqp" as const : null;
+  return { hdr, sdr: Boolean(mesure("materiel-sdr")?.usable), direct, desentrelacement: direct !== null && tient("direct-desentrelace") };
+}
+
+/**
+ * Ce que le direct peut demander au circuit vidéo, d'après le calibrage de cette machine. Rien de
+ * matériel tant que rien n'est mesuré : une passe matérielle refusée coûte quinze secondes d'écran noir.
+ */
+export function materielDuDirect(): MaterielLive | null {
+  if (calibratedAccelerator() !== "vaapi") return null;
+  const retenue = diffusionMaterielleRetenue();
+  return retenue.direct ? { reglage: retenue.direct, desentrelacement: !!retenue.desentrelacement } : null;
 }
 
 /**
@@ -870,7 +890,8 @@ export function retenirDiffusion(probes: DiffusionMaterielleProbe[]): DiffusionM
  */
 export async function calibrerDiffusionMaterielle(support: { version: string | null; encoders: Set<string>; hwaccels: Set<string>; filters: Set<string> }):
 Promise<DiffusionMaterielleCalibration> {
-  const signature = `${calibrationSignature(support.version, [...support.hwaccels], [...support.encoders])}|diffusion-v1`;
+  // v2 (r11) : les sondes du direct s'ajoutent ; une machine déjà mesurée les mesure à son tour.
+  const signature = `${calibrationSignature(support.version, [...support.hwaccels], [...support.encoders])}|diffusion-v2`;
   if (diffusionCache?.signature === signature) return diffusionCache;
   const stored = getSetting(DIFFUSION_KEY);
   if (stored) {
@@ -880,12 +901,12 @@ Promise<DiffusionMaterielleCalibration> {
     } catch { /* mesure illisible : elle sera refaite */ }
   }
   diffusionPromise ??= aLaSuite(async () => {
-    const labels: Record<DiffusionMaterielleProbe["id"], string> = {
+    const labels: Record<ChaineDiffusion, string> = {
       "materiel-hdr": "HEVC 4K HDR10 → 720p : décodage et réduction matériels, tonemapx, h264_vaapi",
       "materiel-sdr": "HEVC 4K → 720p : décodage, réduction et encodage matériels",
       "logiciel-hdr": "HEVC 4K HDR10 → 720p : décodage et tone mapping logiciels, h264_vaapi",
     };
-    const ids = Object.keys(labels) as DiffusionMaterielleProbe["id"][];
+    const ids = Object.keys(labels) as ChaineDiffusion[];
     const compile = support.hwaccels.has("vaapi") && support.encoders.has("h264_vaapi") && support.filters.has("scale_vaapi");
     const probes: DiffusionMaterielleProbe[] = [];
     if (!compile) {
@@ -915,6 +936,7 @@ Promise<DiffusionMaterielleCalibration> {
           }
         }
       } finally { await mire.nettoyer().catch(() => undefined); }
+      probes.push(...await sonderDirect());
     }
     const calibration: DiffusionMaterielleCalibration = { signature, measuredAt: new Date().toISOString(),
       probes, retenue: retenirDiffusion(probes) };
@@ -924,6 +946,37 @@ Promise<DiffusionMaterielleCalibration> {
     return calibration;
   });
   return diffusionPromise;
+}
+
+/**
+ * Les sondes du direct (r11) : la conversion d'un 1080p50, telle que le direct la lance, en débit
+ * variable puis en qualité constante, et le désentrelacement trame par trame avec le réglage retenu.
+ * Cent images d'une mire, encodées vers nulle part : quelques secondes au calibrage.
+ */
+async function sonderDirect(): Promise<DiffusionMaterielleProbe[]> {
+  const probes: DiffusionMaterielleProbe[] = [];
+  const essayer = async (id: DiffusionMaterielleProbe["id"], label: string, args: string[]) => {
+    const debut = Date.now();
+    try {
+      await execFileAsync(config.ffmpegPath, ["-nostdin", "-hide_banner", "-loglevel", "error", ...args],
+        { windowsHide: true, timeout: 60_000, maxBuffer: 1_000_000 });
+      const probe: DiffusionMaterielleProbe = { id, label, usable: true, error: null,
+        framesPerSecond: Math.round(100 * 1000 / Math.max(1, Date.now() - debut)) };
+      probes.push(probe); return probe;
+    } catch (erreur) {
+      const brut = erreur instanceof Error ? erreur.message : String(erreur);
+      const probe: DiffusionMaterielleProbe = { id, label, usable: false, framesPerSecond: null,
+        error: friendlyAcceleratorError(brut), detail: extraitSignifiant(brut) };
+      probes.push(probe); return probe;
+    }
+  };
+  const vbr = await essayer("direct-vbr", "Direct 1080p50 : h264_vaapi en débit variable", argumentsSondeDirect("vbr", false));
+  const cqp = await essayer("direct-cqp", "Direct 1080p50 : h264_vaapi en qualité constante", argumentsSondeDirect("cqp", false));
+  const reglage = vbr.usable && (vbr.framesPerSecond ?? 0) >= DIRECT_IMAGES_MIN ? "vbr"
+    : cqp.usable && (cqp.framesPerSecond ?? 0) >= DIRECT_IMAGES_MIN ? "cqp" : null;
+  if (reglage) await essayer("direct-desentrelace", `Direct 1080i50 : désentrelacement deinterlace_vaapi, ${reglage === "vbr" ? "débit variable" : "qualité constante"}`,
+    argumentsSondeDirect(reglage, true));
+  return probes;
 }
 
 /** Ce que la diffusion emploie : relu en base au besoin, rien de matériel tant que rien n'est mesuré. */

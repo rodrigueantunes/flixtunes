@@ -1,5 +1,39 @@
 # Journal des versions
 
+## 0.6.0.r11 — un cast plus stable, à la maison comme chez un proche
+
+<!-- release -->
+### Cast, sur le serveur
+
+- **Le direct converti avec ce que le NAS tient vraiment.** LCI et M6 sortaient en 720p25 sur le
+  téléviseur, le repli logiciel, au lieu du 1080p50 prévu : le réglage du circuit vidéo employé pour le
+  direct n'avait jamais été mesuré sur le NAS. Le calibrage le mesure désormais, et le direct n'emploie
+  que ce qui a tenu — sans écran noir de quinze secondes quand le circuit refuse.
+- **Deux chaînes à la fois.** Une chaîne sur un téléviseur n'empêche plus d'en lancer une autre sur
+  un second ; les chaînes copiées ne comptent plus du tout. Un refus dit quoi faire.
+- **Une chaîne qui ne démarre pas en copie** passe au bout de 15 s à une conversion pleine
+  définition, au lieu de laisser la personne devant un écran noir.
+- Le journal dit pourquoi une conversion du direct a échoué.
+
+### Hors de chez soi, sur le serveur et Android
+
+- **DLNA chez un proche.** Le téléphone propose aussi les téléviseurs DLNA du Wi-Fi où il se trouve :
+  le NAS prépare et pilote, le téléphone transmet, et relaie la vidéo en clair sur ce Wi-Fi pour les
+  téléviseurs qui ne lisent pas le HTTPS.
+- **Le relais ne s'endort plus.** Ouverte à la maison puis emportée chez un proche, l'application
+  cessait de proposer les téléviseurs ; elle vérifie maintenant où elle est, chaque minute.
+
+### Live TV depuis l'accès distant, sur le serveur et Android
+
+- **Les logos des chaînes s'affichent sur Android**, comme sur Windows.
+- **Plus de logos manquants dans la grille** : ils ne sont plus refusés quand ils arrivent en nombre,
+  et ceux déjà vus reviennent tout de suite.
+<!-- /release -->
+
+Analyse des journaux du NAS du 3 au 14 octobre, banc du direct sur la Pixel Tablet, tests de bout en
+bout du DLNA relayé. Le calibrage du direct, le DLNA et le Cast chez un proche restent à mesurer sur
+place. Le NAS doit passer en r11. [Analyse et mesures de la r11](docs/DIFFUSION_060_R11.md).
+
 ## 0.6.0.r10 — caster hors de chez soi
 
 <!-- release -->

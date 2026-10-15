@@ -13,6 +13,13 @@ class ServerUrlTest {
         assertEquals("https://nas.local/api/artwork/42", ServerUrl.resolve("https://nas.local/", "/api/artwork/42"))
     }
 
+    @Test fun `résout le logo d une chaîne servi par le relais distant, et garde celui d un fournisseur`() {
+        // r11 : depuis l'accès distant, le logo est un lien relatif vers le relais du NAS.
+        assertEquals("https://nas.exemple.fr/api/live/relais?t=abc_DEF-1",
+            ServerUrl.resolve("https://nas.exemple.fr", "/api/live/relais?t=abc_DEF-1"))
+        assertEquals("https://cdn.exemple.com/logo.png", ServerUrl.resolve("https://nas.exemple.fr", "https://cdn.exemple.com/logo.png"))
+    }
+
     @Test fun `rejette les protocoles non web`() {
         assertThrows(IllegalArgumentException::class.java) { ServerUrl.normalize("ftp://nas.local") }
     }

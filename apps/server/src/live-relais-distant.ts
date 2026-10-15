@@ -6,6 +6,81 @@ import { adresseRelayee, estUnManifeste, recupererSansSortirDuPublic, reecrireMa
 
 const actifs = new Map<string, number>();
 
+/**
+ * Les logos du direct, à part des flux (r11).
+ *
+ * Ils passaient par le même plafond que la vidéo — 24 requêtes simultanées par profil. Une grille de
+ * chaînes en demande des dizaines d'un coup : du 4 au 13 octobre, l'application de bureau a reçu 306
+ * refus 429 sur ce relais pour 200 réponses servies, autant de logos remplacés par une initiale. Ils
+ * attendent désormais leur tour dans une file courte, et un logo déjà servi l'est depuis la mémoire.
+ */
+const IMAGES_SIMULTANEES = 6;
+const ATTENTE_IMAGE_MS = 10_000;
+const CACHE_IMAGES_OCTETS = 24 * 1024 * 1024;
+const VIE_IMAGE_MS = 12 * 3600_000;
+const VIE_ECHEC_MS = 10 * 60_000;
+type ImageRetenue = { type: string; image: Buffer; expire: number } | { echec: true; expire: number };
+const imagesRetenues = new Map<string, ImageRetenue>();
+let octetsRetenus = 0;
+let imagesEnCours = 0;
+const fileImages: Array<() => void> = [];
+
+function retenirImage(url: string, valeur: ImageRetenue) {
+  const ancienne = imagesRetenues.get(url);
+  if (ancienne && "image" in ancienne) octetsRetenus -= ancienne.image.byteLength;
+  imagesRetenues.delete(url);
+  imagesRetenues.set(url, valeur);
+  if ("image" in valeur) octetsRetenus += valeur.image.byteLength;
+  // Les plus anciennes partent d'abord : une Map garde l'ordre d'insertion.
+  for (const [cle, v] of imagesRetenues) {
+    if (octetsRetenus <= CACHE_IMAGES_OCTETS && imagesRetenues.size <= 2000) break;
+    imagesRetenues.delete(cle);
+    if ("image" in v) octetsRetenus -= v.image.byteLength;
+  }
+}
+
+/** Une place pour télécharger un logo, ou `false` après dix secondes d'attente. */
+async function placeImage(): Promise<boolean> {
+  if (imagesEnCours < IMAGES_SIMULTANEES) { imagesEnCours++; return true; }
+  return await new Promise<boolean>((resolve) => {
+    const tour = () => { clearTimeout(delai); imagesEnCours++; resolve(true); };
+    const delai = setTimeout(() => { const i = fileImages.indexOf(tour); if (i >= 0) fileImages.splice(i, 1); resolve(false); }, ATTENTE_IMAGE_MS);
+    fileImages.push(tour);
+  });
+}
+function rendrePlaceImage() { imagesEnCours--; fileImages.shift()?.(); }
+
+/** Pour les tests : repartir d'une mémoire vide. */
+export function oublierImagesRelayees() { imagesRetenues.clear(); octetsRetenus = 0; }
+
+async function relayerImage(url: string, reply: FastifyReply) {
+  const retenue = imagesRetenues.get(url);
+  if (retenue && retenue.expire > Date.now()) {
+    if ("echec" in retenue) return reply.code(502).send({ message: "Image indisponible" });
+    return reply.header("Cache-Control", "private, max-age=3600").header("X-Content-Type-Options", "nosniff")
+      .header("Content-Security-Policy", "default-src 'none'; sandbox").type(retenue.type).send(retenue.image);
+  }
+  if (!await placeImage()) return reply.code(429).header("Retry-After", "2").send({ message: "Trop d’images demandées" });
+  try {
+    const suivie = await recupererSansSortirDuPublic(url, { signal: AbortSignal.timeout(15_000), headers: { "User-Agent": "FlixTunes" } }, recupererPublic);
+    if (!suivie) return reply.code(403).send({ message: "Adresse interne refusée" });
+    const amont = suivie.reponse;
+    const type = (amont.headers.get("content-type") ?? "").split(";")[0]!.toLowerCase();
+    if (!amont.ok || !amont.body || !["image/png", "image/jpeg", "image/webp", "image/gif", "image/avif"].includes(type)) {
+      await amont.body?.cancel().catch(() => undefined);
+      retenirImage(url, { echec: true, expire: Date.now() + VIE_ECHEC_MS });
+      return reply.code(502).send({ message: "Image indisponible" });
+    }
+    const image = await lireCorpsBorne(amont, 4 * 1024 * 1024);
+    retenirImage(url, { type, image, expire: Date.now() + VIE_IMAGE_MS });
+    return reply.header("Cache-Control", "private, max-age=3600").header("X-Content-Type-Options", "nosniff")
+      .header("Content-Security-Policy", "default-src 'none'; sandbox").type(type).send(image);
+  } catch {
+    retenirImage(url, { echec: true, expire: Date.now() + VIE_ECHEC_MS });
+    return reply.code(502).send({ message: "Image indisponible" });
+  } finally { rendrePlaceImage(); }
+}
+
 /** Certains fournisseurs servent HLS sans extension et avec un type générique. */
 async function detecterManifeste(reponse: Response): Promise<{ reponse: Response; manifeste: boolean }> {
   const lecteur = reponse.body!.getReader();
@@ -88,6 +163,7 @@ export async function relayerLiveDistant(request: FastifyRequest, reply: Fastify
   const { t } = request.query as { t?: string };
   const acces = lireAccesLiveDistant(t, profil);
   if (!acces) return reply.code(404).send({ message: "Adresse inconnue" });
+  if (acces.usage === "image") return relayerImage(acces.url, reply);
   if ((actifs.get(profil) ?? 0) >= 24) return reply.code(429).header("Retry-After", "2").send({ message: "Trop de lectures simultanées" });
   actifs.set(profil, (actifs.get(profil) ?? 0) + 1);
   const arret = new AbortController();
@@ -112,14 +188,6 @@ export async function relayerLiveDistant(request: FastifyRequest, reply: Fastify
     const type = (amont.headers.get("content-type") ?? "").split(";")[0]!.toLowerCase();
     reply.header("Cache-Control", "private, no-store").header("X-Content-Type-Options", "nosniff")
       .header("Content-Security-Policy", "default-src 'none'; sandbox");
-    if (acces.usage === "image") {
-      if (!["image/png", "image/jpeg", "image/webp", "image/gif", "image/avif"].includes(type)) {
-        liberer(); return reply.code(502).send({ message: "Image indisponible" });
-      }
-      const image = await lireCorpsBorne(amont, 4 * 1024 * 1024);
-      liberer();
-      return reply.type(type).send(image);
-    }
     let manifeste = type.includes("mpegurl") || /\.m3u8(?:\?|$)/i.test(suivie.url);
     if (!manifeste) {
       const detection = await detecterManifeste(amont);

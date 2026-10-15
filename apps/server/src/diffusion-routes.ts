@@ -4,9 +4,9 @@ import { z } from "zod";
 import { commandeDiffusionSchema, contenuDiffuseSchema, etatDiffusionSchema, etatDiffusionVide, type ContenuDiffuse, type EtatDiffusion } from "@flixtunes/contracts";
 import { jetonDeLaRequete, sessionDuJeton } from "./sessions-profil.js";
 import { RegistreDiffusion } from "./diffusion-registre.js";
-import { DecouverteDiffusion, type Recepteur } from "./diffusion-reseau.js";
+import { DecouverteDiffusion, descriptionDlna, ipv4Privee, type Recepteur } from "./diffusion-reseau.js";
 import { contenuAutorise, MediasDiffusion, mimeDuFichier, origineDiffusion, origineDistante, type MediaDiffuse } from "./diffusion-medias.js";
-import { TransportRelais, type CibleRelais } from "./diffusion-relais.js";
+import { envoiSoapParRelais, TransportRelais, type CibleRelais } from "./diffusion-relais.js";
 import { ErreurCast, TransportCast } from "./diffusion-cast.js";
 import { dlnaLitLeConteneur, dlnaLitLeHls, TransportDlna } from "./diffusion-dlna.js";
 import { ErreurPreparationDiffusion } from "./diffusion-preparation.js";
@@ -17,7 +17,8 @@ import { db, getProfile } from "./database.js";
 
 const battementSchema = z.object({ cle: z.string().regex(/^[a-f0-9]{64}$/), etat: etatDiffusionSchema,
   accuses: z.array(z.object({ id: z.string().uuid(), ok: z.boolean(), erreur: z.string().max(300).optional(),
-    code: z.string().max(40).optional(), verdict: z.enum(["accepte", "refuse", "inconnu"]).optional() })).max(16).default([]),
+    code: z.string().max(40).optional(), verdict: z.enum(["accepte", "refuse", "inconnu"]).optional(),
+    reponse: z.object({ statut: z.number().int().min(0).max(999), corps: z.string().max(262_144) }).optional() })).max(16).default([]),
   /** Pour un relais : l'adresse du média que le téléviseur lit, pour ne retenir que l'état du nôtre. */
   media: z.string().max(2048).optional() });
 type Transport = TransportCast | TransportDlna | TransportRelais;
@@ -131,10 +132,20 @@ export async function routesDiffusion(app: FastifyInstance) {
    * réseau. Le NAS ne peut pas le joindre ; il le pilotera par des ordres que ce relais exécute.
    */
   app.post("/api/diffusion/relais", async (req, reply) => {
-    const data = z.object({ nom: z.string().trim().min(1).max(120), modele: z.string().trim().max(120).optional() }).safeParse(req.body);
+    const data = z.object({ nom: z.string().trim().min(1).max(120), modele: z.string().trim().max(120).optional(),
+      // DLNA chez un proche (r11) : la description du téléviseur, son adresse, et le relais vidéo du téléphone.
+      protocole: z.enum(["googlecast", "dlna"]).default("googlecast"),
+      description: z.string().max(65_536).optional(), location: z.string().url().max(512).optional(), local: z.string().url().max(80).optional(),
+    }).safeParse(req.body);
     if (!data.success) return reply.code(400).send({ message: "Téléviseur invalide" });
     try { origineDistante(); } catch (e) { return reply.code(409).send({ message: e instanceof Error ? e.message : "Accès distant indisponible" }); }
-    try { return registre.inscrireRelais(req.profilImpose!, data.data.nom, data.data.modele || undefined); }
+    let dlna: { recepteur: Recepteur; local: string } | undefined;
+    if (data.data.protocole === "dlna") {
+      const relaisDlna = descriptionRelayee(data.data.description, data.data.location, data.data.local);
+      if (!relaisDlna) return reply.code(400).send({ message: "Description DLNA invalide" });
+      dlna = relaisDlna;
+    }
+    try { return registre.inscrireRelais(req.profilImpose!, data.data.nom, data.data.modele || dlna?.recepteur.modele || undefined, dlna); }
     catch { return reply.code(429).send({ message: "Trop d’appareils connectés" }); }
   });
   app.post("/api/diffusion/lecteurs", async (req, reply) => {
@@ -153,6 +164,9 @@ export async function routesDiffusion(app: FastifyInstance) {
     if (lecture?.transport instanceof TransportRelais) {
       lecture.transport.recevoir(data.data.etat, data.data.media);
       if (data.data.media === lecture.media.url) medias.entretenir(lecture.media.cle);
+    } else if (lecture && req.params.id.startsWith("rl-")) {
+      // Un téléviseur DLNA relayé : le NAS relève son état par SOAP ; le battement suffit à garder la clé.
+      medias.entretenir(lecture.media.cle);
     }
     return { ordres };
   });
@@ -196,7 +210,10 @@ export async function routesDiffusion(app: FastifyInstance) {
         catch (e) { app.log.warn({ err: e instanceof Error ? e.message : String(e) }, "Progression de diffusion non enregistrée"); }
       }
     };
-    const nouveauTransport = (): Transport => "relais" in cible ? new TransportRelais(registre, cible, profil, actualiser)
+    const nouveauTransport = (): Transport => "relais" in cible
+      ? cible.dlna ? new TransportDlna({ ...cible.dlna.recepteur, id: cible.id, nom: cible.nom }, actualiser,
+          { envoyer: envoiSoapParRelais(registre, cible.id, profil), demarrage: 40_000 })
+        : new TransportRelais(registre, cible, profil, actualiser)
       : cible.protocole === "googlecast" ? new TransportCast(cible, actualiser) : new TransportDlna(cible, actualiser);
     let transport = nouveauTransport(), chargeEnvoye = false;
     // Annuler interrompt aussi un échange en cours avec le téléviseur : le transport fermé rejette
@@ -252,8 +269,12 @@ export async function routesDiffusion(app: FastifyInstance) {
         plan = [{ nom: "source", qualiteSource: true, compatible: false, hauteurMax: 2160, fichierTelQuel: true }, ...plan.filter((n) => !n.qualiteSource)];
       }
       const courante = lectures.get(id);
+      let copieDuDirect = false;
       for (let rang = 0; rang < plan.length; rang++) {
         const niveau = plan[rang]!, dernier = rang === plan.length - 1;
+        // La conversion pleine définition du direct ne sert qu'après une copie refusée : après une
+        // conversion refusée, la refaire à l'identique ne ferait que retarder le repli compatible.
+        if (niveau.convertir && !copieDuDirect) continue;
         verifierAnnulation();
         etape({ etape: "preparation", qualite: libelleNiveau(niveau) });
         // Une seule conversion du direct à la fois : celle de la chaîne affichée part avant la nouvelle.
@@ -272,11 +293,15 @@ export async function routesDiffusion(app: FastifyInstance) {
         }
         if (signal.aborted) { await medias.retirer(media.cle); media = undefined; throw new Annulation(); }
         if (lectures.get(id)) await retirer(id);
+        const copie = direct && media.qualite === "Vidéo source conservée";
+        copieDuDirect = copieDuDirect || copie;
         etape({ etape: "demarrage", qualite: media.qualite, contenu: media.contenu });
         lectures.set(id, { profil, media, etat: { ...op.etat, etape: "demarrage" }, transport, dernierControle: Date.now() });
         try {
           chargeEnvoye = true;
-          if (estCast(transport)) await transport.charger(media.url, media.mime, media.contenu.titre, media.direct, media.position, media.segmentsFmp4, media.metadonnees);
+          if (transport instanceof TransportCast) await transport.charger(media.url, media.mime, media.contenu.titre, media.direct, media.position,
+            media.segmentsFmp4, media.metadonnees, copie && !dernier ? 15_000 : 35_000);
+          else if (estCast(transport)) await transport.charger(media.url, media.mime, media.contenu.titre, media.direct, media.position, media.segmentsFmp4, media.metadonnees);
           else await transport.charger(media.url, media.mime, media.contenu.titre, media.direct, media.position, media.metadonnees, media.fichier != null);
           if (reprendreEnPause) await transport.commander({ type: "pause" });
         } catch (e) {
@@ -335,7 +360,8 @@ export async function routesDiffusion(app: FastifyInstance) {
     }
     // Un téléviseur relayé n'est connu que du registre ; hors de chez soi, il n'y a pas d'autre cible (D4).
     const relais = id.startsWith("rl-") ? registre.relais(id, profil) : null;
-    const cible: Recepteur | CibleRelais | null = relais ? { id, nom: relais.nom, protocole: "googlecast", modele: relais.modele, relais: true }
+    const cible: Recepteur | CibleRelais | null = relais ? { id, nom: relais.nom, protocole: relais.dlna ? "dlna" : "googlecast",
+        modele: relais.modele, relais: true, dlna: relais.dlna }
       : req.expositionWan ? null : decouverte.trouver(id) ?? null;
     if (!cible) return reply.code(404).send({ message: "Récepteur hors ligne" });
     const courante = lectures.get(id), enCours = operations.get(id);
@@ -348,7 +374,9 @@ export async function routesDiffusion(app: FastifyInstance) {
       if (enCours) { enCours.controle.abort(); await enCours.fin.catch(() => undefined); }
       if (lectures.get(id)) { await retirer(id, true); return { ok: true }; }
       try {
-        if ("relais" in cible) await new TransportRelais(registre, cible, profil, () => {}).reinitialiser();
+        if ("relais" in cible && cible.dlna) await new TransportDlna({ ...cible.dlna.recepteur, id, nom: cible.nom }, () => {},
+          { envoyer: envoiSoapParRelais(registre, id, profil) }).liberer();
+        else if ("relais" in cible) await new TransportRelais(registre, cible, profil, () => {}).reinitialiser();
         else if (cible.protocole === "googlecast") await new TransportCast(cible, () => {}).reinitialiser();
         else await new TransportDlna(cible, () => {}).liberer();
         return { ok: true };
@@ -378,7 +406,9 @@ export async function routesDiffusion(app: FastifyInstance) {
           volume: courante?.etat.volume ?? 1, position: chargement.position } };
       // Un téléviseur relayé est hors de chez soi : il joint le NAS par son domaine public, jamais par le réseau local.
       let origine: string;
-      try { origine = "relais" in cible ? origineDistante() : origineDiffusion(req.headers.host ?? "", req.protocol, req.raw.socket.localAddress, req.raw.socket.localPort); }
+      // Un téléviseur DLNA relayé lit par le relais vidéo du téléphone, en clair sur son Wi-Fi : beaucoup
+      // de téléviseurs DLNA ne lisent pas le HTTPS. Le téléphone relaie, lui, en HTTPS vers le NAS.
+      try { origine = "relais" in cible ? cible.dlna?.local ?? origineDistante() : origineDiffusion(req.headers.host ?? "", req.protocol, req.raw.socket.localAddress, req.raw.socket.localPort); }
       catch (e) { return reply.code(409).send({ message: e instanceof Error ? e.message : "Adresse du NAS indisponible" }); }
       op.fin = diffuser(op, id, cible, chargement, origine, c.type === "position" && courante?.etat.lecture === "pause")
         .catch((e) => {
@@ -426,4 +456,20 @@ export async function routesDiffusion(app: FastifyInstance) {
 function fichierDuMedia(id: string): string | null {
   const row = db.prepare("SELECT file_path FROM media_items WHERE id = ? AND available = 1").get(id) as { file_path: string } | undefined;
   return row?.file_path ?? null;
+}
+
+/**
+ * La description d'un téléviseur DLNA chez un proche, telle que le téléphone l'a lue (r11). Le NAS ne
+ * contacte jamais ce téléviseur : il en tire les adresses de commande, que seul le téléphone postera.
+ * Elles visent toutes le téléviseur, sur une adresse privée ; le relais vidéo, une adresse privée du
+ * téléphone, en clair sur son Wi-Fi.
+ */
+export function descriptionRelayee(description?: string, location?: string, local?: string): { recepteur: Recepteur; local: string } | null {
+  if (!description || !location || !local) return null;
+  try {
+    const lieu = new URL(location), relais = new URL(local);
+    if (relais.protocol !== "http:" || !ipv4Privee(relais.hostname) || relais.pathname !== "/" || relais.search || relais.username || relais.password) return null;
+    const recepteur = descriptionDlna(description, lieu.href, lieu.hostname);
+    return recepteur ? { recepteur, local: relais.origin } : null;
+  } catch { return null; }
 }

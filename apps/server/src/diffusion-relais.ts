@@ -1,9 +1,28 @@
 import type { ActionRelais, CommandeDiffusion, EtatDiffusion } from "@flixtunes/contracts";
 import { ErreurCast, type MetadonneesDiffusion } from "./diffusion-cast.js";
 import type { RegistreDiffusion } from "./diffusion-registre.js";
+import type { EnvoiSoap } from "./diffusion-dlna.js";
+import type { Recepteur } from "./diffusion-reseau.js";
 
-/** Un téléviseur vu par un relais, tel que la diffusion le manipule. */
-export interface CibleRelais { id: string; nom: string; protocole: "googlecast"; modele?: string; relais: true }
+/**
+ * Un téléviseur vu par un relais, tel que la diffusion le manipule. Pour un téléviseur DLNA (r11), la
+ * description qu'en a faite le téléphone, et l'adresse du relais vidéo qu'il tient sur son Wi-Fi.
+ */
+export interface CibleRelais { id: string; nom: string; protocole: "googlecast" | "dlna"; modele?: string; relais: true;
+  dlna?: { recepteur: Recepteur; local: string } }
+
+/**
+ * Les commandes SOAP d'un téléviseur DLNA chez un proche : le NAS les compose comme pour un
+ * téléviseur de la maison, et le téléphone les poste au téléviseur qu'il a lui-même annoncé.
+ */
+export function envoiSoapParRelais(registre: RegistreDiffusion, id: string, profil: string): EnvoiSoap {
+  return async (url, action, corps) => {
+    const accuse = await registre.ordonner(id, profil, { type: "soap", url, action, corps }, 12_000);
+    if (!accuse) throw new Error("Le téléphone qui voit ce téléviseur ne répond plus");
+    if (!accuse.ok || !accuse.reponse) throw new Error(accuse.erreur?.slice(0, 300) || "Le téléviseur DLNA ne répond pas");
+    return new Response(accuse.reponse.corps, { status: accuse.reponse.statut >= 200 && accuse.reponse.statut <= 599 ? accuse.reponse.statut : 502 });
+  };
+}
 
 type Verdict = "accepte" | "refuse" | "inconnu";
 

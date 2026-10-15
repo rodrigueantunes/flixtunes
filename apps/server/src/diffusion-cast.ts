@@ -380,15 +380,20 @@ export class TransportCast {
       this.session = undefined; this.erreurLecture = undefined; this.codeDetaille = undefined;
     }
   }
-  async charger(url: string, mime: string, titre: string, direct: boolean, position: number, segmentsFmp4 = false, metadonnees?: MetadonneesDiffusion) {
+  /**
+   * `delai` borne l'attente de la lecture confirmée : 35 s par défaut, 15 s pour une copie du direct,
+   * qu'une conversion remplace alors au lieu de laisser la personne devant un écran noir.
+   */
+  async charger(url: string, mime: string, titre: string, direct: boolean, position: number, segmentsFmp4 = false, metadonnees?: MetadonneesDiffusion,
+    delai = 35_000) {
     if (this.lecteurEnCours) await this.lecteurEnCours;
     await this.assurerLecteur();
     this.enLecture = false; this.erreurLecture = undefined; this.session = undefined; this.codeDetaille = undefined;
     this.contenuAttendu = url; this.positionConfirmee = undefined; this.progressionConfirmee = false; this.dernierProgres = Date.now();
     await this.requete("media", { type: "LOAD", autoplay: true, currentTime: direct ? 0 : position,
       ...(this.application?.sessionId ? { sessionId: this.application.sessionId } : {}),
-      media: { ...(segmentsFmp4 ? { hlsSegmentFormat: "FMP4", hlsVideoSegmentFormat: "FMP4" } : {}), contentId: url, contentUrl: url, contentType: mime, streamType: direct ? "LIVE" : "BUFFERED", metadata: metadonnees ? metadonneesCast(metadonnees) : { metadataType: 0, title: titre } } }, this.destination, 35_000);
-    const limite = Date.now() + 35_000;
+      media: { ...(segmentsFmp4 ? { hlsSegmentFormat: "FMP4", hlsVideoSegmentFormat: "FMP4" } : {}), contentId: url, contentUrl: url, contentType: mime, streamType: direct ? "LIVE" : "BUFFERED", metadata: metadonnees ? metadonneesCast(metadonnees) : { metadataType: 0, title: titre } } }, this.destination, delai);
+    const limite = Date.now() + delai;
     while (!this.enLecture && !this.erreurLecture && this.socket && Date.now() < limite) {
       await new Promise((r) => setTimeout(r, 750));
       if (!this.enLecture && !this.erreurLecture && this.socket) await this.requete("media", { type: "GET_STATUS" }, this.destination, 5000);

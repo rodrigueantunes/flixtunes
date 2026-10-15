@@ -28,6 +28,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import tv.flixtunes.app.data.FlixTunesApi
@@ -45,8 +46,11 @@ import kotlin.coroutines.resume
  * Il ne tourne que connecté par l'accès distant : à la maison, c'est le NAS qui caste.
  */
 object RelaisCast {
-    private class Inscription(val id: String, val cle: String, var route: MediaRouter.RouteInfo, val appareil: String) {
+    /** Un téléviseur annoncé au NAS : Cast (sa route) ou DLNA (sa description, et le relais vidéo annoncé). */
+    private class Inscription(val id: String, val cle: String, var route: MediaRouter.RouteInfo?, val appareil: String,
+        val dlna: TeleviseurDlna? = null, val local: String? = null) {
         val accuses = JSONArray()
+        var dernierOrdre = 0L
     }
     private class ErreurRelais(val code: String, message: String) : Exception(message)
 
@@ -59,16 +63,21 @@ object RelaisCast {
     private var boucle: Job? = null
     private var visibles = 0
     private var distant: Boolean? = null
+    private var distantVerifie = 0L
     private val inscrits = mutableMapOf<String, Inscription>()
     private var finDeSession: Job? = null
     private val decouverte = object : MediaRouter.Callback() {}
+    private var dlnaVus: List<TeleviseurDlna> = emptyList()
+    private var rechercheDlna = 0L
     /** Connecté par l'accès distant : les téléviseurs proposés sont ceux du Wi-Fi où se trouve le téléphone. */
     val horsDeChezSoi: Boolean get() = distant == true
 
     fun attacher(proprietaire: LifecycleOwner, context: Context, client: FlixTunesApi): () -> Unit {
         val observateur = object : DefaultLifecycleObserver {
             override fun onStart(owner: LifecycleOwner) {
-                if (api?.serverUrl != client.serverUrl) { distant = null; inscrits.clear() }
+                if (api?.serverUrl != client.serverUrl) inscrits.clear()
+                // Le téléphone a pu changer de réseau pendant que l'application était en arrière-plan.
+                distant = null
                 api = client; contexte = context.applicationContext; visibles++; demarrer()
             }
             override fun onStop(owner: LifecycleOwner) { visibles = (visibles - 1).coerceAtLeast(0); ajusterDecouverte() }
@@ -107,22 +116,30 @@ object RelaisCast {
             while (isActive && silence < 30) {
                 val client = api
                 if (client == null) { delay(2000); continue }
-                if (distant == null) distant = runCatching { client.remoteSession().required }.getOrNull()
-                if (distant != true || !preparerCast()) { silence++; delay(5000); continue }
-                ajusterDecouverte()
-                val active = sessionActive()
-                if (visibles == 0 && active == null) silence++ else silence = 0
-                try { tour(client, active) } catch (_: Exception) { /* le NAS est momentanément injoignable */ }
-                delay(if (active != null) 1000 else 2500)
+                // Réévalué chaque minute : un téléphone ouvert à la maison peut se retrouver chez un proche.
+                if (distant == null || System.currentTimeMillis() - distantVerifie > 60_000) {
+                    runCatching { client.remoteSession().required }.getOrNull()?.let { distant = it; distantVerifie = System.currentTimeMillis() }
+                }
+                // Tant qu'un écran est visible, la boucle veille ; elle ne s'éteint qu'en arrière-plan.
+                if (distant != true) { if (visibles == 0) silence++; delay(5000); continue }
+                // Sans services Google Play, pas de Cast ; le DLNA, lui, n'en dépend pas.
+                val castPret = preparerCast()
+                if (castPret) ajusterDecouverte()
+                val active = if (castPret) sessionActive() else null
+                val dlnaActif = inscrits.values.any { it.dlna != null && System.currentTimeMillis() - it.dernierOrdre < 60_000 }
+                if (visibles == 0 && active == null && !dlnaActif) silence++ else silence = 0
+                try { tour(client, active, castPret) } catch (_: Exception) { /* le NAS est momentanément injoignable */ }
+                delay(if (active != null || dlnaActif) 1000 else 2500)
             }
             routeur?.removeCallback(decouverte)
+            withContext(Dispatchers.IO) { RelaisDlna.fermer() }
         }
     }
 
     /** Un tour : annoncer les téléviseurs vus, battre pour chacun, exécuter les ordres reçus. */
-    private suspend fun tour(client: FlixTunesApi, active: CastSession?) {
-        val r = routeur ?: return; val s = selecteur ?: return
-        val routes = r.routes.filter { !it.isDefault && it.isEnabled && it.matchesSelector(s) }
+    private suspend fun tour(client: FlixTunesApi, active: CastSession?, castPret: Boolean) {
+        val r = routeur; val s = selecteur
+        val routes = if (castPret && r != null && s != null) r.routes.filter { !it.isDefault && it.isEnabled && it.matchesSelector(s) } else emptyList()
         val appareilActif = active?.castDevice?.deviceId
         for (route in routes) {
             val appareil = CastDevice.getFromBundle(route.extras) ?: continue
@@ -131,9 +148,23 @@ object RelaisCast {
                 .apply { appareil.modelName.takeIf { it.isNotBlank() }?.let { put("modele", it.take(120)) } })
             inscrits[appareil.deviceId] = Inscription(reponse.getString("id"), reponse.getString("cle"), route, appareil.deviceId)
         }
+        // DLNA chez un proche (r11) : une recherche toutes les trente secondes, écran visible seulement.
+        val maintenant = System.currentTimeMillis()
+        if (visibles > 0 && maintenant - rechercheDlna > 30_000) { rechercheDlna = maintenant; dlnaVus = RelaisDlna.decouvrir() }
+        val local = if (dlnaVus.isNotEmpty()) withContext(Dispatchers.IO) { RelaisDlna.relais(client.serverUrl) } else null
+        if (local != null) for (tv in dlnaVus) {
+            val cle = "dlna:${tv.udn}"
+            // Le relais vidéo a changé d'adresse (autre Wi-Fi) : le téléviseur est annoncé de nouveau.
+            if (inscrits[cle]?.local == local) continue
+            val reponse = client.diffusion("relais", JSONObject().put("nom", tv.nom.take(120)).put("protocole", "dlna")
+                .put("description", tv.description).put("location", tv.lieu).put("local", local)
+                .apply { tv.modele?.let { put("modele", it.take(120)) } })
+            inscrits[cle] = Inscription(reponse.getString("id"), reponse.getString("cle"), null, cle, tv, local)
+        }
         // Un téléviseur disparu du réseau est oublié, sauf celui qui diffuse : le NAS l'oubliera en 30 s.
-        val vus = routes.mapNotNull { CastDevice.getFromBundle(it.extras)?.deviceId }.toSet()
-        inscrits.keys.retainAll { it in vus || it == appareilActif }
+        val vus = routes.mapNotNull { CastDevice.getFromBundle(it.extras)?.deviceId }.toSet() + dlnaVus.map { "dlna:${it.udn}" }
+        val enCours = inscrits.values.filter { maintenant - it.dernierOrdre < 300_000 }.map { it.appareil }.toSet()
+        inscrits.keys.retainAll { it in vus || it == appareilActif || it in enCours }
         for (inscription in inscrits.values.toList()) {
             val (etat, media) = if (inscription.appareil == appareilActif) etatTeleviseur(active) else etatDiffusionAndroid() to null
             val corps = JSONObject().put("cle", inscription.cle).put("etat", etat).put("accuses", JSONArray(inscription.accuses.toString()))
@@ -145,6 +176,7 @@ object RelaisCast {
             for (rang in 0 until ordres.length()) {
                 val ordre = ordres.getJSONObject(rang)
                 val action = ordre.optJSONObject("relais") ?: continue
+                inscription.dernierOrdre = System.currentTimeMillis()
                 // Un chargement dure jusqu'à 35 s : les battements continuent pendant ce temps.
                 scope.launch {
                     val accuse = JSONObject().put("id", ordre.getString("id"))
@@ -181,7 +213,7 @@ object RelaisCast {
     private suspend fun session(inscription: Inscription): CastSession {
         sessionActive()?.takeIf { it.castDevice?.deviceId == inscription.appareil }?.let { return it }
         val r = routeur ?: throw ErreurRelais("CAST_CONNEXION", "Le SDK Cast n’est pas prêt")
-        r.selectRoute(inscription.route)
+        r.selectRoute(inscription.route ?: throw ErreurRelais("CAST_CONNEXION", "Ce téléviseur n’est plus visible sur le Wi-Fi"))
         val limite = System.currentTimeMillis() + 20_000
         while (System.currentTimeMillis() < limite) {
             sessionActive()?.takeIf { it.castDevice?.deviceId == inscription.appareil }?.let { return it }
@@ -240,6 +272,14 @@ object RelaisCast {
     }
 
     private suspend fun executer(inscription: Inscription, action: JSONObject, accuse: JSONObject) {
+        // Un téléviseur DLNA ne reçoit que des commandes SOAP composées par le NAS, postées telles quelles.
+        inscription.dlna?.let { tv ->
+            if (action.optString("type") != "soap") throw ErreurRelais("CAST_RELAIS", "Ordre inconnu pour un téléviseur DLNA")
+            val (code, texte) = try { RelaisDlna.poster(tv.lieu, action.getString("url"), action.getString("action"), action.getString("corps")) }
+            catch (e: IllegalArgumentException) { throw ErreurRelais("DLNA_REFUS", e.message ?: "Commande refusée") }
+            accuse.put("reponse", JSONObject().put("statut", code).put("corps", texte))
+            return
+        }
         if (action.optString("type") != "liberer") { finDeSession?.cancel(); finDeSession = null }
         when (action.optString("type")) {
             "verifier" -> session(inscription)

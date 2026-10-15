@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RegistreDiffusion } from "./diffusion-registre.js";
 import { planDistant, type NiveauDiffusion } from "./diffusion-sonde.js";
+import { descriptionRelayee } from "./diffusion-routes.js";
 
 const fixture = vi.hoisted(() => ({ preparer: vi.fn(), retirer: vi.fn(), entretenir: vi.fn(), retenues: [] as Array<[string, unknown]>,
   debit: 8_000_000, lectures: 0 }));
@@ -11,10 +12,11 @@ vi.mock("./database.js", async (original) => ({ ...await original<typeof import(
 vi.mock("./diffusion-medias.js", () => ({
   origineDiffusion: () => "http://10.0.0.1:4000", origineDistante: () => "https://flixtunes.exemple.fr",
   contenuAutorise: (_profil: string, c: unknown) => c, mimeDuFichier: () => "video/mp4",
+  fonctionnalitesDlna: () => "DLNA.ORG_OP=00;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01300000000000000000000000000000",
   MediasDiffusion: class { preparer = fixture.preparer; retirer = fixture.retirer; entretenir = fixture.entretenir;
     dureePreparee = async () => 0; fermer = async () => {}; },
 }));
-vi.mock("./diffusion-reseau.js", () => ({ DecouverteDiffusion: class {
+vi.mock("./diffusion-reseau.js", async (original) => ({ ...await original<typeof import("./diffusion-reseau.js")>(), DecouverteDiffusion: class {
   trouver = () => ({ id: "tv-maison", adresse: "10.0.0.2", port: 8009, nom: "TV du salon", protocole: "googlecast" });
   demarrer = () => {}; fermer = () => {};
   lister = () => [{ id: "tv-maison", adresse: "10.0.0.2", port: 8009, nom: "TV du salon", protocole: "googlecast" }];
@@ -52,8 +54,9 @@ const charger = (qualite?: "maximale") => ({ type: "charger", contenu: { genre: 
  * Un téléphone hors de chez soi : il annonce le téléviseur qu'il voit, bat, et répond aux ordres du NAS
  * comme le ferait le SDK Cast. `reponse` décide de l'accusé de chaque ordre.
  */
-async function relais(reponse: (action: any) => Record<string, unknown> = () => ({ ok: true })) {
-  const r = await app.inject({ method: "POST", url: "/api/diffusion/relais", headers: wan, payload: { nom: "TV de Paul", modele: "Chromecast" } });
+async function relais(reponse: (action: any) => Record<string, unknown> = () => ({ ok: true }),
+  inscription: Record<string, unknown> = { nom: "TV de Paul", modele: "Chromecast" }) {
+  const r = await app.inject({ method: "POST", url: "/api/diffusion/relais", headers: wan, payload: inscription });
   expect(r.statusCode).toBe(200);
   const { id, cle } = r.json() as { id: string; cle: string };
   const recus: any[] = [];
@@ -186,5 +189,69 @@ describe("plan hors de chez soi", () => {
     expect(planDistant(plan, source(60_000_000), false).map((n) => n.nom)).toEqual(["conversion"]);
     expect(planDistant(plan, source(60_000_000), true)).toEqual(plan);
     expect(planDistant([plan[0]!], source(60_000_000), false)).toEqual([plan[0]]);
+  });
+});
+
+/** La description UPnP d'un téléviseur DLNA chez un proche, telle que le téléphone l'a lue. */
+const descriptionPhilips = `<?xml version="1.0"?><root xmlns="urn:schemas-upnp-org:device-1-0"><device>
+  <deviceType>urn:schemas-upnp-org:device:MediaRenderer:1</deviceType><friendlyName>TV de Paul</friendlyName>
+  <modelName>58PUS7304/12</modelName><UDN>uuid:paul-tv</UDN><serviceList>
+  <service><serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType><controlURL>/AVTransport/control</controlURL></service>
+  <service><serviceType>urn:schemas-upnp-org:service:RenderingControl:1</serviceType><controlURL>/RenderingControl/control</controlURL></service>
+  <service><serviceType>urn:schemas-upnp-org:service:ConnectionManager:1</serviceType><controlURL>/ConnectionManager/control</controlURL></service>
+  </serviceList></device></root>`;
+const inscriptionDlna = { nom: "TV de Paul", protocole: "dlna", description: descriptionPhilips,
+  location: "http://192.168.1.40:49152/description.xml", local: "http://192.168.1.23:38123" };
+const enveloppe = (action: string, corps: string) => `<?xml version="1.0"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>`
+  + `<u:${action}Response xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">${corps}</u:${action}Response></s:Body></s:Envelope>`;
+
+describe("téléviseur DLNA relayé chez un proche (r11)", () => {
+  it("se pilote par des commandes SOAP que le téléphone poste, et lit par le relais vidéo du téléphone", async () => {
+    let etatTv = "STOPPED";
+    const soap: Array<{ url: string; action: string; corps: string }> = [];
+    const tel = await relais((a) => {
+      if (a.type !== "soap") return { ok: true };
+      soap.push(a);
+      const action = String(a.action).split("#")[1]!;
+      if (action === "Play") etatTv = "PLAYING";
+      if (action === "Pause") etatTv = "PAUSED_PLAYBACK";
+      if (action === "Stop") etatTv = "STOPPED";
+      const corps = action === "GetProtocolInfo" ? "<Sink>http-get:*:application/vnd.apple.mpegurl:*,http-get:*:video/mp4:*</Sink>"
+        : action === "GetTransportInfo" ? `<CurrentTransportState>${etatTv}</CurrentTransportState>`
+        : action === "GetPositionInfo" ? "<RelTime>00:00:31</RelTime><TrackDuration>01:40:00</TrackDuration>"
+        : action === "GetVolume" ? "<CurrentVolume>15</CurrentVolume>" : "";
+      return { ok: true, reponse: { statut: 200, corps: enveloppe(action, corps) } };
+    }, inscriptionDlna);
+    const cibles = (await app.inject({ url: "/api/diffusion/cibles", headers: wan })).json().cibles;
+    expect(cibles.find((c: any) => c.id === tel.id)).toMatchObject({ protocole: "dlna", modele: "58PUS7304/12", relais: true });
+
+    const r = await tel.pendant(app.inject({ method: "POST", url: `/api/diffusion/cibles/${tel.id}/commande`, headers: wan, payload: charger() }));
+    expect(r.statusCode).toBe(200);
+    // Le téléviseur lit par le relais vidéo du téléphone, en clair sur son Wi-Fi ; la clé reste distante.
+    expect(fixture.preparer.mock.calls[0]![2]).toBe("http://192.168.1.23:38123");
+    expect(fixture.preparer.mock.calls[0]![4]).toMatchObject({ distant: true });
+    const transport = soap.find((c) => c.action.endsWith("#SetAVTransportURI"))!;
+    expect(transport.url).toBe("http://192.168.1.40:49152/AVTransport/control");
+    expect(transport.corps).toContain("http://192.168.1.23:38123/api/diffusion/flux/cle-1/index.m3u8");
+    // Toutes les commandes visent le téléviseur annoncé, jamais une autre adresse.
+    expect(soap.every((c) => c.url.startsWith("http://192.168.1.40:49152/"))).toBe(true);
+
+    const p = await tel.pendant(app.inject({ method: "POST", url: `/api/diffusion/cibles/${tel.id}/commande`, headers: wan, payload: { type: "pause" } }));
+    expect(p.statusCode).toBe(200);
+    expect(soap.some((c) => c.action.endsWith("#Pause"))).toBe(true);
+    const a = await tel.pendant(app.inject({ method: "POST", url: `/api/diffusion/cibles/${tel.id}/commande`, headers: wan, payload: { type: "arreter" } }));
+    expect(a.statusCode).toBe(200);
+    expect(soap.at(-1)?.action.endsWith("#Stop")).toBe(true);
+    expect(fixture.retirer).toHaveBeenCalledWith("cle-1");
+  }, 30_000);
+
+  it("refuse une description qui vise un autre hôte, ou un relais vidéo public", () => {
+    expect(descriptionRelayee(descriptionPhilips, inscriptionDlna.location, inscriptionDlna.local)).toMatchObject({ local: "http://192.168.1.23:38123" });
+    const ailleurs = descriptionPhilips.replace("<controlURL>/AVTransport/control</controlURL>", "<controlURL>http://8.8.8.8/x</controlURL>");
+    expect(descriptionRelayee(ailleurs, inscriptionDlna.location, inscriptionDlna.local)).toBeNull();
+    expect(descriptionRelayee(descriptionPhilips, "http://8.8.8.8:49152/d.xml", inscriptionDlna.local)).toBeNull();
+    expect(descriptionRelayee(descriptionPhilips, inscriptionDlna.location, "http://8.8.8.8:38123")).toBeNull();
+    expect(descriptionRelayee(descriptionPhilips, inscriptionDlna.location, "https://192.168.1.23:38123")).toBeNull();
+    expect(descriptionRelayee("<!DOCTYPE x [<!ENTITY a 'b'>]><root/>", inscriptionDlna.location, inscriptionDlna.local)).toBeNull();
   });
 });

@@ -447,7 +447,10 @@ class FlixTunesApi(
         id = entree.optString("id"),
         nom = entree.optString("nom"),
         numero = if (entree.isNull("numero")) null else entree.optInt("numero"),
-        logo = entree.optString("logo").takeIf { it.isNotBlank() && it != "null" },
+        // Depuis l'accès distant, le serveur remplace le logo par un lien relatif vers son relais,
+        // réservé à la session : résolu contre le serveur, il reçoit les jetons du chargeur d'images.
+        // Passé tel quel, Coil ne savait pas quoi en faire et la grille n'affichait que des initiales.
+        logo = absolute(entree.optString("logo").takeIf { it.isNotBlank() && it != "null" }),
         groupe = entree.optString("groupe").takeIf { it.isNotBlank() && it != "null" },
         pays = entree.optString("pays").takeIf { it.isNotBlank() && it != "null" },
         etat = entree.optString("etat", "inconnue"),

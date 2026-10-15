@@ -57,7 +57,12 @@ export type ActionRelais =
   | { type: "sonder"; url: string; mime: string; fmp4: boolean }
   | { type: "charger"; url: string; mime: string; direct: boolean; position: number; fmp4: boolean; metadonnees: MetadonneesRelais }
   | { type: "commande"; commande: { type: "pause" | "reprendre" | "arreter" } | { type: "position" | "volume"; valeur: number } }
-  | { type: "liberer" };
+  | { type: "liberer" }
+  /**
+   * DLNA chez un proche (r11) : une commande SOAP que le NAS a composée, à poster telle quelle au
+   * téléviseur. Le relais n'accepte que l'adresse du téléviseur qu'il a lui-même annoncé.
+   */
+  | { type: "soap"; url: string; action: string; corps: string };
 export interface OrdreRelais { id: string; relais: ActionRelais }
 export interface AccuseDiffusion {
   id: string; ok: boolean; erreur?: string;
@@ -65,5 +70,7 @@ export interface AccuseDiffusion {
   code?: string;
   /** Pour une sonde relayée : ce que le téléviseur a fait du clip. */
   verdict?: "accepte" | "refuse" | "inconnu";
+  /** Pour une commande SOAP relayée : la réponse du téléviseur. */
+  reponse?: { statut: number; corps: string };
 }
 export const etatDiffusionVide = (): EtatDiffusion => etatDiffusionSchema.parse({});

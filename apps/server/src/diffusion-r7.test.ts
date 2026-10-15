@@ -39,9 +39,11 @@ describe("plan de qualité d'après le récepteur", () => {
   });
   it("borne le direct à la définition d'un récepteur qui refuse le 1080p", () => {
     // r9 : le niveau source du direct est analysé — copié si le récepteur le lit, converti à 720p sinon.
-    expect(noms(planDeQualite(null, pixelTablet, true))).toEqual(["source:720", "compatible:720"]);
+    // r11 : une copie refusée passe d'abord par une conversion pleine définition, avant le 720p compatible.
+    expect(noms(planDeQualite(null, pixelTablet, true))).toEqual(["source:720", "conversion:720", "compatible:720"]);
     // Le direct ne dépasse jamais le 1080p : un récepteur inconnu y est borné.
-    expect(noms(planDeQualite(null, null, true))).toEqual(["source:1080", "compatible:720"]);
+    expect(noms(planDeQualite(null, null, true))).toEqual(["source:1080", "conversion:1080", "compatible:720"]);
+    expect(planDeQualite(null, null, true)[1]).toMatchObject({ qualiteSource: true, convertir: true });
   });
 });
 
@@ -109,9 +111,9 @@ describe("chaîne matérielle de la diffusion", () => {
   it("ne retient la chaîne matérielle que si elle fonctionne et va plus vite", () => {
     const sonde = (id: "materiel-hdr" | "materiel-sdr" | "logiciel-hdr", framesPerSecond: number | null) =>
       ({ id, label: id, usable: framesPerSecond != null, framesPerSecond, error: null });
-    expect(retenirDiffusion([sonde("materiel-hdr", 70), sonde("logiciel-hdr", 9), sonde("materiel-sdr", 200)])).toEqual({ hdr: true, sdr: true });
-    expect(retenirDiffusion([sonde("materiel-hdr", 8), sonde("logiciel-hdr", 9), sonde("materiel-sdr", null)])).toEqual({ hdr: false, sdr: false });
-    expect(retenirDiffusion([sonde("materiel-hdr", null), sonde("logiciel-hdr", 9)])).toEqual({ hdr: false, sdr: false });
+    expect(retenirDiffusion([sonde("materiel-hdr", 70), sonde("logiciel-hdr", 9), sonde("materiel-sdr", 200)])).toMatchObject({ hdr: true, sdr: true });
+    expect(retenirDiffusion([sonde("materiel-hdr", 8), sonde("logiciel-hdr", 9), sonde("materiel-sdr", null)])).toMatchObject({ hdr: false, sdr: false });
+    expect(retenirDiffusion([sonde("materiel-hdr", null), sonde("logiciel-hdr", 9)])).toMatchObject({ hdr: false, sdr: false });
   });
 });
 

@@ -28,6 +28,8 @@ export interface OptionsPreparation {
   fichierTelQuel?: boolean;
   /** Pour un téléviseur hors de chez soi, joint par l'accès distant : seule clé admise depuis Internet. */
   distant?: boolean;
+  /** Le direct converti même quand le récepteur pourrait lire la source copiée. */
+  convertir?: boolean;
   signal?: AbortSignal;
 }
 
@@ -108,7 +110,7 @@ export class MediasDiffusion {
         // sources servent de secours si elle se tait pendant la lecture.
         const secours = toutes.slice(0, 8).map((s) => s.url);
         const recepteur = { hauteurMax: Math.min(1080, options.hauteurMax ?? 1080), hevc: (options.hevcHauteurMax ?? 0) >= 1080,
-          conversionSeule: !!options.tsContinu };
+          conversionSeule: !!options.tsContinu || !!options.convertir };
         const signal = options.signal ? AbortSignal.any([AbortSignal.timeout(45_000), options.signal]) : AbortSignal.timeout(45_000);
         let derniereErreur: unknown;
         for (const source of sources) {

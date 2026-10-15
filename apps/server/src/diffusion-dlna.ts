@@ -12,10 +12,21 @@ export function secondesDlna(s: unknown) {
   const m = /^(\d+):(\d{2}):(\d{2})(?:\.\d+)?$/.exec(String(s));
   return m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : 0;
 }
+/** Poste une commande SOAP au téléviseur et rend sa réponse. Un relais peut s'en charger à la place du NAS. */
+export type EnvoiSoap = (url: string, action: string, corps: string) => Promise<Response>;
+const envoiDirect: EnvoiSoap = (url, action, corps) => fetch(url, { method: "POST", redirect: "error", signal: AbortSignal.timeout(5000),
+  headers: { "Content-Type": 'text/xml; charset="utf-8"', SOAPAction: `"${action}"` }, body: corps });
+
 export class TransportDlna {
   private timer?: NodeJS.Timeout; private occupe = false; private ferme = false;
   private enLecture = false;
-  constructor(private cible: Recepteur, private etat: (e: Partial<EtatDiffusion>) => void) {}
+  /**
+   * `envoyer` : par défaut le NAS joint le téléviseur lui-même ; chez un proche (r11), le téléphone
+   * relais poste la commande à sa place. `demarrage` : l'attente de la lecture confirmée, plus longue
+   * à travers un relais, où chaque relevé d'état fait l'aller-retour par Internet.
+   */
+  constructor(private cible: Recepteur, private etat: (e: Partial<EtatDiffusion>) => void,
+    private options: { envoyer?: EnvoiSoap; demarrage?: number } = {}) {}
   private async soap(action: string, args: Record<string, string | number> = {}, rendu: boolean | "connexion" = false) {
     const service = rendu === "connexion" ? this.cible.connexion : rendu ? this.cible.rendu : this.cible.transport;
     if (!service) throw new Error(rendu ? "Le téléviseur ne propose pas le réglage du volume" : "Récepteur DLNA indisponible");
@@ -23,8 +34,7 @@ export class TransportDlna {
     // GetProtocolInfo ne prend aucun argument : certains téléviseurs refusent une instance en trop.
     const contenu = Object.entries(rendu === "connexion" ? args : { InstanceID: 0, ...args }).map(([k, v]) => `<${k}>${echapperXml(String(v))}</${k}>`).join("");
     const xml = `<?xml version="1.0" encoding="utf-8"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:${action} xmlns:u="${service.type}">${contenu}</u:${action}></s:Body></s:Envelope>`;
-    const r = await fetch(url, { method: "POST", redirect: "error", signal: AbortSignal.timeout(5000),
-      headers: { "Content-Type": 'text/xml; charset="utf-8"', SOAPAction: `"${service.type}#${action}"` }, body: xml });
+    const r = await (this.options.envoyer ?? envoiDirect)(url, `${service.type}#${action}`, xml);
     const corps = analyserXml(await texteBorne(r.ok ? r : new Response(r.body, { status: 200 }))).Envelope?.Body;
     if (!r.ok || corps?.Fault) {
       const code = String(corps?.Fault?.detail?.UPnPError?.errorCode ?? r.status).replace(/[^0-9]/g, "").slice(0, 6);
@@ -50,7 +60,7 @@ export class TransportDlna {
     await this.soap("SetAVTransportURI", { CurrentURI: url, CurrentURIMetaData: metadata });
     await this.soap("Play", { Speed: 1 });
     await this.actualiser();
-    const limite = Date.now() + 15_000;
+    const limite = Date.now() + (this.options.demarrage ?? 15_000);
     while (!this.enLecture && !this.ferme && Date.now() < limite) { await new Promise((r) => setTimeout(r, 500)); await this.actualiser(); }
     if (!this.enLecture) throw new Error("Le téléviseur DLNA n’a pas confirmé le démarrage de la vidéo");
     if (!direct && position > 0) {

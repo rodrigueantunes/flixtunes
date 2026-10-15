@@ -90,11 +90,11 @@ private fun PanneauDiffusion(api: FlixTunesApi, etatLocal: () -> JSONObject, pau
     val etat = cible?.optJSONObject("etat")
     Column(Modifier.padding(22.dp).heightIn(max = 560.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Caster et piloter", style = MaterialTheme.typography.headlineSmall)
-        Text(if (dehors) "Hors de chez vous : téléviseurs Cast du Wi-Fi où vous êtes, et lecteurs FlixTunes du même profil."
+        Text(if (dehors) "Hors de chez vous : téléviseurs Cast et DLNA du Wi-Fi où vous êtes, et lecteurs FlixTunes du même profil."
             else "Appareils du réseau local et lecteurs FlixTunes du même profil.", color = Muet)
         erreur?.let { Text(it, color = Erreur) }
         if (occupe) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("En attente du récepteur…", color = Muet) }
-        if (cibles.isEmpty()) Text(if (dehors) "Aucun téléviseur Cast trouvé sur ce Wi-Fi. Vérifiez qu’il est allumé et sur le même réseau que ce téléphone."
+        if (cibles.isEmpty()) Text(if (dehors) "Aucun téléviseur trouvé sur ce Wi-Fi. Vérifiez qu’il est allumé et sur le même réseau que ce téléphone."
             else "Aucun appareil détecté. Vérifiez qu’il est allumé et sur le même réseau que le NAS.")
         cibles.forEach { c ->
             OutlinedButton(onClick = { selection = c.getString("id") }, enabled = !occupe && !c.optBoolean("occupe"), modifier = Modifier.fillMaxWidth()) {

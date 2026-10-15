@@ -729,7 +729,9 @@ export interface ActiveSessionCost {
  * `materiel-*` décode et réduit sur le circuit vidéo ; `logiciel-hdr` est le chemin d'avant.
  */
 export interface DiffusionMaterielleProbe {
-  id: "materiel-hdr" | "materiel-sdr" | "logiciel-hdr";
+  id: "materiel-hdr" | "materiel-sdr" | "logiciel-hdr"
+    /** r11 : la conversion du direct pour un téléviseur, telle que la r9 la lance. */
+    | "direct-vbr" | "direct-cqp" | "direct-desentrelace";
   label: string;
   usable: boolean;
   framesPerSecond: number | null;
@@ -742,7 +744,11 @@ export interface DiffusionMaterielleCalibration {
   measuredAt: string;
   probes: DiffusionMaterielleProbe[];
   /** Ce que la diffusion emploie : la chaîne matérielle n'est retenue que mesurée plus rapide. */
-  retenue: { hdr: boolean; sdr: boolean };
+  retenue: { hdr: boolean; sdr: boolean;
+    /** Le réglage d'encodeur du direct qui a tenu sur cette machine, ou `null` : le direct reste en logiciel. */
+    direct?: "vbr" | "cqp" | null;
+    /** Le désentrelacement matériel du direct a-t-il tenu ? Sinon une source entrelacée passe en logiciel. */
+    desentrelacement?: boolean };
 }
 
 export interface ServerCapacityReport {

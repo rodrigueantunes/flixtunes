@@ -4,26 +4,45 @@ import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { freemem } from "node:os";
 import { config } from "./config.js";
-import { calibratedAccelerator, currentAdmissionState, decideAdmission, registerSessionCost, releaseSessionCost } from "./capacity.js";
+import { currentAdmissionState, decideAdmission, materielDuDirect, registerSessionCost, releaseSessionCost } from "./capacity.js";
 import { formatLive, ouvrirEntreeLive, type FormatLive } from "./live-compat-entree.js";
 import { argumentsVideoLive, choisirTraitementLive, FORMATS_ENTREE_LIVE, optionsEntreeLive, preparerEntreeDiffusion,
-  type RecepteurLive, type TraitementLive } from "./live-diffusion.js";
+  erreurFfmpegLisible, type MaterielLive, type RecepteurLive, type TraitementLive } from "./live-diffusion.js";
 
 const racine = path.resolve(config.dataDir, "live-compat");
-const maximum = Math.max(0, Math.min(2, Number(process.env.FLIXTUNES_LIVE_CONVERSIONS ?? 1) || 0));
+/**
+ * Conversions du direct menées de front. Une copie ne coûte presque rien et ne compte pas ; une
+ * conversion compte. Deux quand le circuit vidéo du direct a été qualifié au calibrage, une sinon.
+ *
+ * Le 3 octobre 2026, LCI tournait en DLNA sur le 58PUS7304 : TF1 vers la Pixel Tablet a été refusée
+ * aussitôt, « Conversion occupée », alors que le circuit vidéo en tenait largement deux.
+ */
+export function conversionsDuDirectMax(materiel = materielDuDirect()): number {
+  const reglage = Number(process.env.FLIXTUNES_LIVE_CONVERSIONS);
+  if (Number.isFinite(reglage) && process.env.FLIXTUNES_LIVE_CONVERSIONS !== "") return Math.max(0, Math.min(3, Math.floor(reglage)));
+  return materiel ? 2 : 1;
+}
+const conversionsEnCours = (sauf?: Conversion) => [...sessions.values()].filter((s) => s !== sauf && !s.arretee && s.conversion).length;
+const occupee = (max: number) => new Error(max > 1
+  ? `${max} chaînes sont déjà converties sur ce NAS (conversion occupée) : arrêtez l’une d’elles pour lancer celle-ci.`
+  : "Une autre chaîne est déjà convertie sur ce NAS (conversion occupée) : arrêtez-la pour lancer celle-ci.");
 
 /** Une passe de FFmpeg d'une diffusion : chaque relance écrit dans son propre dossier. */
-interface Passe { numero: number; dossier: string; processus?: ChildProcess; debut: number; segments: number }
+interface Passe { numero: number; dossier: string; processus?: ChildProcess; debut: number; segments: number;
+  /** La fin de la sortie d'erreur de FFmpeg, pour dire pourquoi une passe n'a rien produit. */
+  erreurs: string }
 interface SegmentDiffuse { passe: number; nom: string; duree: number }
 interface Conversion {
   id: string; profil: string; chaine: string; source: string; lecture: string; dossier: string;
   processus?: ChildProcess; entree?: Awaited<ReturnType<typeof ouvrirEntreeLive>>;
   acces: number; arretee: boolean; timer?: ReturnType<typeof setInterval>; nettoyage?: Promise<void>; copieVideo?: boolean;
+  /** La session réencode la vidéo : elle compte dans le plafond des conversions. Une copie, non. */
+  conversion?: boolean;
   /** Pour un téléviseur : les sources de secours, le traitement retenu et la liste composée. */
   diffusion?: {
     sources: string[]; rang: number; format: FormatLive; traitement: TraitementLive;
     /** Le conteneur des segments, fixé pour la session : une liste ne mêle pas fMP4 et MPEG-TS. */
-    fmp4: boolean; recepteur: RecepteurLive; materiel: boolean;
+    fmp4: boolean; recepteur: RecepteurLive; materiel: MaterielLive | null;
     /** Ce que FFmpeg lit : l'adresse du relais, ou la liste maîtresse réduite à la variante retenue. */
     entree: string;
     passes: Passe[]; segments: SegmentDiffuse[]; retires: number; ruptures: number; relances: number[];
@@ -146,16 +165,17 @@ async function lancerPasse(session: Conversion) {
     // Une autre source a ses propres variantes : elle est analysée à son tour, dans le conteneur de la
     // session — une session en MPEG-TS ne passe pas à la copie en cours de route.
     const recepteur = { ...d.recepteur, conversionSeule: d.recepteur.conversionSeule || !d.fmp4 };
-    const preparee = await preparerEntreeDiffusion(session.entree.url, d.format, recepteur, d.materiel);
+    const preparee = await preparerEntreeDiffusion(session.entree.url, d.format, recepteur, !!d.materiel);
     d.entree = preparee.entree;
     d.traitement = choisirTraitementLive(preparee.analyse, recepteur, d.materiel);
   }
   if (session.arretee) return;
-  const passe: Passe = { numero, dossier, debut: Date.now(), segments: 0 };
+  const passe: Passe = { numero, dossier, debut: Date.now(), segments: 0, erreurs: "" };
   const processus = spawn(config.ffmpegPath, argumentsConversionLive(d.entree, dossier, d.format, false, true, d.traitement, d.fmp4),
     { cwd: dossier, windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
   passe.processus = processus;
-  processus.stderr?.resume();
+  // Gardée en mémoire, jamais écrite telle quelle : elle peut contenir l'adresse d'un fournisseur.
+  processus.stderr?.on("data", (morceau: Buffer) => { passe.erreurs = (passe.erreurs + morceau.toString("utf8")).slice(-4000); });
   d.passes.push(passe);
   session.processus = processus;
   d.dernierSegment = Date.now();
@@ -175,10 +195,17 @@ async function relancer(session: Conversion, passe: Passe) {
   const maintenant = Date.now();
   d.relances = [...d.relances.filter((t) => maintenant - t < 120_000), maintenant];
   if (d.relances.length > 6) { void arreter(session); return; }
+  if (passe.segments === 0) {
+    // Le journal dit pourquoi : sans cela, un repli logiciel ne se voyait qu'à l'étiquette « 720p25 ».
+    console.warn(`[FlixTunes] Direct : passe ${passe.numero} (${d.traitement.encodeur}${d.traitement.reglage ? ` ${d.traitement.reglage}` : ""}, `
+      + `${d.traitement.libelle}) arrêtée sans image. FFmpeg : ${erreurFfmpegLisible(passe.erreurs) || "aucun message"}`);
+  }
   if (passe.segments === 0 && d.traitement.encodeur === "vaapi") {
-    // Le circuit vidéo a refusé ce flux : le même traitement en logiciel, à 720p au plus.
+    // Le circuit vidéo a refusé ce flux : le même traitement en logiciel, à 720p au plus, et plus de
+    // circuit vidéo pour cette session — une autre source n'y réussirait pas mieux.
+    d.materiel = null;
     d.traitement = { ...d.traitement, ...choisirTraitementLive(null, { hauteurMax: d.traitement.hauteur, hevc: false }, false),
-      flux: d.traitement.flux, fluxAudio: d.traitement.fluxAudio, entrelace: d.traitement.entrelace };
+      reglage: undefined, flux: d.traitement.flux, fluxAudio: d.traitement.fluxAudio, entrelace: d.traitement.entrelace };
   } else if (passe.segments === 0 || maintenant - passe.debut < 20_000) {
     d.rang = (d.rang + 1) % d.sources.length;
   }
@@ -222,11 +249,16 @@ export async function commencerConversionLive(profil: string, chaine: string, so
   signal?.throwIfAborted();
   for (const s of sessions.values()) if (Date.now() - s.acces > 60_000) await arreter(s);
   for (const s of sessions.values()) if (s.profil === profil && s.lecture === lecture) await arreter(s);
-  if (sessions.size >= maximum || freemem() < 512 * 1024 * 1024) throw new Error("Conversion occupée ou mémoire insuffisante");
+  const max = conversionsDuDirectMax();
+  // Une diffusion ne sait qu'après analyse si elle copie ou convertit : elle est comptée à ce moment-là.
+  const convertira = !options.recepteur && !options.copieVideo;
+  if (sessions.size >= max + 3 || (convertira && conversionsEnCours() >= max)) throw occupee(max);
+  if (freemem() < 512 * 1024 * 1024) throw new Error("Mémoire insuffisante sur le NAS pour une conversion du direct");
   const admission = decideAdmission({ mode: options.copieVideo ? "remux" : "transcode", variants: [{ width: 1280, height: 720 }], frameRate: 30 }, currentAdmissionState());
   if (!admission.accepted || admission.degraded) throw new Error("Capacité de conversion insuffisante");
   const id = randomUUID();
-  const session: Conversion = { id, profil, chaine, source, lecture, dossier: path.join(racine, id), acces: Date.now(), arretee: false, copieVideo: options.copieVideo };
+  const session: Conversion = { id, profil, chaine, source, lecture, dossier: path.join(racine, id), acces: Date.now(), arretee: false,
+    copieVideo: options.copieVideo, conversion: convertira };
   // Réservation avant le premier await : deux demandes ne peuvent pas dépasser la limite.
   sessions.set(id, session);
   registerSessionCost(id, { id, mediaId: chaine, mode: options.copieVideo ? "remux" : "transcode", encoder: options.copieVideo ? "copy" : "libx264", costUnits: admission.costUnits });
@@ -271,11 +303,16 @@ export async function commencerConversionLive(profil: string, chaine: string, so
 
 /** Une conversion pour un téléviseur : analyse de la source, traitement choisi, relances surveillées. */
 async function commencerDiffusion(session: Conversion, format: FormatLive, options: OptionsConversionLive, signal?: AbortSignal) {
-  const materiel = calibratedAccelerator() === "vaapi";
-  const { entree, analyse } = await preparerEntreeDiffusion(session.entree!.url, format, options.recepteur!, materiel);
+  const materiel = materielDuDirect();
+  const { entree, analyse } = await preparerEntreeDiffusion(session.entree!.url, format, options.recepteur!, !!materiel);
   signal?.throwIfAborted();
   const traitement = choisirTraitementLive(analyse, options.recepteur!, materiel);
   session.copieVideo = traitement.copie;
+  if (!traitement.copie) {
+    const max = conversionsDuDirectMax(materiel);
+    if (conversionsEnCours(session) >= max) throw occupee(max);
+    session.conversion = true;
+  }
   session.diffusion = { sources: [session.source, ...(options.secours ?? []).filter((s) => s !== session.source)], rang: 0, format,
     traitement, fmp4: traitement.copie, recepteur: options.recepteur!, materiel, entree,
     passes: [], segments: [], retires: 0, ruptures: 0, relances: [], dernierSegment: Date.now() };

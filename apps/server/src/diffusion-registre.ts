@@ -1,11 +1,14 @@
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import type { Recepteur } from "./diffusion-reseau.js";
 import { etatDiffusionVide, type AccuseDiffusion, type ActionRelais, type CibleDiffusion, type CommandeDiffusion, type EtatDiffusion,
   type OrdreDiffusion, type OrdreRelais } from "@flixtunes/contracts";
 
 type Ordre = (OrdreDiffusion | OrdreRelais) & { expire: number };
 type Inscription = { profil: string; cle: string; nom: string; vu: number; etat: EtatDiffusion;
   /** Un téléviseur vu par un téléphone ou un navigateur hors de chez soi, piloté à travers lui. */
-  relais?: { modele?: string; media?: string };
+  relais?: { modele?: string; media?: string;
+    /** DLNA chez un proche (r11) : le téléviseur décrit par le téléphone, et son relais vidéo local. */
+    dlna?: { recepteur: Recepteur; local: string } };
   ordres: Ordre[]; resultats: Map<string, { resultat: AccuseDiffusion | null; expire: number }>;
   attentes: Map<string, (accuse: AccuseDiffusion | null) => void> };
 
@@ -39,7 +42,9 @@ export class RegistreDiffusion {
   }
   inscrire(profil: string, nom: string) { return this.ajouter(profil, nom, "ft"); }
   /** Un téléviseur qu'un relais voit sur son réseau : le NAS le pilotera par des ordres de relais. */
-  inscrireRelais(profil: string, nom: string, modele?: string) { return this.ajouter(profil, nom, "rl", { modele }); }
+  inscrireRelais(profil: string, nom: string, modele?: string, dlna?: { recepteur: Recepteur; local: string }) {
+    return this.ajouter(profil, nom, "rl", { modele, dlna });
+  }
   private trouver(id: string, profil: string) { this.purger(); const a = this.appareils.get(id); return a?.profil === profil ? a : null; }
   battre(id: string, profil: string, cle: string, etat: EtatDiffusion, accuses: AccuseDiffusion[], media?: string): Array<OrdreDiffusion | OrdreRelais> | null {
     const a = this.trouver(id, profil);
@@ -55,13 +60,14 @@ export class RegistreDiffusion {
   lister(profil: string): CibleDiffusion[] {
     this.purger();
     return [...this.appareils].filter(([, a]) => a.profil === profil).map(([id, a]): CibleDiffusion => a.relais
-      ? { id, nom: a.nom, protocole: "googlecast", modele: a.relais.modele, relais: true, etat: null, occupe: false }
+      ? { id, nom: a.nom, protocole: a.relais.dlna ? "dlna" : "googlecast", modele: a.relais.modele, relais: true, etat: null, occupe: false }
       : { id, nom: a.nom, protocole: "flixtunes", etat: a.etat, occupe: false });
   }
   /** Le téléviseur relayé, tel que le relais l'a annoncé, et ce qu'il lit d'après son dernier battement. */
-  relais(id: string, profil: string): { id: string; nom: string; modele?: string; etat: EtatDiffusion; media?: string } | null {
+  relais(id: string, profil: string): { id: string; nom: string; modele?: string; etat: EtatDiffusion; media?: string;
+    dlna?: { recepteur: Recepteur; local: string } } | null {
     const a = this.trouver(id, profil);
-    return a?.relais ? { id, nom: a.nom, modele: a.relais.modele, etat: a.etat, media: a.relais.media } : null;
+    return a?.relais ? { id, nom: a.nom, modele: a.relais.modele, etat: a.etat, media: a.relais.media, dlna: a.relais.dlna } : null;
   }
   private poser(id: string, profil: string, ordre: Omit<OrdreDiffusion, "id"> | Omit<OrdreRelais, "id">): string | null {
     const a = this.trouver(id, profil); if (!a) return null;
