@@ -205,6 +205,17 @@ function titleSearchClause(alias: "c" | "m", saisie: string): { clause: string; 
   if (normalise) {
     branches.unshift(`${alias}.search_title LIKE ? ESCAPE '\\'`);
     params.unshift(likePattern(normalise));
+    /*
+     * r15 : le titre original aussi. 915 films et séries de la médiathèque ont reçu un titre français
+     * qui n'est pas celui de leur fichier : « A Star Is Born (1976) » est rangé à « Une étoile est
+     * née », et chercher « star is born » ne rendait que le film de 2018. Les épisodes en sont
+     * dispensés : leur série a sa propre fiche, et lire dix mille titres d'épisodes à chaque frappe
+     * coûtait 55 ms de plus à la recherche générale.
+     */
+    branches.push(alias === "c"
+      ? "normaliser_recherche(c.original_title) LIKE ? ESCAPE '\\'"
+      : "(m.kind <> 'episode' AND EXISTS (SELECT 1 FROM catalog_items originale WHERE originale.id = m.catalog_id AND normaliser_recherche(originale.original_title) LIKE ? ESCAPE '\\'))");
+    params.push(likePattern(normalise));
   }
   return { clause: `AND (${branches.join(" OR ")})`, params };
 }

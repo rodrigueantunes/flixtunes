@@ -11,6 +11,13 @@ import { noteAffichable } from "./note.js";
 mkdirSync(config.dataDir, { recursive: true });
 
 export const db = new DatabaseSync(path.join(config.dataDir, "flixtunes.db"));
+/*
+ * r15 : la normalisation de la recherche, appelable en SQL. Elle sert au titre original, qui n'a pas
+ * de colonne de recherche à lui : la calculer à la demande évite d'avoir à la tenir à jour partout
+ * où un titre s'écrit.
+ */
+db.function("normaliser_recherche", { deterministic: true },
+  (texte: unknown) => typeof texte === "string" ? normaliseForSearch(texte) : null);
 /**
  * Les provenances acceptées pour un champ de métadonnées.
  *

@@ -1,5 +1,29 @@
 # Journal des versions
 
+## 0.6.0.r15 — retrouver un film par son titre d'origine, et le son à l'heure sur téléviseur
+
+<!-- release -->
+### Médiathèque, sur le serveur (tous les clients)
+
+- **La recherche lit aussi le titre original.** Un film que le fournisseur a rangé sous son titre
+  français semblait absent : « A Star Is Born (1976) », devenu « Une étoile est née », ne sortait pas
+  quand on cherchait « star is born », qui ne rendait que la version de 2018. Le titre original est
+  maintenant cherché lui aussi, sans souci des accents ni de la casse — sur les pages Films et
+  Séries comme dans la recherche générale. Rien ne change à l'affichage ni à l'ordre alphabétique.
+
+### Live TV, sur Android TV
+
+- **Le son ne reste plus décalé de l'image.** Depuis la r12, le téléviseur passe à 50 Hz pour une
+  chaîne française ; ce changement renégocie le HDMI en pleine lecture, et sur bien des boîtiers le
+  son restait ensuite en avance ou en retard jusqu'au changement de chaîne. Une fois le nouveau mode
+  confirmé par l'écran, la lecture se recale d'elle-même sur place.
+<!-- /release -->
+
+Mesuré sur une copie de la base du NAS : 915 films et séries ont un titre original différent de leur
+titre affiché ; « star is born » rend désormais les deux versions, « the shawshank » rend Les Évadés.
+Le coût de la recherche ne bouge pas (67 à 146 ms sur le poste, comme avant). Le recalage du son sur
+Android TV reste à juger sur le téléviseur.
+
 ## 0.6.0.r14 — des notes en étoiles, et des champs tous au même dessin
 
 <!-- release -->

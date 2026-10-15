@@ -489,8 +489,9 @@ class LecteurDirectActivity : ComponentActivity() {
                         // r12 : l'écran du téléviseur suit la cadence de la chaîne — 50 Hz pour une chaîne
                         // française —, au lieu de saccader à 60 Hz. Rien n'est demandé si rien ne change.
                         if (estAppareilTv(this@LecteurDirectActivity) && format.frameRate > 0f &&
-                            (avant == null || kotlin.math.abs(avant.frameRate - format.frameRate) > 0.5f)) {
-                            accorderCadenceEcran(format.frameRate.toDouble())
+                            (avant == null || kotlin.math.abs(avant.frameRate - format.frameRate) > 0.5f) &&
+                            accorderCadenceEcran(format.frameRate.toDouble())) {
+                            resynchroniserApresChangementDeMode(joueurObserve)
                         }
                         renduCourant = decrireRendu(format)
                         if (avant != null && (avant.colorInfo != format.colorInfo || avant.sampleMimeType != format.sampleMimeType)
@@ -1066,6 +1067,42 @@ class LecteurDirectActivity : ComponentActivity() {
     private fun avecSurfaceDirect(avant: Format?, apres: Format?, action: () -> Unit) {
         if (rearmerCouleursDirect(avant, apres)) renouvelerSurface()
         action()
+    }
+
+    /**
+     * Le son recalé sur l'image après un changement de fréquence de l'écran (r15).
+     *
+     * Passer le téléviseur à 50 Hz renégocie le HDMI pendant que la chaîne joue : l'écran noircit une
+     * à deux secondes et la sortie son est réinitialisée. Sur bien des boîtiers Android TV, le son
+     * restait ensuite décalé de l'image jusqu'au changement de chaîne — c'est ce qu'on a vu sur
+     * téléviseur. Une fois le nouveau mode confirmé par l'écran (trois secondes au plus), un saut sur
+     * place vide la sortie son et la recale sur l'image ; il ne coûte que le temps de repartir du
+     * tampon déjà chargé.
+     */
+    private fun resynchroniserApresChangementDeMode(joueur: ExoPlayer) {
+        val gestionnaire = getSystemService(android.hardware.display.DisplayManager::class.java) ?: return
+        val principal = android.os.Handler(mainLooper)
+        val vise = window.attributes.preferredDisplayModeId
+        var fait = false
+        lateinit var ecoute: android.hardware.display.DisplayManager.DisplayListener
+        val recaler = Runnable {
+            if (fait) return@Runnable
+            fait = true
+            gestionnaire.unregisterDisplayListener(ecoute)
+            principal.removeCallbacksAndMessages(null)
+            if (lecteur === joueur && !isFinishing) joueur.seekTo(joueur.currentPosition)
+        }
+        ecoute = object : android.hardware.display.DisplayManager.DisplayListener {
+            override fun onDisplayAdded(displayId: Int) {}
+            override fun onDisplayRemoved(displayId: Int) {}
+            override fun onDisplayChanged(displayId: Int) {
+                val ecran = gestionnaire.getDisplay(displayId) ?: return
+                // Une demi-seconde de plus : la sortie son se rétablit après l'image.
+                if (ecran.mode.modeId == vise) principal.postDelayed(recaler, 500)
+            }
+        }
+        gestionnaire.registerDisplayListener(ecoute, principal)
+        principal.postDelayed(recaler, 3_000)
     }
 
     private fun deplacerLecture(joueur: ExoPlayer, positionMs: Long? = null, manuel: Boolean = false) {
