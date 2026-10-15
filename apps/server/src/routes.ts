@@ -1740,7 +1740,7 @@ export async function registerRoutes(app: FastifyInstance) {
     if (query.q && query.q.length > 120) return reply.code(400).send({ message: "Recherche trop longue" });
     const sort = query.sort as CatalogSort | undefined;
     const filter = query.filter as CatalogFilter | undefined;
-    if (sort && !["title", "release", "added"].includes(sort)) {
+    if (sort && !["title", "release", "added", "note"].includes(sort)) {
       return reply.code(400).send({ message: "Tri invalide" });
     }
     if (filter && !["all", "progress", "watched", "unwatched"].includes(filter)) {

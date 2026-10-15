@@ -6,6 +6,7 @@ import { rankMetadataMatches, scoreMetadataMatch } from "./match-engine.js";
 import { searchWithRelaxation } from "./query-relaxation.js";
 import { Cadence, CircuitBreaker, delaiDemande, fetchWithTimeout, LimiteDeDebit } from "./resilience.js";
 import { applySeasonEvidence, needsSeasonEvidence } from "./season-evidence.js";
+import { noteSurCinq, type NoteFiche } from "./note.js";
 
 interface TmdbImage {
   file_path: string;
@@ -42,6 +43,9 @@ interface TmdbTranslation {
 type RankedTmdbCandidate = MetadataSearchCandidate & { providerSearchRank?: number };
 
 interface TmdbDetails extends TmdbSearchResult {
+  /** r14 : la note moyenne, sur 10, et le nombre de votes qui la font. */
+  vote_average?: number;
+  vote_count?: number;
   imdb_id?: string | null;
   runtime?: number | null;
   episode_run_time?: number[];
@@ -96,6 +100,14 @@ export interface EntityMetadata {
   /** Âge minimal normalisé et libellé fournisseur, utilisés par les profils enfant. */
   ageRating?: number | null;
   ratingLabel?: string | null;
+  /**
+   * r14 : la note du film ou de la série, ramenée sur cinq. `undefined` quand le fournisseur n'a pas
+   * été interrogé sur l'œuvre elle-même (rien ne change alors en base) ; `null` quand il l'a été et
+   * n'en donne pas.
+   */
+  note?: NoteFiche | null;
+  /** r14 : la date de sortie du film, ou de première diffusion de la série, `AAAA-MM-JJ`. */
+  dateSortie?: string | null;
   /**
    * Genres tels que TMDB les nomme, dans la langue demandée.
    *
@@ -549,12 +561,21 @@ function toEntity(details: TmdbDetails, language: string, confidence: number, fa
     confidence,
     tvdbId: details.external_ids?.tvdb_id == null ? null : String(details.external_ids.tvdb_id),
     ...classification,
+    // La note vaut pour l'œuvre : un film ou une série, pas une saison ni un épisode. TMDB note sur 10.
+    ...(details.season_number == null && details.episode_number == null
+      ? { note: noteSurCinq(details.vote_average, 10, details.vote_count, "tmdb"),
+          dateSortie: dateComplete(details.release_date ?? details.first_air_date) } : {}),
     genres: details.genres?.map((genre) => genre.name.trim()).filter(Boolean) ?? [],
     collection: details.belongs_to_collection
       ? { externalId: String(details.belongs_to_collection.id), name: details.belongs_to_collection.name.trim() }
       : null,
     people: [...people.values()],
   };
+}
+
+/** Une date `AAAA-MM-JJ` valide, ou `null` : TMDB rend parfois une chaîne vide. */
+function dateComplete(valeur: string | null | undefined): string | null {
+  return valeur && /^\d{4}-\d{2}-\d{2}$/.test(valeur) ? valeur : null;
 }
 
 /**

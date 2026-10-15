@@ -1,5 +1,37 @@
 # Journal des versions
 
+## 0.6.0.r14 — des notes en étoiles, et des champs tous au même dessin
+
+<!-- release -->
+### Médiathèque, sur le serveur, Android, Windows, Linux et le Web
+
+- **La note des films et des séries, sur cinq étoiles.** Elle vient du fournisseur de la
+  correspondance et se ramène sur cinq : une note sur 10 se divise par deux. Elle s'affiche sur la
+  fiche, à côté de l'année et de la durée, et en petit sous chaque affiche. Elle n'apparaît qu'à
+  partir de dix votes : un film noté par une seule personne ne mérite pas ses cinq étoiles.
+- **Trier par note** dans les pages Films et Séries : les mieux notés d'abord, ceux sans note à la fin.
+- **Les tris par date se font au jour près.** « Date de sortie » suit la date complète du film ou de
+  la première diffusion de la série, et non plus la seule année. « Ajout » suit la date du fichier sur
+  le disque (l'épisode le plus récent pour une série) : celle de la fiche ne disait que le jour de
+  l'analyse, si bien qu'après une reconstruction de la base presque tous les films partageaient la
+  même. Les libellés, eux, gardent l'année seule.
+- La note et la date de sortie s'enregistrent d'elles-mêmes à chaque correspondance, automatique ou
+  corrigée à la main ; une fiche déjà présente les reçoit à la prochaine actualisation de ses
+  métadonnées.
+- **L'année sous l'affiche des séries**, avant le nombre de saisons, et sur la fiche Android, comme
+  sur le Web.
+
+### Web, Windows et Linux
+
+- **Tous les champs reprennent le dessin de « Trier par ».** La recherche, « État », « Décennie » et
+  quelques formulaires gardaient le gris du système sur le fond bleu nuit ; la barre du catalogue et
+  celle de la télévision en direct n'ont plus qu'une hauteur et qu'un style.
+<!-- /release -->
+
+Mesuré sur une copie de la base du NAS : 1 707 films et séries notés et datés sur 1 713 appariés à
+TMDB ; tri par note vérifié (Les Évadés 4,4, Breaking Bad 4,5) ; chaque tri répond en 0,1 à 0,3 s. Les requêtes à TMDB restent sous la cadence du
+serveur (20 par seconde) et respectent ses demandes d'attente.
+
 ## 0.6.0.r13 — ne garder que ce qui marche, jusqu'au bout
 
 <!-- release -->

@@ -215,8 +215,8 @@ function upsertCatalogEntity(args: {
       id, library_id, parent_id, kind, title, original_title, sort_title, search_title, year, season_number, episode_number,
       overview, poster_url, backdrop_url, metadata_language, original_language, external_provider, external_id, imdb_id,
       match_status, match_confidence, content_type, edition, source_ids_json, source_folder, age_rating, rating_label
-      , rating_checked
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      , rating_checked, note_sur_5, note_votes, note_source, date_sortie
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       -- Le dossier ne s'efface jamais : une analyse qui ne le fournit pas ne prouve pas qu'il a changé.
       source_folder = COALESCE(excluded.source_folder, catalog_items.source_folder),
@@ -268,6 +268,18 @@ function upsertCatalogEntity(args: {
       age_rating = COALESCE(excluded.age_rating, catalog_items.age_rating),
       rating_label = COALESCE(excluded.rating_label, catalog_items.rating_label),
       rating_checked = MAX(catalog_items.rating_checked, excluded.rating_checked),
+      -- r14 : la note suit la fiche du fournisseur. Elle s'écrit quand il a été interrogé sur l'œuvre
+      -- (même pour dire qu'il n'en a pas : une correspondance corrigée ne garde pas la note de
+      -- l'ancienne) ; une fiche verrouillée sur une autre identité garde la sienne, comme son titre.
+      note_sur_5 = CASE WHEN ? = 0 OR (catalog_items.metadata_locked = 1 AND (excluded.external_provider IS NOT catalog_items.external_provider
+          OR excluded.external_id IS NOT catalog_items.external_id)) THEN catalog_items.note_sur_5 ELSE excluded.note_sur_5 END,
+      note_votes = CASE WHEN ? = 0 OR (catalog_items.metadata_locked = 1 AND (excluded.external_provider IS NOT catalog_items.external_provider
+          OR excluded.external_id IS NOT catalog_items.external_id)) THEN catalog_items.note_votes ELSE excluded.note_votes END,
+      note_source = CASE WHEN ? = 0 OR (catalog_items.metadata_locked = 1 AND (excluded.external_provider IS NOT catalog_items.external_provider
+          OR excluded.external_id IS NOT catalog_items.external_id)) THEN catalog_items.note_source ELSE excluded.note_source END,
+      -- r14 : la date de sortie complète suit la même règle que la note.
+      date_sortie = CASE WHEN ? = 0 OR (catalog_items.metadata_locked = 1 AND (excluded.external_provider IS NOT catalog_items.external_provider
+          OR excluded.external_id IS NOT catalog_items.external_id)) THEN catalog_items.date_sortie ELSE excluded.date_sortie END,
       updated_at = CURRENT_TIMESTAMP
   `).run(
     id, library.id, parentId, kind, args.title, args.metadata?.originalTitle ?? null, args.sortTitle,
@@ -281,6 +293,11 @@ function upsertCatalogEntity(args: {
     args.parsed?.contentType ?? null, args.parsed?.edition ?? null, JSON.stringify(args.parsed?.externalIds ?? {}),
     args.sourceFolder ?? null,
     args.metadata?.ageRating ?? null, args.metadata?.ratingLabel ?? null, args.metadata ? 1 : 0,
+    args.metadata?.note?.surCinq ?? null, args.metadata?.note?.votes ?? null, args.metadata?.note?.source ?? null,
+    args.metadata?.dateSortie ?? null,
+    // L'œuvre elle-même a été demandée au fournisseur (et non une saison, un épisode, ou un fournisseur
+    // qui n'en dit rien) : sa note et sa date s'écrivent, même absentes.
+    ...Array<number>(4).fill(args.metadata?.note !== undefined && (kind === "movie" || kind === "show") ? 1 : 0),
   );
   recordEntityProvenance(id, args.metadata ?? null, args.parsed);
   // Les genres suivent la fiche : une correspondance corrigée doit remplacer ceux de l'ancienne.

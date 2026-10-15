@@ -14,9 +14,18 @@ class MediaLabelTest {
     )
 
     @Test fun `formate les épisodes pour mobile et TV`() = assertEquals("S2 · E7", media("episode", 2, 7).secondaryText)
-    @Test fun `accorde le nombre de saisons`() {
-        assertEquals("1 saison", media("show", count = 1).secondaryText)
-        assertEquals("3 saisons", media("show", count = 3).secondaryText)
+    @Test fun `accorde le nombre de saisons, après l'année de la série`() {
+        // r14 : l'année d'une série se lit sous son affiche, comme celle d'un film.
+        assertEquals("2026 · 1 saison", media("show", count = 1).secondaryText)
+        assertEquals("2026 · 3 saisons", media("show", count = 3).secondaryText)
+    }
+
+    @Test fun `lit la note sur cinq, et l'ignore quand le serveur n'en donne pas`() {
+        val base = """{"id":"m","kind":"movie","title":"Sintel","year":2010,"progressPercent":0,"completed":false"""
+        val notee = parseMedia(org.json.JSONObject(base + ""","note":{"surCinq":3.7,"votes":180,"source":"tmdb"}}"""))
+        assertEquals(NoteMedia(3.7, 180, "tmdb"), notee.note)
+        assertEquals(null, parseMedia(org.json.JSONObject(base + ""","note":null}""")).note)
+        assertEquals(null, parseMedia(org.json.JSONObject("$base}")).note)
     }
     @Test fun `affiche l'année des films`() = assertEquals("2026", media("movie").secondaryText)
 

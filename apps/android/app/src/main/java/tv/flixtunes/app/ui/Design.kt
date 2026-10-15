@@ -77,6 +77,9 @@ val TexteDoux = Color(0xFFC5CDDD)
  */
 val Muet = Color(0xFF9BA5B9)
 
+/** `--etoile: #f5b83d` (r14) — l'or des étoiles de la note. */
+val Etoile = Color(0xFFF5B83D)
+
 /** `--line: rgba(255,255,255,.1)` — la séparation entre deux blocs. */
 val Ligne = Color(0x1AFFFFFF)
 

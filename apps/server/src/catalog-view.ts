@@ -10,6 +10,7 @@ import { parseProbeOutput } from "./ffprobe.js";
 import { recommendLocal } from "./recommendation-engine.js";
 import { normaliseForSearch } from "./search-normalise.js";
 import { displayResolution } from "./video-resolution.js";
+import { NOTE_VOTES_MIN, noteAffichable } from "./note.js";
 
 type MediaRow = Parameters<typeof mapMedia>[0];
 
@@ -270,15 +271,37 @@ function mediaRows(profileId: string, where = "", ...params: Array<string | numb
   return rows.map(mapMedia);
 }
 
+/**
+ * r14 : la date d'ajout est celle du fichier sur le disque, au jour et à l'heure près. Celle de la
+ * fiche ne disait que le jour où la médiathèque avait été analysée : après une reconstruction de la
+ * base, 1 567 films sur 1 577 partageaient le même jour, et le tri « Ajout » n'ordonnait plus rien.
+ * Pour une série, c'est l'épisode le plus récent. La date de la fiche ne sert qu'à défaut.
+ */
+const AJOUT_MEDIA = "COALESCE(m.file_modified_at, CAST(strftime('%s', m.created_at) AS INTEGER) * 1000)";
+/*
+ * Calculée en une passe pour toutes les séries, et jointe seulement pour ce tri. Écrite en sous-requête
+ * corrélée, elle laissait SQLite partir des médias disponibles pour chaque série : 8,6 s sur la base du
+ * NAS, puis encore 1 s une fois l'ordre des jointures imposé — le serveur bloqué pendant ce temps. En
+ * une passe, de la saison vers ses épisodes puis leurs fichiers, chaque pas suit un index : 50 ms.
+ */
+const AJOUTS_SERIES = `SELECT saison.parent_id AS show_id, MAX(${AJOUT_MEDIA}) AS valeur FROM catalog_items saison
+  CROSS JOIN catalog_items episode ON episode.parent_id = saison.id
+  CROSS JOIN media_items m ON m.catalog_id = episode.id AND m.available = 1
+  WHERE saison.kind = 'season' GROUP BY saison.parent_id`;
+
 const SHOW_ORDER: Record<CatalogSort, string> = {
   title: "c.sort_title, c.id",
-  release: "c.year DESC NULLS LAST, c.sort_title, c.id",
-  added: "c.created_at DESC, c.id",
+  // r14 : la date de sortie complète d'abord ; à défaut, l'année, qui se range après les dates connues de la même année.
+  release: "COALESCE(c.date_sortie, CAST(c.year AS TEXT)) DESC NULLS LAST, c.sort_title, c.id",
+  added: "ajout.valeur DESC NULLS LAST, c.created_at DESC, c.id",
+  // r14 : une note trop peu votée n'est pas montrée ; elle ne classe donc pas non plus.
+  note: `CASE WHEN c.note_votes >= ${NOTE_VOTES_MIN} THEN c.note_sur_5 END DESC NULLS LAST, CASE WHEN c.note_votes >= ${NOTE_VOTES_MIN} THEN c.note_votes END DESC NULLS LAST, c.sort_title, c.id`,
 };
 
 type ShowRow = {
   id: string; title: string; sort_title: string; year: number | null; created_at: string; overview: string | null;
   poster_url: string | null; backdrop_url: string | null; season_count: number; age_rating: number | null; rating_label: string | null;
+  note_sur_5: number | null; note_votes: number | null; note_source: string | null;
   position_seconds: number; duration_seconds: number; media_id: string | null; in_watchlist: number;
   completed_count?: number; media_count?: number;
 };
@@ -435,11 +458,12 @@ function showItems(
 
   const rows = db.prepare(`
     SELECT c.id, c.title, c.sort_title, c.year, c.created_at, c.overview, c.poster_url, c.backdrop_url,
-      c.age_rating, c.rating_label,
+      c.age_rating, c.rating_label, c.note_sur_5, c.note_votes, c.note_source,
       (SELECT COUNT(*) FROM catalog_items season WHERE season.parent_id = c.id AND season.kind = 'season') AS season_count,
       CASE WHEN w.catalog_id IS NULL THEN 0 ELSE 1 END AS in_watchlist
     FROM catalog_items c
     LEFT JOIN profile_watchlist w ON w.catalog_id = c.id AND w.profile_id = ?
+    ${options.sort === "added" ? `LEFT JOIN (${AJOUTS_SERIES}) ajout ON ajout.show_id = c.id` : ""}
     WHERE c.kind = 'show' AND ${HAS_AVAILABLE_EPISODE} ${appartenance(options.rayon)} ${filters.join(" ")}
     ORDER BY ${SHOW_ORDER[options.sort ?? "title"]}${bounds}
   `).all(...params) as ShowRow[];
@@ -514,6 +538,7 @@ function showItems(
     runtimeSeconds: null,
     ageRating: show.age_rating,
     ratingLabel: show.rating_label,
+    note: noteAffichable(show.note_sur_5, show.note_votes, show.note_source),
     progressPercent: show.duration_seconds > 0
       ? Math.min(100, Math.round((show.position_seconds / show.duration_seconds) * 100))
       : 0,
@@ -680,8 +705,9 @@ function countShows(profileId: string, search: string, filter: CatalogFilter,
 const MOVIE_ORDER: Record<CatalogSort, string> = {
   // NULLS LAST reproduit le tri du client, où une année absente valait -Infinity en ordre décroissant.
   title: "m.sort_title, m.id",
-  release: "m.year DESC NULLS LAST, m.sort_title, m.id",
-  added: "m.created_at DESC, m.id",
+  release: "COALESCE(item_catalog.date_sortie, CAST(m.year AS TEXT)) DESC NULLS LAST, m.sort_title, m.id",
+  added: `${AJOUT_MEDIA} DESC, m.id`,
+  note: `CASE WHEN item_catalog.note_votes >= ${NOTE_VOTES_MIN} THEN item_catalog.note_sur_5 END DESC NULLS LAST, CASE WHEN item_catalog.note_votes >= ${NOTE_VOTES_MIN} THEN item_catalog.note_votes END DESC NULLS LAST, m.sort_title, m.id`,
 };
 
 function movieFilterClause(filter: CatalogFilter): string {
@@ -853,12 +879,12 @@ export function getDetails(profileId: string, id: string): MediaDetails | null {
   let catalogId = resolvedCatalogId(direct?.catalogId ?? id);
   let catalog = db.prepare(`
     SELECT id, library_id, parent_id, kind, title, sort_title, year, created_at, overview, poster_url, backdrop_url,
-      season_number, age_rating, rating_label
+      season_number, age_rating, rating_label, note_sur_5, note_votes, note_source
     FROM catalog_items WHERE id = ?
   `).get(catalogId) as {
     id: string; library_id: string | null; parent_id: string | null; kind: "movie" | "show" | "season" | "episode"; title: string;
     sort_title: string; year: number | null; created_at: string; overview: string | null; poster_url: string | null;
-    backdrop_url: string | null; season_number: number | null; age_rating: number | null; rating_label: string | null;
+    backdrop_url: string | null; season_number: number | null; age_rating: number | null; rating_label: string | null; note_sur_5: number | null; note_votes: number | null; note_source: string | null;
   } | undefined;
 
   if (catalog?.kind === "episode" && catalog.parent_id) {
@@ -867,7 +893,7 @@ export function getDetails(profileId: string, id: string): MediaDetails | null {
       catalogId = season.parent_id;
       catalog = db.prepare(`
         SELECT id, library_id, parent_id, kind, title, sort_title, year, created_at, overview, poster_url, backdrop_url,
-          season_number, age_rating, rating_label
+          season_number, age_rating, rating_label, note_sur_5, note_votes, note_source
         FROM catalog_items WHERE id = ?
       `).get(catalogId) as typeof catalog;
     }
@@ -991,6 +1017,7 @@ export function getDetails(profileId: string, id: string): MediaDetails | null {
     runtimeSeconds: null,
     ageRating: catalog.age_rating,
     ratingLabel: catalog.rating_label,
+    note: noteAffichable(catalog.note_sur_5, catalog.note_votes, catalog.note_source),
     progressPercent: firstEpisode?.progressPercent ?? 0,
     progressPositionSeconds: firstEpisodeProgress?.progressPositionSeconds ?? 0,
     progressDurationSeconds: firstEpisodeProgress?.progressDurationSeconds ?? 0,

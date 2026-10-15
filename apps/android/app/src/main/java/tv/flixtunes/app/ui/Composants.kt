@@ -49,6 +49,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -58,6 +59,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -74,6 +76,7 @@ import coil3.size.Size
 import androidx.compose.ui.layout.ContentScale
 import tv.flixtunes.app.R
 import tv.flixtunes.app.data.Media
+import tv.flixtunes.app.data.NoteMedia
 
 /**
  * Les composants que le Web et Android affichent tous les deux.
@@ -438,8 +441,37 @@ fun CarteMedia(
             lineHeight = 18.sp,
             fontWeight = FontWeight.SemiBold,
         )
-        Text(sousTitre ?: media.secondaryText, color = Muet, fontSize = 12.sp, maxLines = 1,
-            overflow = TextOverflow.Ellipsis)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(sousTitre ?: media.secondaryText, Modifier.weight(1f, fill = false), color = Muet, fontSize = 12.sp,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            media.note?.let { Etoiles(it, compactes = true) }
+        }
+    }
+}
+
+/**
+ * `.etoiles` (r14) — la note en étoiles : cinq grises, et les mêmes en or par-dessus, coupées à la
+ * note arrondie à la demi-étoile ; le chiffre suit, au dixième. La phrase complète est pour TalkBack.
+ */
+@Composable
+fun Etoiles(note: NoteMedia, compactes: Boolean = false) {
+    val part = (Math.round(note.surCinq * 2) / 10f).coerceIn(0f, 1f)
+    val chiffre = String.format(java.util.Locale.FRANCE, "%.1f", note.surCinq)
+    val phrase = "Note : $chiffre sur 5, ${note.votes} vote${if (note.votes > 1) "s" else ""}" +
+        if (note.source == "tmdb") " sur TMDB" else ""
+    val taille = if (compactes) 11.sp else 15.sp
+    Row(
+        Modifier.semantics(mergeDescendants = true) { contentDescription = phrase },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(if (compactes) 4.dp else 6.dp),
+    ) {
+        Box {
+            Text("★★★★★", color = Color.White.copy(alpha = .22f), fontSize = taille, letterSpacing = 1.sp, maxLines = 1)
+            Text("★★★★★", Modifier.drawWithContent { clipRect(right = size.width * part) { this@drawWithContent.drawContent() } },
+                color = Etoile, fontSize = taille, letterSpacing = 1.sp, maxLines = 1)
+        }
+        Text(chiffre, color = if (compactes) Muet else Texte, fontSize = taille,
+            fontWeight = if (compactes) FontWeight.Medium else FontWeight.SemiBold, maxLines = 1)
     }
 }
 

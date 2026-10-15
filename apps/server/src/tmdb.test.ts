@@ -110,6 +110,28 @@ describe("titleMatchScore", () => {
     expect(bundle?.episode).toMatchObject({ title: "Demi-boucle", runtimeSeconds: 3180 });
   });
 
+  it("ramène la note de la série sur cinq, et ne la donne ni à la saison ni à l'épisode (r14)", async () => {
+    config.tmdbToken = "test-token";
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/search/tv")) return Response.json({ results: [{ id: 95396, name: "Severance", first_air_date: "2022-02-17" }] });
+      if (url.includes("/season/1/episode/2")) return Response.json({ id: 1457735, name: "Demi-boucle", season_number: 1, episode_number: 2, vote_average: 9, vote_count: 80 });
+      if (url.includes("/season/1")) return Response.json({ id: 140181, name: "Saison 1", season_number: 1, vote_average: 8.8, vote_count: 40 });
+      if (url.includes("/tv/95396")) return Response.json({
+        id: 95396, name: "Severance", first_air_date: "2022-02-17", vote_average: 8.37, vote_count: 1520,
+      });
+      return new Response(null, { status: 404 });
+    }));
+    const bundle = await fetchMetadataBundle({
+      kind: "episode", title: "Épisode 2", year: null, showTitle: "Severance", seasonNumber: 1, episodeNumber: 2,
+    }, "fr-FR");
+    expect(bundle?.show?.note).toEqual({ surCinq: 4.2, votes: 1520, source: "tmdb" });
+    expect(bundle?.show?.dateSortie).toBe("2022-02-17");
+    expect(bundle?.episode?.dateSortie).toBeUndefined();
+    expect(bundle?.season?.note).toBeUndefined();
+    expect(bundle?.episode?.note).toBeUndefined();
+  });
+
   it("préfère la traduction française explicite d'un épisode à son texte anglais", async () => {
     config.tmdbToken = "test-token";
     const fetchMock = vi.fn(async (input: string | URL | Request) => {

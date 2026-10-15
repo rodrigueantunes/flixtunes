@@ -174,6 +174,15 @@ import tv.flixtunes.app.ui.TexteDoux
                         fontWeight = FontWeight.ExtraBold,
                         letterSpacing = ApprocheTitre,
                     )
+                    // r14 : l'année, la durée et la note, comme la fiche du client Web.
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Text(
+                            listOfNotNull(item.year?.toString(), item.runtimeSeconds?.takeIf { it > 0 }?.let { "${Math.round(it / 60f)} min" },
+                                stringResource(R.string.catalogue_mediatheque)).joinToString(" · "),
+                            color = TexteDoux, fontSize = 14.sp,
+                        )
+                        item.note?.let { Etoiles(it) }
+                    }
                     BadgesQualite(details.qualities)
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),

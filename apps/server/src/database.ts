@@ -6,6 +6,7 @@ import type { LibraryFolder, MediaItem, Profile, ProfileGroup, ScanStatus } from
 import { config } from "./config.js";
 import { normaliseForSearch } from "./search-normalise.js";
 import { appliquerLesMigrations } from "./migrations.js";
+import { noteAffichable } from "./note.js";
 
 mkdirSync(config.dataDir, { recursive: true });
 
@@ -428,6 +429,12 @@ ensureCatalogColumn("source_ids_json", "TEXT NOT NULL DEFAULT '{}'");
 ensureCatalogColumn("age_rating", "INTEGER");
 ensureCatalogColumn("rating_label", "TEXT");
 ensureCatalogColumn("rating_checked", "INTEGER NOT NULL DEFAULT 0");
+// r14 : la note sur cinq d'un film ou d'une série, son nombre de votes et son fournisseur (`note.ts`).
+ensureCatalogColumn("note_sur_5", "REAL");
+ensureCatalogColumn("note_votes", "INTEGER");
+ensureCatalogColumn("note_source", "TEXT");
+// r14 : la date de sortie complète (AAAA-MM-JJ), pour trier au jour près ; l'écran n'affiche que l'année.
+ensureCatalogColumn("date_sortie", "TEXT");
 
 /**
  * Colonne de recherche insensible aux accents, à la ponctuation et à la casse.
@@ -1040,6 +1047,9 @@ type MediaRow = {
   runtime_seconds: number | null;
   age_rating?: number | null;
   rating_label?: string | null;
+  note_sur_5?: number | null;
+  note_votes?: number | null;
+  note_source?: string | null;
   position_seconds: number | null;
   duration_seconds: number | null;
   completed: number | null;
@@ -1155,6 +1165,7 @@ export function mapMedia(row: MediaRow): MediaItemWithProgress {
     runtimeSeconds: row.runtime_seconds,
     ageRating: row.age_rating ?? null,
     ratingLabel: row.rating_label ?? null,
+    note: noteAffichable(row.note_sur_5, row.note_votes, row.note_source),
     progressPercent: duration > 0 ? Math.min(100, Math.round((position / duration) * 100)) : 0,
     progressPositionSeconds: Math.max(0, position),
     progressDurationSeconds: Math.max(0, duration),
@@ -1165,7 +1176,11 @@ export function mapMedia(row: MediaRow): MediaItemWithProgress {
 export const mediaSelect = `
   SELECT m.*, p.position_seconds, p.duration_seconds, p.completed,
     COALESCE(root_catalog.age_rating, parent_catalog.age_rating, item_catalog.age_rating) AS age_rating,
-    COALESCE(root_catalog.rating_label, parent_catalog.rating_label, item_catalog.rating_label) AS rating_label
+    COALESCE(root_catalog.rating_label, parent_catalog.rating_label, item_catalog.rating_label) AS rating_label,
+    -- r14 : la note est celle du film, ou de la série pour une saison et un épisode.
+    COALESCE(root_catalog.note_sur_5, parent_catalog.note_sur_5, item_catalog.note_sur_5) AS note_sur_5,
+    COALESCE(root_catalog.note_votes, parent_catalog.note_votes, item_catalog.note_votes) AS note_votes,
+    COALESCE(root_catalog.note_source, parent_catalog.note_source, item_catalog.note_source) AS note_source
   FROM media_items m
   LEFT JOIN playback_progress p ON p.media_id = m.id AND p.profile_id = ?
   LEFT JOIN catalog_items item_catalog ON item_catalog.id = m.catalog_id

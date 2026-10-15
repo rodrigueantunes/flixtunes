@@ -78,6 +78,8 @@ data class Media(
     val progressDurationSeconds: Double? = null,
     val ageRating: Int? = null,
     val ratingLabel: String? = null,
+    /** r14 : la note sur cinq du film ou de la série ; absente sans note ou sans assez de votes. */
+    val note: NoteMedia? = null,
     /**
      * Date de publication, `AAAA-MM-JJ`, pour une vidéo de plateforme.
      *
@@ -90,7 +92,8 @@ data class Media(
     val displayTitle: String = showTitle ?: title
     val secondaryText: String = when (kind) {
         "episode" -> "S${seasonNumber ?: 0} · E${episodeNumber ?: 0}"
-        "show" -> "${seasonCount ?: 0} saison${if ((seasonCount ?: 0) > 1) "s" else ""}"
+        // r14 : l'année d'une série se lit aussi sous son affiche, avant le nombre de saisons.
+        "show" -> listOfNotNull(year?.toString(), "${seasonCount ?: 0} saison${if ((seasonCount ?: 0) > 1) "s" else ""}").joinToString(" · ")
         // Une vidéo de plateforme n'a ni saison ni numéro : elle se présente par sa date. Faute de
         // date connue, elle ne s'invente pas — le mot « Vidéo » dit ce qu'on sait, c'est-à-dire peu.
         "video" -> dateLisible(airDate) ?: "Vidéo"
@@ -254,8 +257,16 @@ fun parseMedia(json: JSONObject) = Media(
     progressPositionSeconds = json.optDouble("progressPositionSeconds").takeIf { json.has("progressPositionSeconds") && it.isFinite() && it >= 0.0 },
     progressDurationSeconds = json.optDouble("progressDurationSeconds").takeIf { json.has("progressDurationSeconds") && it.isFinite() && it > 0.0 },
     ageRating = json.intOrNull("ageRating"), ratingLabel = json.stringOrNull("ratingLabel"),
+    note = json.optJSONObject("note")?.let { note ->
+        val surCinq = note.optDouble("surCinq")
+        if (surCinq.isFinite() && surCinq > 0) NoteMedia(surCinq, note.optInt("votes"), note.optString("source")) else null
+    },
     airDate = json.stringOrNull("airDate"),
 )
+
+/** r14 : une note ramenée sur cinq étoiles, avec son nombre de votes et son fournisseur. */
+@Immutable
+data class NoteMedia(val surCinq: Double, val votes: Int, val source: String)
 
 private fun mediaList(json: JSONObject, name: String) = json.optJSONArray(name)?.objects()?.map(::parseMedia).orEmpty()
 fun parseHome(json: JSONObject): Home {

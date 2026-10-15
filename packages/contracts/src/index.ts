@@ -891,6 +891,12 @@ export interface MediaItem {
   /** Âge minimal conseillé par la classification du pays du profil, lorsqu'elle est connue. */
   ageRating?: number | null;
   ratingLabel?: string | null;
+  /**
+   * r14 : la note du film ou de la série (de la série pour un épisode), sur cinq. Absente quand le
+   * fournisseur n'en donne pas, ou quand trop peu de personnes l'ont donnée pour qu'elle dise quelque
+   * chose.
+   */
+  note?: NoteMedia | null;
   progressPercent: number;
   /** Position exacte du profil. Le pourcentage reste présent pour les anciens clients et l'affichage. */
   progressPositionSeconds?: number;
@@ -1010,7 +1016,16 @@ export interface SkippedFile {
   lastSeenAt: string;
 }
 
-export type CatalogSort = "title" | "release" | "added";
+/** r14 : une note ramenée sur cinq étoiles, avec son nombre de votes et son fournisseur. */
+export interface NoteMedia {
+  /** Sur 5, au dixième près. */
+  surCinq: number;
+  votes: number;
+  source: string;
+}
+
+/** `note` (r14) : les mieux notés d'abord, ceux sans note à la fin. */
+export type CatalogSort = "title" | "release" | "added" | "note";
 export type CatalogFilter = "all" | "progress" | "watched" | "unwatched";
 
 export interface CatalogQuery {

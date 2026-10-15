@@ -139,6 +139,7 @@
   <string name="catalogue_tri_titre">Titre</string>
   <string name="catalogue_tri_sortie">Sortie</string>
   <string name="catalogue_tri_ajout">Ajout</string>
+  <string name="catalogue_tri_note">Note</string>
   <string name="catalogue_genres">Genres</string>
   <string name="catalogue_genres_effacer">Tout effacer</string>
   <string name="catalogue_genres_tous">Tous</string>

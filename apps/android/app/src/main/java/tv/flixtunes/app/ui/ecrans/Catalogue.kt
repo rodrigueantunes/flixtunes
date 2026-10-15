@@ -294,6 +294,7 @@ import tv.flixtunes.app.ui.tailleTextureJaquetteTv
                             "title" to stringResource(R.string.catalogue_tri_titre),
                             "release" to stringResource(R.string.catalogue_tri_sortie),
                             "added" to stringResource(R.string.catalogue_tri_ajout),
+                            "note" to stringResource(R.string.catalogue_tri_note),
                         ),
                         section.sort,
                     ) { grid.requestScrollToItem(0); critere(it, null, null, null) }

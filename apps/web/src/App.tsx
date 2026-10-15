@@ -2,6 +2,7 @@ import { CentreDiffusion, BoutonDiffusion, useCatalogueDiffusion } from "./Diffu
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CatalogPerson, ChaineDirect, HomeResponse, LibraryFolder, MediaDetails, MediaItem, PersonDetails, Profile, ProfileGroup } from "@flixtunes/contracts";
 import { api } from "./api";
+import { Etoiles } from "./Etoiles";
 import { ecrireCache, lireCache, oublierCache } from "./server-cache";
 import { oublierSouvenirDirect } from "./memoire-direct";
 import { oublierSouvenirWeb } from "./memoire-web";
@@ -44,7 +45,7 @@ import { SetupWizard } from "./SetupWizard";
 
 type CardItem = MediaItem & { seasonCount?: number };
 type AppView = "home" | "movies" | "shows" | "web" | "live" | "history";
-type CatalogSort = "title" | "release" | "added";
+type CatalogSort = "title" | "release" | "added" | "note";
 const profileColors = ["#2968ff", "#8b5cf6", "#ec4899", "#f59e0b", "#10b981", "#06b6d4"];
 const isTestDom = typeof navigator !== "undefined" && navigator.userAgent.toLowerCase().includes("jsdom");
 
@@ -128,7 +129,8 @@ function MediaCard({ item, onOpen, onContext }: {
   // qui est aussi ce sur quoi son rayon la trie.
   const meta = item.kind === "video" ? dateWebLisible(item.airDate)
     : item.kind === "episode" ? `S${item.seasonNumber} · E${item.episodeNumber}`
-    : item.seasonCount != null ? `${item.seasonCount} saison${item.seasonCount > 1 ? "s" : ""}`
+    // r14 : l'année d'une série se lit aussi sous son affiche, avant le nombre de saisons.
+    : item.seasonCount != null ? `${item.year ? `${item.year} · ` : ""}${item.seasonCount} saison${item.seasonCount > 1 ? "s" : ""}`
       : item.year ?? "Film";
   return <button className="media-card" data-media-id={item.catalogId} onClick={() => onOpen(item)}
     onContextMenu={(event) => { if (!onContext) return; event.preventDefault(); onContext(item, event.clientX, event.clientY); }}
@@ -142,7 +144,8 @@ function MediaCard({ item, onOpen, onContext }: {
       <span className="card-play"><Icon name="play" /></span>
       {item.completed && <span className="watched">✓ Vu</span>}
       {item.progressPercent > 0 && !item.completed && <span className="progress"><i style={{ width: `${item.progressPercent}%` }} /></span>}
-    </div><span className="card-title" title={item.title}>{item.title}</span><span className="card-meta">{meta}</span>
+    </div><span className="card-title" title={item.title}>{item.title}</span>
+    <span className="card-meta">{meta}{item.note && <Etoiles note={item.note} compacte />}</span>
   </button>;
 }
 
@@ -433,7 +436,7 @@ function CatalogPage({ kind, profileId, total, onOpen, onContext }: {
   return <section className="catalog-page" aria-labelledby="catalog-title">
     <header className="catalog-header"><div><span className="eyebrow">Bibliothèque</span><h1 id="catalog-title">{title}</h1><p>{matching} {matching > 1 ? "titres" : "titre"}{remaining > 0 && ` · ${items.length} affichés`}</p></div>
       <div className="catalog-controls"><label><span>Rechercher</span><input value={catalogQuery} onChange={(event) => setCatalogQuery(event.target.value)} placeholder={`Rechercher dans les ${title.toLowerCase()}`} /></label><label><span>État</span><select aria-label={`Filtrer les ${title.toLowerCase()}`} value={filter} onChange={(event) => setFilter(event.target.value as typeof filter)}><option value="all">Tous</option><option value="progress">En cours</option><option value="watched">Vus</option><option value="unwatched">Non vus</option></select></label><label className="sort-control"><span>Trier par</span><select value={sort} onChange={(event) => { setSort(event.target.value as CatalogSort); setSelectedLetter(null); }} aria-label={`Trier les ${title.toLowerCase()}`}>
-        <option value="title">Ordre alphabétique</option><option value="release">Date de sortie</option><option value="added">Date d’ajout</option>
+        <option value="title">Ordre alphabétique</option><option value="release">Date de sortie</option><option value="added">Date d’ajout</option><option value="note">Note</option>
       </select></label>
       <label><span>Décennie</span><select aria-label={`Filtrer les ${title.toLowerCase()} par décennie`}
         value={String(decade)} onChange={(event) => setDecade(event.target.value === "all" ? "all" : Number(event.target.value))}>
@@ -782,7 +785,8 @@ function DetailsModal({ details, demande, profile, onPlay, onOpen, onOpenPerson,
   return <div className="modal-backdrop details-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}><div className="details-modal" role="dialog" aria-modal="true" aria-labelledby="details-title" ref={dialogRef}>
     <div className="details-hero" style={item.backdropUrl ? { backgroundImage: `linear-gradient(0deg,#10141d 2%,transparent 75%),linear-gradient(90deg,#10141ddd,transparent),url(${item.backdropUrl})` } : undefined}>
       <button className="details-close" onClick={onClose} aria-label="Fermer">×</button><div><span className="eyebrow">{estWeb && item.kind === "show" ? "Chaîne" : item.kind === "show" ? "Série" : item.kind === "episode" ? "Épisode" : item.kind === "video" ? "Vidéo" : "Film"}</span><h1 id="details-title">{item.showTitle ?? item.title}</h1>
-      <p>{[item.year, item.runtimeSeconds ? `${Math.round(item.runtimeSeconds / 60)} min` : null, "Dans votre médiathèque"].filter(Boolean).join(" · ")}</p>
+      <p className="details-meta">{[item.year, item.runtimeSeconds ? `${Math.round(item.runtimeSeconds / 60)} min` : null, "Dans votre médiathèque"].filter(Boolean).join(" · ")}
+        {item.note && <Etoiles note={item.note} />}</p>
       {Boolean(details.qualities?.length) && <div className="quality-badges" aria-label="Qualités disponibles">
         {details.qualities!.map((quality) => <span key={quality}>{quality}</span>)}
       </div>}
