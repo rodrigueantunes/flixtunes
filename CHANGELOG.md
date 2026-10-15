@@ -1,5 +1,28 @@
 # Journal des versions
 
+## 0.6.0.r13 — ne garder que ce qui marche, jusqu'au bout
+
+<!-- release -->
+### Live TV, sur Android, Windows, Linux et le Web
+
+- **Les sources mortes disparaissent aussi.** Après « Ne garder que les chaînes qui marchent », une
+  chaîne qui reste pouvait encore proposer des sources qui ne répondaient pas, et le lecteur y
+  basculait parfois de lui-même. Toutes les sources des chaînes retenues sont maintenant testées, et
+  celles qui se taisent ne sont plus proposées, ni au choix ni en secours. Le nombre de sources des
+  cartes suit.
+- **Le filtrage tient jusqu'à la recherche suivante.** Revenir d'une chaîne retrouve la grille filtrée
+  telle qu'on l'avait laissée. Il ne tombe que si la recherche est modifiée, effacée, ou si un filtre
+  change.
+- **Aussi rapide qu'avant** : la grille se filtre dès que chaque chaîne a son verdict ; les autres
+  sources sont testées ensuite, en fond, sans rien faire bouger à l'écran.
+<!-- /release -->
+
+Mesuré sur une copie de la base du NAS : « france », 148 chaînes, verdict en 5,8 s (5,5 s en r12),
+toutes les sources testées en 12,5 s, 68 sources mortes retirées sur 19 chaînes ; « sport », 98
+chaînes, 39 sources retirées sur 26 chaînes. Dans le vrai client Web, France 3 Lorraine s'ouvre avec
+sa seule source vivante au lieu de trois, et la grille filtrée est retrouvée au retour.
+[Détails de la r13](docs/DIRECT_060_R13.md).
+
 ## 0.6.0.r12 — un direct sans saut visible, à la meilleure qualité
 
 <!-- release -->

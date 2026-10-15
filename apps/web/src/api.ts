@@ -1,4 +1,5 @@
 import { familleLecteur } from "./pilotage-direct";
+import { lireSouvenirDirect } from "./memoire-direct";
 import type {
   CatalogItem,
   CatalogPage,
@@ -340,7 +341,7 @@ export const api = {
   /** r12 : vérifier, à l'instant, les chaînes que rend une recherche. */
   verifierChainesLive: (criteres: { q: string; listes?: string[]; pays?: string[]; fiabilites?: string[]; favoris?: boolean; masquerMortes?: boolean }) =>
     request<{ id: string; total: number }>("/live/verifications", { method: "POST", body: JSON.stringify(criteres) }),
-  etatVerificationLive: (id: string) => request<{ total: number; faites: number; fini: boolean; mortes: string[]; chaines?: ChaineDirect[] }>(
+  etatVerificationLive: (id: string) => request<{ total: number; faites: number; fini: boolean; sourcesFinies?: boolean; mortes: string[]; chaines?: ChaineDirect[] }>(
     `/live/verifications/${encodeURIComponent(id)}`),
   chainesLive: (requete: { q?: string; listes?: string[]; pays?: string[]; fiabilites?: string[];
     favoris?: boolean; masquerMortes?: boolean; offset?: number; limit?: number } = {}) => {
@@ -398,8 +399,13 @@ export const api = {
    * Les adresses d'une chaîne, dans l'ordre où il faut les essayer : celles qui ont déjà marché
    * d'abord, celles qui ont échoué en dernier. C'est ce qui rend le repli utile plutôt qu'aléatoire.
    */
-  chaineLive: (id: string, lecteur = familleLecteur(), signal?: AbortSignal) => request<ChaineDirectDetaillee>(
-    `/live/channels/${encodeURIComponent(id)}?lecteur=${encodeURIComponent(lecteur)}`, { signal },
+  /*
+   * r13 : tant qu'une grille filtrée « qui marchent » est en vigueur, la vérification est citée et le
+   * serveur retire les sources qui n'y ont pas répondu — du choix comme de la bascule automatique.
+   */
+  chaineLive: (id: string, lecteur = familleLecteur(), signal?: AbortSignal,
+    verification = lireSouvenirDirect().verification?.id) => request<ChaineDirectDetaillee>(
+    `/live/channels/${encodeURIComponent(id)}?lecteur=${encodeURIComponent(lecteur)}${verification ? `&verification=${encodeURIComponent(verification)}` : ""}`, { signal },
   ),
   resultatChaineLive: (id: string, url: string, ok: boolean, secondesStables?: number, chemin: "direct" | "relais" = "direct", lecteur = familleLecteur()) => request<void>(
     `/live/channels/${encodeURIComponent(id)}/resultat`, { method: "POST", body: JSON.stringify({ url, ok, secondesStables, lecteur, chemin }) },

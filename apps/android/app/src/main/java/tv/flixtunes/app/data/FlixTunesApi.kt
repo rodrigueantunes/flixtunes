@@ -305,6 +305,7 @@ class FlixTunesApi(
         val chaines = reponse.optJSONArray("chaines")
         EtatVerificationDirect(
             total = reponse.optInt("total"), faites = reponse.optInt("faites"), fini = reponse.optBoolean("fini"),
+            sourcesFinies = reponse.optBoolean("sourcesFinies", true),
             mortes = if (mortes == null) emptySet() else (0 until mortes.length()).mapTo(mutableSetOf()) { mortes.getString(it) },
             chaines = chaines?.let { tableau -> (0 until tableau.length()).map { lireChaine(tableau.getJSONObject(it)) } },
         )
@@ -364,8 +365,13 @@ class FlixTunesApi(
     }
 
     /** Les adresses d'une chaîne, déjà triées par ce que l'usage a appris. */
-    suspend fun chaineDirect(profileId: String, id: String): ChaineDetaillee = withContext(Dispatchers.Default) {
-        val reponse = request("/live/channels/${encode(id)}?profileId=${encode(profileId)}")
+    /**
+     * Les sources d'une chaîne. r13 : `verification` cite le filtrage « qui marchent » en vigueur, et le
+     * serveur retire les sources qui n'y ont pas répondu — du choix comme de la bascule automatique.
+     */
+    suspend fun chaineDirect(profileId: String, id: String, verification: String? = null): ChaineDetaillee = withContext(Dispatchers.Default) {
+        val reponse = request("/live/channels/${encode(id)}?profileId=${encode(profileId)}" +
+            (verification?.let { "&verification=${encode(it)}" } ?: ""))
         val sources = reponse.optJSONArray("sources") ?: JSONArray()
         ChaineDetaillee(
             chaine = lireChaine(reponse),

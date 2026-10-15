@@ -357,8 +357,14 @@ data class ChaineDirect(
 
 data class PageChaines(val items: List<ChaineDirect>, val total: Int, val offset: Int, val limit: Int)
 
-/** r12 : où en est la vérification des chaînes d'une recherche ; une fois finie, celles qui jouent. */
-data class EtatVerificationDirect(val total: Int, val faites: Int, val fini: Boolean, val mortes: Set<String>, val chaines: List<ChaineDirect>?)
+/**
+ * r12 : où en est la vérification des chaînes d'une recherche ; une fois finie, celles qui jouent.
+ * r13 : `sourcesFinies` dit que les autres sources des chaînes qui jouent ont aussi été vérifiées.
+ */
+data class EtatVerificationDirect(
+    val total: Int, val faites: Int, val fini: Boolean, val mortes: Set<String>, val chaines: List<ChaineDirect>?,
+    val sourcesFinies: Boolean = true,
+)
 
 /** Une adresse d'une chaîne, et son doublon relayé par le serveur — dont Android ne se sert pas. */
 /**

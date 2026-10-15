@@ -109,6 +109,8 @@ class MainActivity : ComponentActivity() {
             putExtra(LecteurDirectActivity.EXTRA_PROFILE_ID, state.profile?.id)
             putExtra(LecteurDirectActivity.EXTRA_PROFILE_TOKEN, model.profileAccessToken())
             putExtra(LecteurDirectActivity.EXTRA_CHANNEL_ID, chaine.id)
+            // r13 : depuis une grille filtrée « qui marchent », le lecteur ne reçoit pas les sources mortes.
+            state.direct?.takeIf { it.verifiees != null }?.verificationId?.let { putExtra(LecteurDirectActivity.EXTRA_VERIFICATION, it) }
         })
     }
 

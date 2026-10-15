@@ -17,6 +17,14 @@ import { chaineDetaillee, listerChaines, type RequeteChaines } from "./televisio
  * Pour que ce soit rapide : seize chaînes à la fois, trois sources au plus par chaîne — les mieux
  * classées d'abord, on s'arrête à la première qui joue —, quatre secondes par requête, et chaque source
  * retenue une minute, le temps qu'un second essai ou une recherche voisine en profitent.
+ *
+ * **r13 : les sources mortes des chaînes qui restent.** Une chaîne qui joue peut garder des sources
+ * mortes, que le lecteur proposait encore et vers lesquelles il basculait. Une fois le verdict de la
+ * chaîne rendu, ses autres sources sont donc vérifiées à leur tour, en fond : la grille filtrée arrive
+ * aussi vite qu'avant, et les lecteurs qui ouvrent une chaîne en citant la vérification ne reçoivent
+ * plus les sources qui n'ont pas répondu (`sourcesMortesDe`). Le filtrage vaut jusqu'à la recherche
+ * suivante : la vérification vit douze heures depuis sa dernière consultation, remplacée dès que le
+ * profil en lance une autre.
  */
 
 /** Au plus deux cents chaînes par vérification : la page la plus longue que rend une recherche. */
@@ -25,7 +33,10 @@ const SOURCES_PAR_CHAINE = 3;
 const SIMULTANEES = 16;
 const DELAI_MS = 4_000;
 const MEMOIRE_SOURCE_MS = 60_000;
-const VIE_VERIFICATION_MS = 5 * 60_000;
+/** Une vérification vit tant qu'on s'en sert : on regarde une chaîne bien plus de cinq minutes. */
+const VIE_VERIFICATION_MS = 12 * 3_600_000;
+/** Les sources vérifiées en fond, au plus : deux cents chaînes à quarante-cinq sources ne passent pas. */
+const SOURCES_DIFFEREES_MAX = 1_500;
 
 type Recuperation = (url: string, init: RequestInit) => Promise<Response>;
 export interface OutilsVerification { recuperer?: Recuperation; autorise?: (hote: string) => Promise<boolean> }
@@ -96,21 +107,43 @@ async function sourceJoueRetenue(url: string, outils: OutilsVerification): Promi
   return ok;
 }
 
-/** Une chaîne joue si l'une de ses meilleures sources joue. */
-async function chaineJoue(id: string, outils: OutilsVerification): Promise<boolean> {
-  const sources = chaineDetaillee(id)?.sources.slice(0, SOURCES_PAR_CHAINE) ?? [];
-  for (const source of sources) if (await sourceJoueRetenue(source.url, outils)) return true;
-  return false;
-}
-
 interface Verification {
   profil: string; chaines: ChaineDirect[]; faites: number; joignables: Set<string>; mortes: Set<string>;
-  fini: boolean; annulee: boolean; creee: number;
+  /** Par chaîne, les adresses qui n'ont pas répondu. */
+  sourcesMortes: Map<string, Set<string>>;
+  /** Le verdict de toutes les chaînes est rendu : la grille peut se filtrer. */
+  fini: boolean;
+  /** Les autres sources des chaînes qui jouent ont été vérifiées à leur tour. */
+  sourcesFinies: boolean;
+  annulee: boolean; vue: number;
 }
 const verifications = new Map<string, Verification>();
 
+function noterMorte(v: Verification, chaine: string, url: string) {
+  const deLaChaine = v.sourcesMortes.get(chaine) ?? new Set<string>();
+  deLaChaine.add(url);
+  v.sourcesMortes.set(chaine, deLaChaine);
+}
+
+/**
+ * Une chaîne joue si l'une de ses meilleures sources joue. Celles qui se taisent sont notées ; celles
+ * qui suivent la première qui joue restent à vérifier, en fond.
+ */
+async function chaineJoue(v: Verification, id: string, outils: OutilsVerification,
+  differees: Array<{ chaine: string; url: string }>): Promise<boolean> {
+  const sources = chaineDetaillee(id)?.sources ?? [];
+  for (const [rang, source] of sources.slice(0, SOURCES_PAR_CHAINE).entries()) {
+    if (await sourceJoueRetenue(source.url, outils)) {
+      for (const suivante of sources.slice(rang + 1)) differees.push({ chaine: id, url: suivante.url });
+      return true;
+    }
+    noterMorte(v, id, source.url);
+  }
+  return false;
+}
+
 function purger() {
-  for (const [id, v] of verifications) if (Date.now() - v.creee > VIE_VERIFICATION_MS) { v.annulee = true; verifications.delete(id); }
+  for (const [id, v] of verifications) if (Date.now() - v.vue > VIE_VERIFICATION_MS) { v.annulee = true; verifications.delete(id); }
 }
 
 /**
@@ -122,28 +155,76 @@ export function lancerVerification(profil: string, requete: RequeteChaines, outi
   for (const [id, v] of verifications) if (v.profil === profil) { v.annulee = true; verifications.delete(id); }
   const chaines = listerChaines({ ...requete, profileId: profil, offset: 0, limit: CHAINES_MAX }).items;
   const id = randomUUID();
-  const v: Verification = { profil, chaines, faites: 0, joignables: new Set(), mortes: new Set(), fini: chaines.length === 0, annulee: false, creee: Date.now() };
+  const v: Verification = { profil, chaines, faites: 0, joignables: new Set(), mortes: new Set(), sourcesMortes: new Map(),
+    fini: chaines.length === 0, sourcesFinies: chaines.length === 0, annulee: false, vue: Date.now() };
   verifications.set(id, v);
-  let prochaine = 0;
+  /*
+   * Les mêmes seize fils servent les deux passes : d'abord une chaîne après l'autre, puis, quand il
+   * n'en reste plus à juger, les sources mises de côté. Un fil sans travail attend tant que d'autres
+   * jugent encore une chaîne : ils peuvent en remettre.
+   */
+  const differees: Array<{ chaine: string; url: string }> = [];
+  let prochaine = 0, prochaineSource = 0, enCours = 0;
   void Promise.all(Array.from({ length: Math.min(SIMULTANEES, chaines.length) }, async () => {
-    while (!v.annulee && prochaine < chaines.length) {
-      const chaine = chaines[prochaine++]!;
-      const ok = await chaineJoue(chaine.id, outils).catch(() => false);
-      if (v.annulee) return;
-      (ok ? v.joignables : v.mortes).add(chaine.id);
-      v.faites += 1;
+    while (!v.annulee) {
+      if (prochaine < chaines.length) {
+        const chaine = chaines[prochaine++]!;
+        enCours += 1;
+        const ok = await chaineJoue(v, chaine.id, outils, differees).catch(() => false);
+        enCours -= 1;
+        if (v.annulee) return;
+        (ok ? v.joignables : v.mortes).add(chaine.id);
+        v.faites += 1;
+        if (v.faites === chaines.length) v.fini = true;
+      } else if (prochaineSource < Math.min(differees.length, SOURCES_DIFFEREES_MAX)) {
+        const source = differees[prochaineSource++]!;
+        const ok = await sourceJoueRetenue(source.url, outils).catch(() => false);
+        if (v.annulee) return;
+        if (!ok) noterMorte(v, source.chaine, source.url);
+      } else if (enCours > 0) {
+        await new Promise((resoudre) => setTimeout(resoudre, 50));
+      } else return;
     }
-  })).finally(() => { v.fini = true; });
+  })).finally(() => { v.fini = true; v.sourcesFinies = true; });
   return { id, total: chaines.length };
 }
 
-/** Où en est la vérification ; une fois finie, les chaînes qui jouent, dans l'ordre de la recherche. */
-export function etatVerification(id: string, profil: string) {
+function consulter(id: string, profil: string): Verification | null {
   purger();
   const v = verifications.get(id);
   if (!v || v.profil !== profil) return null;
-  return { total: v.chaines.length, faites: v.faites, fini: v.fini, mortes: [...v.mortes],
-    ...(v.fini ? { chaines: v.chaines.filter((c) => v.joignables.has(c.id)) } : {}) };
+  v.vue = Date.now();
+  return v;
+}
+
+/**
+ * Où en est la vérification ; une fois finie, les chaînes qui jouent, dans l'ordre de la recherche.
+ * Leur nombre d'adresses ne compte plus celles qui n'ont pas répondu.
+ */
+export function etatVerification(id: string, profil: string) {
+  const v = consulter(id, profil);
+  if (!v) return null;
+  return { total: v.chaines.length, faites: v.faites, fini: v.fini, sourcesFinies: v.sourcesFinies, mortes: [...v.mortes],
+    ...(v.fini ? { chaines: v.chaines.filter((c) => v.joignables.has(c.id))
+      .map((c) => ({ ...c, adresses: Math.max(1, c.adresses - (v.sourcesMortes.get(c.id)?.size ?? 0)) })) } : {}) };
+}
+
+/**
+ * Les adresses d'une chaîne qui n'ont pas répondu à la vérification citée par le lecteur. `null` quand
+ * la vérification n'existe plus (serveur redémarré, autre profil) : la chaîne s'ouvre alors entière.
+ */
+export function sourcesMortesDe(id: string, profil: string, chaine: string): ReadonlySet<string> | null {
+  return consulter(id, profil)?.sourcesMortes.get(chaine) ?? null;
+}
+
+/**
+ * Retire d'une chaîne les sources mortes à la vérification. Jamais toutes : une chaîne dont il ne
+ * resterait rien s'ouvre entière, plutôt que vide.
+ */
+export function sansLesSourcesMortes<T extends { url: string }>(sources: T[], mortes: ReadonlySet<string> | null): T[] {
+  if (!mortes?.size) return sources;
+  const vivantes = sources.filter((source) => !mortes.has(source.url));
+  return vivantes.length ? vivantes : sources;
 }
 
 /** Pour les tests : repartir d'une mémoire vide. */

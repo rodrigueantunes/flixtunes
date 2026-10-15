@@ -55,7 +55,7 @@ import { adresseLiveDistante, empreinteLiveDistante, sourceLiveDistante } from "
 import { lireCorpsBorne, relayerLiveDistant, relayerLiveLocal } from "./live-relais-distant.js";
 import { enregistrerXtream, listerSources, reglerFast, retirerSource } from "./live-fournisseurs.js";
 import { sonderLesAutres, sonderLesSources } from "./live-qualite.js";
-import { etatVerification, lancerVerification } from "./live-verification.js";
+import { etatVerification, lancerVerification, sansLesSourcesMortes, sourcesMortesDe } from "./live-verification.js";
 import {
   arreterRafraichissement,
   chaineDetaillee,
@@ -933,6 +933,15 @@ export async function registerRoutes(app: FastifyInstance) {
     if (!profile) return reply.code(404).send({ message: "Profil introuvable" });
     const chaine = chaineDetaillee(request.params.id);
     if (!chaine) return reply.code(404).send({ message: "Chaîne introuvable" });
+    /*
+     * r13 : le lecteur ouvert depuis une grille filtrée cite la vérification ; les sources qui n'y ont
+     * pas répondu ne lui sont pas proposées — ni au choix, ni à la bascule automatique.
+     */
+    const verification = (request.query as { verification?: string }).verification;
+    if (verification) {
+      chaine.sources = sansLesSourcesMortes(chaine.sources, sourcesMortesDe(verification, profile.id, chaine.id));
+      chaine.adresses = chaine.sources.length;
+    }
     chaine.sources = classerPourLecteur(chaine.id, chaine.sources,
       request.expositionWan ? `wan:${profile.id}` : "lan",
       lecteurWeb((request.query as { lecteur?: string }).lecteur));

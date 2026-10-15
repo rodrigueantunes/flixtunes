@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const fixture = vi.hoisted(() => ({ sources: new Map<string, string[]>(), chaines: [] as Array<{ id: string; nom: string }> }));
+const fixture = vi.hoisted(() => ({ sources: new Map<string, string[]>(), chaines: [] as Array<{ id: string; nom: string; adresses?: number }> }));
 vi.mock("./television-direct.js", () => ({
   chaineDetaillee: (id: string) => fixture.sources.has(id) ? { sources: fixture.sources.get(id)!.map((url) => ({ url })) } : null,
   listerChaines: () => ({ items: fixture.chaines, total: fixture.chaines.length }),
 }));
-import { debutDeVideo, etatVerification, lancerVerification, oublierVerifications, sourceJoue } from "./live-verification.js";
+import { debutDeVideo, etatVerification, lancerVerification, oublierVerifications, sansLesSourcesMortes, sourceJoue, sourcesMortesDe } from "./live-verification.js";
 
 const ts = Buffer.alloc(376, 0); ts[0] = 0x47; ts[188] = 0x47;
 /** Un petit Internet : chaque adresse rend un corps et un statut. */
@@ -63,6 +63,27 @@ describe("vérification des chaînes d'une recherche", () => {
     expect(etat.mortes).toEqual(["b"]);
     // Le résultat est propre au profil.
     expect(etatVerification(id, "autre")).toBeNull();
+  });
+  it("vérifie en fond les autres sources des chaînes qui jouent, et les retire au lecteur qui cite la vérification", async () => {
+    fixture.chaines = [{ id: "a", nom: "A", adresses: 4 }];
+    fixture.sources.set("a", ["https://a.test/v.m3u8", "https://a.test/morte1.m3u8", "https://c.test/direct", "https://a.test/morte2.m3u8"]);
+    const { outils } = reseau({ "https://a.test/v.m3u8": { corps: variante }, "https://a.test/s2.ts": { corps: ts }, "https://c.test/direct": { corps: ts } });
+    const { id } = lancerVerification("profil", { q: "x" }, outils);
+    let etat = etatVerification(id, "profil")!;
+    while (!etat.sourcesFinies) { await new Promise((r) => setTimeout(r, 10)); etat = etatVerification(id, "profil")!; }
+    expect(etat.fini).toBe(true);
+    expect([...sourcesMortesDe(id, "profil", "a")!].sort()).toEqual(["https://a.test/morte1.m3u8", "https://a.test/morte2.m3u8"]);
+    // Le nombre d'adresses affiché sur la carte suit.
+    expect(etat.chaines![0]!.adresses).toBe(2);
+    // Une vérification inconnue, ou d'un autre profil, ne retire rien.
+    expect(sourcesMortesDe("inconnue", "profil", "a")).toBeNull();
+    expect(sourcesMortesDe(id, "autre", "a")).toBeNull();
+  });
+  it("ne vide jamais une chaîne : sans source vivante, elle s'ouvre entière", () => {
+    const sources = [{ url: "u1" }, { url: "u2" }];
+    expect(sansLesSourcesMortes(sources, new Set(["u1"]))).toEqual([{ url: "u2" }]);
+    expect(sansLesSourcesMortes(sources, new Set(["u1", "u2"]))).toEqual(sources);
+    expect(sansLesSourcesMortes(sources, null)).toEqual(sources);
   });
   it("remplace la vérification précédente du profil : une autre recherche a été faite", () => {
     fixture.chaines = [{ id: "a", nom: "A" }];

@@ -29,11 +29,25 @@ export interface SouvenirDirect {
   total: number;
   /** Position de défilement de la page, en pixels. */
   defilement: number;
+  /**
+   * r13 : le filtrage « qui marchent » en vigueur. Il survit au retour d'une chaîne, et le lecteur
+   * cite son identifiant pour ne pas recevoir les sources mortes. Il tombe au premier changement de
+   * critère : il ne valait que pour celui-ci.
+   */
+  verification: VerificationRetenue | null;
+}
+
+export interface VerificationRetenue {
+  id: string;
+  /** Les critères de la recherche vérifiée, tels que `JSON.stringify` les écrit. */
+  criteres: string;
+  chaines: ChaineDirect[];
+  total: number;
 }
 
 const VIERGE: SouvenirDirect = {
   recherche: "", listes: [], pays: [], fiabilites: [], favorisSeuls: false,
-  chaines: [], total: 0, defilement: 0,
+  chaines: [], total: 0, defilement: 0, verification: null,
 };
 
 let souvenir: SouvenirDirect = { ...VIERGE };

@@ -132,34 +132,61 @@ export function LiveTv({ onPlay }: { onPlay: (chaine: ChaineDirect) => void }) {
    * trouvées ; pendant le test, celles qui se taisent s'estompent sans bouger la grille, puis seules
    * celles qui jouent restent. Le filtrage tombe de lui-même dès que la recherche ou les filtres
    * changent : il valait pour cette recherche-là, à ce moment-là.
+   *
+   * r13 : il ne tombe **que** là. Ouvrir une chaîne démonte cet écran ; le filtrage est donc retenu
+   * avec le reste (`memoire-direct`) et retrouvé au retour tant que les critères n'ont pas bougé. Le
+   * serveur continue, après le verdict, de vérifier les autres sources des chaînes qui jouent : on
+   * suit ce travail en silence, pour que le nombre de sources des cartes suive.
    */
   const [verification, setVerification] = useState<{ total: number; faites: number; mortes: Set<string> } | null>(null);
-  const [verifiees, setVerifiees] = useState<{ chaines: ChaineDirect[]; total: number } | null>(null);
+  const [verifiees, setVerifiees] = useState<{ chaines: ChaineDirect[]; total: number } | null>(() => {
+    const retenue = souvenir.verification;
+    return retenue && retenue.criteres === JSON.stringify(criteres) ? { chaines: retenue.chaines, total: retenue.total } : null;
+  });
   const [erreurVerification, setErreurVerification] = useState<string | null>(null);
   const generationVerification = useRef(0);
+  /** Les critères pour lesquels le filtrage affiché vaut. */
+  const criteresVerifies = useRef(verifiees ? JSON.stringify(criteres) : null);
   useEffect(() => {
+    if (criteresVerifies.current === JSON.stringify(criteres)) return;
+    criteresVerifies.current = null;
     generationVerification.current += 1;
     setVerification(null); setVerifiees(null); setErreurVerification(null);
+    retenirSouvenirDirect({ verification: null });
   }, [criteres]);
+  // Le suivi s'arrête avec l'écran ; le filtrage, lui, reste retenu.
+  useEffect(() => () => { generationVerification.current += 1; }, []);
   const verifier = useCallback(async () => {
     if (!recherche) return;
     const generation = ++generationVerification.current;
+    const empreinte = JSON.stringify(criteres);
+    criteresVerifies.current = null;
     setErreurVerification(null); setVerifiees(null);
+    retenirSouvenirDirect({ verification: null });
     setVerification({ total: 0, faites: 0, mortes: new Set() });
     try {
       const { id, total } = await api.verifierChainesLive({ ...criteres, q: recherche });
       if (generation !== generationVerification.current) return;
       setVerification({ total, faites: 0, mortes: new Set() });
+      let filtree = false;
       for (;;) {
-        await new Promise((resoudre) => setTimeout(resoudre, 300));
+        await new Promise((resoudre) => setTimeout(resoudre, filtree ? 1000 : 300));
         if (generation !== generationVerification.current) return;
         const etat = await api.etatVerificationLive(id);
         if (generation !== generationVerification.current) return;
-        if (etat.fini) { setVerification(null); setVerifiees({ chaines: etat.chaines ?? [], total: etat.total }); return; }
+        if (etat.fini) {
+          const chainesQuiJouent = etat.chaines ?? [];
+          if (!filtree) { filtree = true; criteresVerifies.current = empreinte; setVerification(null); }
+          setVerifiees({ chaines: chainesQuiJouent, total: etat.total });
+          retenirSouvenirDirect({ verification: { id, criteres: empreinte, chaines: chainesQuiJouent, total: etat.total } });
+          if (etat.sourcesFinies !== false) return;
+          continue;
+        }
         setVerification({ total: etat.total, faites: etat.faites, mortes: new Set(etat.mortes) });
       }
     } catch (cause) {
-      if (generation !== generationVerification.current) return;
+      // Une fois la grille filtrée, une erreur du suivi des sources ne la défait pas.
+      if (generation !== generationVerification.current || criteresVerifies.current) return;
       setVerification(null);
       setErreurVerification(cause instanceof Error ? cause.message : "Vérification impossible");
     }

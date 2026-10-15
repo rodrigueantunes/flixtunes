@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "./api";
+import { oublierSouvenirDirect, retenirSouvenirDirect } from "./memoire-direct";
 
 /**
  * Ces cas portent sur le **vrai** module d'API, sans double.
@@ -83,5 +84,16 @@ describe("module d'API", () => {
     await api.recalibrate();
     expect(appels[0]).toContain("/system/capacity/recalibrate");
     expect(appels[0], "ne doit pas viser le rapport de capacité").not.toMatch(/capacity$/);
+  });
+});
+
+describe("les sources d'une chaîne ouverte depuis une grille filtrée (r13)", () => {
+  afterEach(() => { oublierSouvenirDirect(); });
+  it("cite la vérification en vigueur, et rien hors filtrage", async () => {
+    await api.chaineLive("c1", "web").catch(() => undefined);
+    expect(appels.at(-1)).not.toContain("verification=");
+    retenirSouvenirDirect({ verification: { id: "v 1", criteres: "{}", chaines: [], total: 0 } });
+    await api.chaineLive("c1", "web").catch(() => undefined);
+    expect(appels.at(-1)).toContain("/live/channels/c1?lecteur=web&verification=v%201");
   });
 });

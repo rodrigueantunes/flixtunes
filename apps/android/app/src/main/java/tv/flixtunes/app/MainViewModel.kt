@@ -173,6 +173,11 @@ data class SectionDirect(
     /** Les chaînes qui jouaient au moment du test ; `null` hors filtrage. Tombe à tout changement de critère. */
     val verifiees: List<ChaineDirect>? = null,
     val verifieesTotal: Int = 0,
+    /**
+     * r13 : l'identifiant de la vérification en vigueur, cité à l'ouverture d'une chaîne pour que le
+     * lecteur ne reçoive pas les sources mortes. Il vit et tombe avec `verifiees`.
+     */
+    val verificationId: String? = null,
 ) {
     val hasMore: Boolean get() = verifiees == null && items.size < total
 }
@@ -867,24 +872,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val section = state.direct ?: return
         if (section.query.isBlank()) return
         verificationDirect?.cancel()
-        state = state.copy(direct = section.copy(verification = VerificationEnCours(0, 0, emptySet()), verifiees = null))
+        state = state.copy(direct = section.copy(verification = VerificationEnCours(0, 0, emptySet()), verifiees = null, verificationId = null))
         verificationDirect = viewModelScope.launch {
             try {
                 val (id, total) = currentApi.verifierChainesDirect(profile.id, section.query, section.listesChoisies,
                     section.paysChoisis, section.fiabilitesChoisies, section.favorisSeuls, section.masquerMortes)
                 state.direct?.let { state = state.copy(direct = it.copy(verification = VerificationEnCours(total, 0, emptySet()))) }
+                /*
+                 * r13 : après le verdict, le NAS vérifie encore les autres sources des chaînes qui
+                 * jouent. On suit ce travail en silence, une fois par seconde, pour que le nombre de
+                 * sources des cartes suive ; la grille, elle, ne bouge plus.
+                 */
+                var filtree = false
                 while (true) {
-                    delay(300)
+                    delay(if (filtree) 1_000 else 300)
                     val etat = currentApi.etatVerificationDirect(profile.id, id)
                     val courante = state.direct ?: return@launch
                     if (etat.fini) {
-                        state = state.copy(direct = courante.copy(verification = null, verifiees = etat.chaines.orEmpty(), verifieesTotal = etat.total))
-                        return@launch
+                        filtree = true
+                        state = state.copy(direct = courante.copy(verification = null, verifiees = etat.chaines.orEmpty(),
+                            verifieesTotal = etat.total, verificationId = id))
+                        if (etat.sourcesFinies) return@launch
+                        continue
                     }
                     state = state.copy(direct = courante.copy(verification = VerificationEnCours(etat.total, etat.faites, etat.mortes)))
                 }
             } catch (annulee: kotlinx.coroutines.CancellationException) { throw annulee }
             catch (e: Exception) {
+                // Une grille déjà filtrée le reste : seul le suivi des sources s'est interrompu.
+                if (state.direct?.verifiees != null) return@launch
                 state = state.copy(direct = state.direct?.copy(verification = null), error = e.message ?: "Vérification impossible")
             }
         }
@@ -900,7 +916,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Le filtrage « qui marchent » valait pour cette recherche-là : tout changement le fait tomber.
         verificationDirect?.cancel(); verificationDirect = null
         state = state.copy(direct = section.copy(
-            verification = null, verifiees = null, verifieesTotal = 0,
+            verification = null, verifiees = null, verifieesTotal = 0, verificationId = null,
             query = query ?: section.query,
             listesChoisies = listes ?: section.listesChoisies,
             paysChoisis = pays ?: section.paysChoisis,

@@ -16,7 +16,7 @@ const { apiMock } = vi.hoisted(() => ({ apiMock: {
 vi.mock("./api", () => ({ api: apiMock }));
 
 const { LiveTv } = await import("./LiveTv");
-const { oublierSouvenirDirect } = await import("./memoire-direct");
+const { lireSouvenirDirect, oublierSouvenirDirect } = await import("./memoire-direct");
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -185,7 +185,7 @@ describe("ne garder que les chaînes qui marchent (r12)", () => {
     apiMock.verifierChainesLive.mockResolvedValue({ id: "v1", total: 2 });
     apiMock.etatVerificationLive
       .mockResolvedValueOnce({ total: 2, faites: 1, fini: false, mortes: ["c2"] })
-      .mockResolvedValueOnce({ total: 2, faites: 2, fini: true, mortes: ["c2"], chaines: [chaines[0]] });
+      .mockResolvedValueOnce({ total: 2, faites: 2, fini: true, sourcesFinies: true, mortes: ["c2"], chaines: [chaines[0]] });
     render(<LiveTv onPlay={() => {}} />);
     await screen.findByText("TF1");
     expect(screen.queryByRole("button", { name: "Ne garder que les chaînes qui marchent" })).toBeNull();
@@ -203,5 +203,34 @@ describe("ne garder que les chaînes qui marchent (r12)", () => {
     fireEvent.change(screen.getByPlaceholderText("Rechercher une chaîne"), { target: { value: "fra" } });
     expect(await screen.findByRole("button", { name: "Ne garder que les chaînes qui marchent" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText("Arte")).toBeInTheDocument());
+  });
+});
+
+describe("le filtrage « qui marchent » tient jusqu'à la recherche suivante (r13)", () => {
+  it("survit au retour d'une chaîne, suit les sources vérifiées en fond, et tombe quand la recherche change", async () => {
+    apiMock.verifierChainesLive.mockResolvedValue({ id: "v1", total: 2 });
+    apiMock.etatVerificationLive
+      .mockResolvedValueOnce({ total: 2, faites: 2, fini: true, sourcesFinies: false, mortes: ["c2"], chaines: [chaines[0]] })
+      .mockResolvedValueOnce({ total: 2, faites: 2, fini: true, sourcesFinies: true, mortes: ["c2"], chaines: [{ ...chaines[0]!, adresses: 2 }] });
+    const premier = render(<LiveTv onPlay={() => {}} />);
+    await screen.findByText("TF1");
+    fireEvent.change(screen.getByPlaceholderText("Rechercher une chaîne"), { target: { value: "fr" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Ne garder que les chaînes qui marchent" }));
+    expect(await screen.findByText("1 chaîne sur 2 joue en ce moment")).toBeInTheDocument();
+    // Le suivi des sources continue en silence, et le nombre d'adresses retenu suit.
+    await waitFor(() => expect(lireSouvenirDirect().verification?.chaines[0]?.adresses).toBe(2), { timeout: 3000 });
+    expect(lireSouvenirDirect().verification?.id).toBe("v1");
+
+    // Ouvrir une chaîne démonte l'écran ; au retour, le filtrage est toujours là.
+    premier.unmount();
+    render(<LiveTv onPlay={() => {}} />);
+    expect(screen.getByText("1 chaîne sur 2 joue en ce moment")).toBeInTheDocument();
+    expect(screen.queryByText("Arte")).toBeNull();
+    expect(apiMock.verifierChainesLive).toHaveBeenCalledTimes(1);
+
+    // Une recherche modifiée le fait tomber, et le lecteur ne citera plus la vérification.
+    fireEvent.change(screen.getByPlaceholderText("Rechercher une chaîne"), { target: { value: "f" } });
+    expect(await screen.findByRole("button", { name: "Ne garder que les chaînes qui marchent" })).toBeInTheDocument();
+    expect(lireSouvenirDirect().verification).toBeNull();
   });
 });

@@ -195,6 +195,8 @@ class LecteurDirectActivity : ComponentActivity() {
     private val reposSources = mutableMapOf<String, Long>()
     private lateinit var api: FlixTunesApi
     private lateinit var profileId: String
+    /** r13 : la vérification « qui marchent » d'où vient la chaîne ; le serveur en retire les sources mortes. */
+    private var verification: String? = null
 
     /**
      * Les adresses de la chaîne courante, dans l'ordre où le repli les essaie.
@@ -380,6 +382,7 @@ class LecteurDirectActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val serveur = intent.getStringExtra(EXTRA_SERVER) ?: return finish()
         profileId = intent.getStringExtra(EXTRA_PROFILE_ID) ?: return finish()
+        verification = intent.getStringExtra(EXTRA_VERIFICATION)
         val chaineId = intent.getStringExtra(EXTRA_CHANNEL_ID) ?: return finish()
         api = FlixTunesApi(serveur, intent.getStringExtra(EXTRA_PROFILE_TOKEN))
         if (!estAppareilTv(this)) SuiviDiffusion.attacher(this, api)
@@ -612,7 +615,7 @@ class LecteurDirectActivity : ComponentActivity() {
         // nouvelle chaîne ne répond pas, le retour reste possible.
         chaine?.id?.takeIf { it != chaineId }?.let { precedente = it }
         message = getString(R.string.direct_ouverture)
-        runCatching { api.chaineDirect(profileId, chaineId) }
+        runCatching { api.chaineDirect(profileId, chaineId, verification) }
             .onSuccess { details ->
                 chaine = details.chaine
                 /*
@@ -1324,7 +1327,7 @@ class LecteurDirectActivity : ComponentActivity() {
         renouvellementEnCours = true
         dernierRenouvellement = System.currentTimeMillis()
         try {
-        val nouvelles = runCatching { api.chaineDirect(profileId, id) }.getOrNull() ?: return
+        val nouvelles = runCatching { api.chaineDirect(profileId, id, verification) }.getOrNull() ?: return
         if (chaine?.id != id) return
         val index = nouvelles.sources.filter { it.identifiant.isNotEmpty() }.associateBy { it.identifiant }
         val avant = adresses.getOrNull(rang)
@@ -1996,6 +1999,7 @@ class LecteurDirectActivity : ComponentActivity() {
         const val EXTRA_PROFILE_ID = "profil"
         const val EXTRA_PROFILE_TOKEN = "jeton"
         const val EXTRA_CHANNEL_ID = "chaine"
+        const val EXTRA_VERIFICATION = "verification"
 
         /** Au-delà, on n'attend plus : une adresse muette trois secondes fera perdre du temps. */
         private const val DELAI_COURSE_MS = 3_000L
