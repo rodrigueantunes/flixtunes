@@ -25,7 +25,17 @@ genres, en français quand ils existent, en anglais sinon. Les images sont tél�
 serveur ; les clients ne parlent jamais à TMDB. Sans jeton, le catalogue se construit quand même, à
 partir des noms de fichiers et des métadonnées embarquées.
 
-![La bibliothèque de films, avec ses filtres](docs/captures/films.webp)
+Chaque film et chaque série porte aussi sa note, ramenée sur cinq étoiles quelle que soit l'échelle
+du fournisseur (une note sur 10 se divise par deux). Elle n'apparaît qu'à partir de dix votes : un
+film noté par une seule personne ne mérite pas ses cinq étoiles. Les grilles se trient par titre, par
+date de sortie, par date d'ajout ou par note. Les deux tris par date vont au jour près : la sortie
+suit la date exacte du film, l'ajout suit la date du fichier sur le disque.
+
+La recherche lit le titre français comme le titre d'origine. Un film que TMDB a rangé sous son nom
+français se retrouve donc aussi sous celui de son fichier : « star is born » ramène « Une étoile est
+née » de 1976 en plus de la version de 2018.
+
+![La bibliothèque de films triée par note](docs/captures/films.webp)
 
 Quand une correspondance est fausse, elle se corrige à la main depuis la fiche. Le choix est
 verrouillé et passe avant toutes les analyses suivantes, sans toucher au fichier.
@@ -60,14 +70,29 @@ Chaque lecture compte. Une source qui coupe recule dans le classement, une sourc
 et si l'image cale, le lecteur passe à une autre source de la même chaîne sans quitter le direct.
 Depuis la 0.6.0 r12, la lecture reste toujours à vitesse normale : plus d'accélérations discrètes pour
 rattraper le direct, qui finissaient par se voir. Sur Android TV, l'écran passe à 50 Hz pour une
-chaîne française.
+chaîne française, et le son se recale sur l'image une fois le changement fait.
 
 Pendant une recherche, un bouton permet de ne garder que les chaînes qui jouent vraiment, à l'instant.
 Le serveur va jusqu'à télécharger le début d'un segment vidéo de chaque chaîne trouvée ; celles qui
-ne répondent pas s'estompent pendant le test, puis disparaissent. Le filtre s'efface à la recherche
-suivante.
+ne répondent pas s'estompent pendant le test, puis disparaissent. Les sources mortes des chaînes qui
+restent sont testées elles aussi, en fond, et le lecteur ne les propose plus. Le filtre tient quand
+on revient d'une chaîne, et ne s'efface qu'à la recherche suivante.
 
 ![Le test des chaînes pendant une recherche](docs/captures/direct-verification.webp)
+
+## Le rayon Web
+
+Les vidéos récupérées sur YouTube ou ailleurs ont leur propre bibliothèque. On lui donne le dossier
+où elles arrivent, rangé par plateforme puis par chaîne, comme le font les outils de téléchargement
+courants. FlixTunes lit le petit fichier `.info.json` déposé à côté de chaque vidéo : titre, chaîne,
+date de publication, durée, vignette. Chaque chaîne devient une étagère, ses vidéos se trient des plus
+récentes aux plus anciennes, et la reprise marche comme pour un épisode.
+
+Une clé d'API YouTube, facultative, complète ce que l'annexe ne dit pas : un titre manquant, une date,
+une vignette, l'avatar de la chaîne. Elle est employée avec parcimonie. Une recherche qui n'a rien
+donné est retenue, pour ne pas dépenser le quota deux fois sur la même question.
+
+![Une chaîne du rayon Web](docs/captures/web.webp)
 
 ## Sur le téléviseur
 
@@ -193,7 +218,8 @@ ultérieure, et sa licence l'accompagne. Le logo et le son de démarrage ont ét
 Les captures d'écran montrent une médiathèque de démonstration composée des films libres de la
 Blender Foundation (Big Buck Bunny, Sintel, Tears of Steel, Spring et les autres), diffusés sous
 licence [Creative Commons Attribution](https://creativecommons.org/licenses/by/4.0/), © Blender
-Foundation, [studio.blender.org](https://studio.blender.org). Les profils sont fictifs, et les chaînes
-du direct sont des flux de test publics. Les affiches et les résumés sont fournis par
+Foundation, [studio.blender.org](https://studio.blender.org). Le rayon Web montre ces mêmes films tels
+que les chaînes YouTube officielles de Blender les publient, avec leurs vignettes. Les profils sont
+fictifs, et les chaînes du direct sont des flux de test publics. Les affiches et les résumés sont fournis par
 [TMDB](https://www.themoviedb.org) ; FlixTunes utilise l'API de TMDB sans être approuvé ni certifié
 par TMDB.
