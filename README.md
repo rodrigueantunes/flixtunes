@@ -35,6 +35,10 @@ La recherche lit le titre français comme le titre d'origine. Un film que TMDB a
 français se retrouve donc aussi sous celui de son fichier : « star is born » ramène « Une étoile est
 née » de 1976 en plus de la version de 2018.
 
+L'accueil rassemble ce qui vous concerne : ce que vous avez commencé, votre liste, des suggestions
+tirées de ce que vous avez déjà regardé — calculées sur le serveur, sans rien envoyer dehors —, les
+derniers ajouts, les films, les séries, puis ce qui est déjà vu. L'historique a sa propre page.
+
 ![La bibliothèque de films triée par note](docs/captures/films.webp)
 
 Quand une correspondance est fausse, elle se corrige à la main depuis la fiche. Le choix est
@@ -88,11 +92,38 @@ courants. FlixTunes lit le petit fichier `.info.json` déposé à côté de chaq
 date de publication, durée, vignette. Chaque chaîne devient une étagère, ses vidéos se trient des plus
 récentes aux plus anciennes, et la reprise marche comme pour un épisode.
 
-Une clé d'API YouTube, facultative, complète ce que l'annexe ne dit pas : un titre manquant, une date,
-une vignette, l'avatar de la chaîne. Elle est employée avec parcimonie. Une recherche qui n'a rien
-donné est retenue, pour ne pas dépenser le quota deux fois sur la même question.
+Les dossiers du disque sont gardés tels quels et se parcourent : une chaîne ouvre la mosaïque de ses
+dossiers, chacun illustré par la vignette de sa vidéo la plus récente, à n'importe quelle profondeur.
+Une carte de retour est toujours posée en tête de grille, et ramène aux chaînes depuis la racine.
+
+![Les dossiers d'une chaîne du rayon Web](docs/captures/web-dossiers.webp)
+
+Sous chaque vidéo, sa date de publication à gauche et sa durée à droite, au format `hh:mm:ss`. La
+durée vient du fichier, relevée à l'analyse, et non de la plateforme : c'est la seule qui dise ce
+qu'on va réellement regarder.
 
 ![Une chaîne du rayon Web](docs/captures/web.webp)
+
+Une clé d'API YouTube, facultative, complète ce que l'annexe ne dit pas : un titre manquant, une date,
+une vignette, l'avatar de la chaîne. Elle est employée avec parcimonie. Une recherche qui n'a rien
+donné est retenue une semaine, pour ne pas dépenser le quota deux fois sur la même question, et le
+budget du jour s'affiche avant toute dépense.
+
+Le nom du fichier peut porter le code de la vidéo entre crochets — `Titre [qbmeKsooC5s].mp4`, ce
+qu'écrivent les téléchargeurs. La vidéo est alors identifiée directement, pour une unité de quota au
+lieu de cent, et même si elle n'est pas de la chaîne : un identifiant YouTube est unique sur toute la
+plateforme. S'il ne donne rien, la recherche habituelle reprend, avec le titre débarrassé du code.
+Ajouter ce code à un fichier déjà analysé ne crée pas de doublon : le fichier renommé est reconnu, et
+garde sa fiche, sa vignette et sa reprise de lecture.
+
+Les titres sont lus tels qu'ils se lisent. Les téléchargeurs remplacent les caractères interdits dans
+un nom de fichier — `/` devient `⧸`, `:` devient `：` — et les plateformes renvoient leurs titres
+échappés pour du HTML ; les uns et les autres sont rétablis avant toute recherche et avant tout
+affichage.
+
+Quand une vidéo est mal identifiée, le rayon Web a son propre écran de correspondances, séparé de
+celui des films et des séries : les candidats viennent de la plateforme, jamais d'une base de films.
+On peut aussi y coller l'adresse de la vidéo.
 
 ## Sur le téléviseur
 
